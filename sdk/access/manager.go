@@ -8,8 +8,9 @@ import (
 
 // Manager coordinates authentication providers.
 type Manager struct {
-	mu        sync.RWMutex
-	providers []Provider
+	mu                       sync.RWMutex
+	providers                []Provider
+	authenticatedRequestHook func(context.Context, *http.Request, *Result) *AuthError
 }
 
 // NewManager constructs an empty manager.
@@ -41,6 +42,26 @@ func (m *Manager) Providers() []Provider {
 	return snapshot
 }
 
+// SetAuthenticatedRequestHook installs a hook that runs after provider authentication succeeds.
+// The hook may attach immutable request context or reject authorization before the handler runs.
+func (m *Manager) SetAuthenticatedRequestHook(hook func(context.Context, *http.Request, *Result) *AuthError) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.authenticatedRequestHook = hook
+	m.mu.Unlock()
+}
+
+func (m *Manager) requestHook() func(context.Context, *http.Request, *Result) *AuthError {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.authenticatedRequestHook
+}
+
 // Authenticate evaluates providers until one succeeds.
 func (m *Manager) Authenticate(ctx context.Context, r *http.Request) (*Result, *AuthError) {
 	if m == nil {
@@ -62,6 +83,11 @@ func (m *Manager) Authenticate(ctx context.Context, r *http.Request) (*Result, *
 		}
 		res, authErr := provider.Authenticate(ctx, r)
 		if authErr == nil {
+			if hook := m.requestHook(); hook != nil && res != nil {
+				if hookErr := hook(ctx, r, res); hookErr != nil {
+					return nil, hookErr
+				}
+			}
 			return res, nil
 		}
 		if IsAuthErrorCode(authErr, AuthErrorCodeNotHandled) {

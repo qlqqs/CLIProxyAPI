@@ -615,7 +615,10 @@ func grokModelsFromRegistryInfos(infos []*registry.ModelInfo) []grokbuild.ModelI
 
 func (s *Server) handleGrokModels(c *gin.Context) {
 	var models []grokbuild.ModelInfo
-	if s != nil && s.cfg != nil && s.cfg.Home.Enabled {
+	requestCtx := handlers.RequestContext(c)
+	if coreexecutor.CredentialScopeFromContext(requestCtx) != nil {
+		models = grokModelsFromRegistryInfos(handlers.AvailableModelInfosForContext(requestCtx))
+	} else if s != nil && s.cfg != nil && s.cfg.Home.Enabled {
 		entries, ok := s.loadHomeModelEntries(c)
 		if !ok {
 			return

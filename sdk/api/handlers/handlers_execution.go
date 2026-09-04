@@ -74,7 +74,10 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	}
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, normalizedModel, originalRequestedModel, false, reqMeta, execOptions.SkipInterceptorPluginID)
+	ctx = coreusage.WithRequestID(ctx, lifecycle.requestID())
 	opts := coreexecutor.Options{
+		RequestID:                   lifecycle.requestID(),
+		CredentialScope:             coreexecutor.CredentialScopeFromContext(ctx),
 		Stream:                      false,
 		Alt:                         alt,
 		OriginalRequest:             rawJSON,
@@ -140,7 +143,10 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	}
 	afterAuthCapture := &requestAfterAuthCapture{}
 	lifecycle := h.newRequestLifecycleTracker(ctx, handlerType, normalizedModel, originalRequestedModel, false, reqMeta, execOptions.SkipInterceptorPluginID)
+	ctx = coreusage.WithRequestID(ctx, lifecycle.requestID())
 	opts := coreexecutor.Options{
+		RequestID:                   lifecycle.requestID(),
+		CredentialScope:             coreexecutor.CredentialScopeFromContext(ctx),
 		Stream:                      false,
 		Alt:                         alt,
 		OriginalRequest:             rawJSON,
@@ -173,6 +179,14 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 }
 
 func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryProtocol, responseProtocol, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	execCtx, nestedTracker := withNestedExecutionTracker(coreusage.WithStream(ctx, false))
+	req, opts := h.pluginExecutorRequest(execCtx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, false, execOptions)
+	lifecycle := h.newRequestLifecycleTracker(execCtx, entryProtocol, modelName, originalRequestedModel, false, opts.Metadata, execOptions.SkipInterceptorPluginID)
+	execCtx = coreusage.WithRequestID(execCtx, lifecycle.requestID())
+	opts.RequestID = lifecycle.requestID()
+	if opts.CredentialScope.Enforced() {
+		return nil, nil, credentialScopedPluginExecutorRejection(lifecycle)
+	}
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
 	}
@@ -180,9 +194,6 @@ func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryPro
 	if host == nil {
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
 	}
-	execCtx, nestedTracker := withNestedExecutionTracker(coreusage.WithStream(ctx, false))
-	req, opts := h.pluginExecutorRequest(execCtx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, false, execOptions)
-	lifecycle := h.newRequestLifecycleTracker(execCtx, entryProtocol, modelName, originalRequestedModel, false, opts.Metadata, execOptions.SkipInterceptorPluginID)
 	var interceptErr *interfaces.ErrorMessage
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(execCtx, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
@@ -209,8 +220,10 @@ func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryPro
 		return nil, nil, errMsg
 	}
 	if reporter != nil && !nestedTracker.hasNestedExecution() {
-		detail := parsePluginExecutorResponseUsage(responseProtocol, resp.Payload)
-		reporter.Publish(execCtx, detail)
+		detail, usageKnown := parsePluginExecutorResponseUsage(responseProtocol, resp.Payload)
+		if usageKnown {
+			reporter.Publish(execCtx, detail)
+		}
 		reporter.EnsurePublished(execCtx)
 	}
 	rawResponseHeaders := cloneHeader(resp.Headers)
@@ -221,6 +234,13 @@ func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryPro
 }
 
 func (h *BaseAPIHandler) countWithPluginExecutor(ctx context.Context, handlerType, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	req, opts := h.pluginExecutorRequest(ctx, handlerType, handlerType, modelName, originalRequestedModel, rawJSON, alt, false, execOptions)
+	lifecycle := h.newRequestLifecycleTracker(ctx, handlerType, modelName, originalRequestedModel, false, opts.Metadata, execOptions.SkipInterceptorPluginID)
+	ctx = coreusage.WithRequestID(ctx, lifecycle.requestID())
+	opts.RequestID = lifecycle.requestID()
+	if opts.CredentialScope.Enforced() {
+		return nil, nil, credentialScopedPluginExecutorRejection(lifecycle)
+	}
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
 	}
@@ -228,8 +248,6 @@ func (h *BaseAPIHandler) countWithPluginExecutor(ctx context.Context, handlerTyp
 	if host == nil {
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
 	}
-	req, opts := h.pluginExecutorRequest(ctx, handlerType, handlerType, modelName, originalRequestedModel, rawJSON, alt, false, execOptions)
-	lifecycle := h.newRequestLifecycleTracker(ctx, handlerType, modelName, originalRequestedModel, false, opts.Metadata, execOptions.SkipInterceptorPluginID)
 	var interceptErr *interfaces.ErrorMessage
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, handlerType, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
@@ -268,6 +286,7 @@ func (h *BaseAPIHandler) pluginExecutorRequest(ctx context.Context, entryProtoco
 	}
 	req := coreexecutor.Request{Model: modelName, Payload: payload}
 	opts := coreexecutor.Options{
+		CredentialScope:           coreexecutor.CredentialScopeFromContext(ctx),
 		Stream:                    stream,
 		Alt:                       alt,
 		OriginalRequest:           rawJSON,
@@ -279,6 +298,15 @@ func (h *BaseAPIHandler) pluginExecutorRequest(ctx context.Context, entryProtoco
 		Metadata:                  reqMeta,
 	}
 	return req, opts
+}
+
+func credentialScopedPluginExecutorRejection(lifecycle *requestLifecycleTracker) *interfaces.ErrorMessage {
+	errMsg := &interfaces.ErrorMessage{
+		StatusCode: http.StatusForbidden,
+		Error:      errors.New("credential-scoped requests are unsupported by direct executor plugins"),
+	}
+	lifecycle.complete(pluginapi.RequestCompletionRejected, errMsg.StatusCode, errMsg.Error)
+	return errMsg
 }
 
 func (h *BaseAPIHandler) applyRequestInterceptorsAfterPluginExecutorRoute(ctx context.Context, host PluginExecutorHost, executorPluginID, entryProtocol, originalRequestedModel, requestID string, req coreexecutor.Request, opts coreexecutor.Options, skipPluginID string) (coreexecutor.Request, coreexecutor.Options, *interfaces.ErrorMessage) {

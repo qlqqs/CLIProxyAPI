@@ -10,25 +10,31 @@ import (
 
 // ParsePluginExecutorResponseUsage extracts token usage from a non-streaming plugin executor response.
 func ParsePluginExecutorResponseUsage(protocol string, payload []byte) usage.Detail {
+	detail, _ := ParsePluginExecutorResponseUsageKnown(protocol, payload)
+	return detail
+}
+
+// ParsePluginExecutorResponseUsageKnown extracts token usage and reports whether usage was present.
+func ParsePluginExecutorResponseUsageKnown(protocol string, payload []byte) (usage.Detail, bool) {
 	if len(payload) == 0 {
-		return usage.Detail{}
+		return usage.Detail{}, false
 	}
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case "claude":
-		return parseClaudePayloadUsage(payload)
+		return parseClaudePayloadUsageKnown(payload)
 	case "gemini":
-		return ParseGeminiUsage(payload)
+		return ParseGeminiUsage(payload), hasGeminiUsage(payload)
 	case "interactions", "interactions-response":
-		return ParseInteractionsUsage(payload)
+		return ParseInteractionsUsage(payload), hasInteractionsUsage(payload)
 	case "antigravity":
-		return ParseAntigravityUsage(payload)
+		return ParseAntigravityUsage(payload), hasAntigravityUsage(payload)
 	case "codex", "openai-response":
 		if detail, ok := ParseCodexUsage(payload); ok {
-			return detail
+			return detail, hasCodexUsage(payload)
 		}
-		return ParseOpenAIUsage(payload)
+		return ParseOpenAIUsage(payload), hasOpenAIUsage(payload)
 	default:
-		return ParseOpenAIUsage(payload)
+		return ParseOpenAIUsage(payload), hasOpenAIUsage(payload)
 	}
 }
 
@@ -66,7 +72,7 @@ func ObservePluginExecutorStreamUsage(protocol string, payload []byte, buffer *S
 		IterateStreamLines(payload, func(line []byte) {
 			if jsonBytes := ExtractStreamJSONPayload(line); len(jsonBytes) > 0 {
 				if detail, ok := ParseCodexUsage(jsonBytes); ok {
-					buffer.Observe(detail, ok)
+					buffer.Observe(detail, hasCodexUsage(jsonBytes))
 					return
 				}
 			}
@@ -98,17 +104,54 @@ func ObservePluginExecutorStreamTTFT(protocol string, reporter *UsageReporter, p
 }
 
 func parseClaudePayloadUsage(payload []byte) usage.Detail {
+	detail, _ := parseClaudePayloadUsageKnown(payload)
+	return detail
+}
+
+func parseClaudePayloadUsageKnown(payload []byte) (usage.Detail, bool) {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
-		return usage.Detail{}
+		return usage.Detail{}, false
 	}
 	usageNode := gjson.GetBytes(payload, "usage")
 	if !usageNode.Exists() {
 		usageNode = gjson.GetBytes(payload, "message.usage")
 	}
 	if !usageNode.Exists() {
-		return usage.Detail{}
+		return usage.Detail{}, false
 	}
-	return ParseClaudeUsage([]byte(`{"usage":` + usageNode.Raw + `}`))
+	return ParseClaudeUsage([]byte(`{"usage":` + usageNode.Raw + `}`)), true
+}
+
+func hasOpenAIUsage(payload []byte) bool {
+	return gjson.ValidBytes(payload) && hasOpenAIStyleUsageTokenFields(gjson.GetBytes(payload, "usage"))
+}
+
+func hasCodexUsage(payload []byte) bool {
+	return gjson.ValidBytes(payload) && hasOpenAIStyleUsageTokenFields(gjson.GetBytes(payload, "response.usage"))
+}
+
+func hasGeminiUsage(payload []byte) bool {
+	if !gjson.ValidBytes(payload) {
+		return false
+	}
+	root := gjson.ParseBytes(payload)
+	return root.Get("usageMetadata").Exists() || root.Get("usage_metadata").Exists()
+}
+
+func hasAntigravityUsage(payload []byte) bool {
+	if !gjson.ValidBytes(payload) {
+		return false
+	}
+	root := gjson.ParseBytes(payload)
+	return root.Get("response.usageMetadata").Exists() || root.Get("usageMetadata").Exists() || root.Get("usage_metadata").Exists()
+}
+
+func hasInteractionsUsage(payload []byte) bool {
+	if !gjson.ValidBytes(payload) {
+		return false
+	}
+	root := gjson.ParseBytes(payload)
+	return firstExistingUsageNode(root, "usage", "total_usage", "metadata.total_usage", "metadata.usage", "usageMetadata", "usage_metadata", "interaction.usage", "interaction.total_usage", "interaction.metadata.total_usage").Exists()
 }
 
 func parseClaudeStreamLine(line []byte) (usage.Detail, bool) {

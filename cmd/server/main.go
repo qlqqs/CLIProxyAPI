@@ -90,6 +90,9 @@ func main() {
 	var tuiMode bool
 	var standalone bool
 	var localModel bool
+	var carpoolBootstrapAdmin carpoolStringFlag
+	var carpoolBackupPath carpoolStringFlag
+	var carpoolRestorePath carpoolStringFlag
 
 	// Define command-line flags for different operation modes.
 	flag.BoolVar(&codexLogin, "codex-login", false, "Login to Codex using OAuth")
@@ -109,6 +112,9 @@ func main() {
 	flag.BoolVar(&tuiMode, "tui", false, "Start with terminal management UI")
 	flag.BoolVar(&standalone, "standalone", false, "In TUI mode, start an embedded local server")
 	flag.BoolVar(&localModel, "local-model", false, "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching")
+	flag.Var(&carpoolBootstrapAdmin, "carpool-bootstrap-admin", "Create the first carpool administrator (password is read from a TTY)")
+	flag.Var(&carpoolBackupPath, "carpool-backup", "Back up the stopped carpool SQLite database to this file")
+	flag.Var(&carpoolRestorePath, "carpool-restore", "Restore the stopped carpool SQLite database from this backup file")
 
 	flag.CommandLine.Usage = func() {
 		out := flag.CommandLine.Output()
@@ -137,10 +143,13 @@ func main() {
 		})
 	}
 
+	carpoolCommandRequested := carpoolCommandRequestedInArgs(os.Args[1:])
 	pluginHost := pluginhost.New()
-	if bootstrapCfg := loadPluginBootstrapConfig(pluginBootstrapConfigPath(os.Args[1:], DefaultConfigPath)); bootstrapCfg != nil {
-		pluginHost.ApplyConfig(context.Background(), bootstrapCfg)
-		pluginHost.RegisterCommandLineFlags(context.Background(), flag.CommandLine)
+	if !carpoolCommandRequested {
+		if bootstrapCfg := loadPluginBootstrapConfig(pluginBootstrapConfigPath(os.Args[1:], DefaultConfigPath)); bootstrapCfg != nil {
+			pluginHost.ApplyConfig(context.Background(), bootstrapCfg)
+			pluginHost.RegisterCommandLineFlags(context.Background(), flag.CommandLine)
+		}
 	}
 
 	// Parse the command-line flags.
@@ -313,7 +322,7 @@ func main() {
 		parsed.Plugins.StoreAuth = nil
 		var errHomePlugins error
 		platform := homeplugins.CurrentPlatform()
-		if pluginSyncCfg.Plugins.Enabled {
+		if pluginSyncCfg.Plugins.Enabled && !carpoolCommandRequested {
 			ctxHomePlugins, cancelHomePlugins := context.WithTimeout(context.Background(), 30*time.Second)
 			installedVersions, errInstalledPlugins := homeplugins.InstalledVersions(&pluginSyncCfg)
 			if errInstalledPlugins != nil {
@@ -534,6 +543,25 @@ func main() {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
+	carpoolCommand := carpoolCommandOptions{
+		bootstrapAdmin: carpoolBootstrapAdmin.value,
+		backupPath:     carpoolBackupPath.value,
+		restorePath:    carpoolRestorePath.value,
+		bootstrapSet:   carpoolBootstrapAdmin.set,
+		backupSet:      carpoolBackupPath.set,
+		restoreSet:     carpoolRestorePath.set,
+	}
+	legacyCommandMode := vertexImport != "" || antigravityLogin || codexLogin || codexDeviceLogin || claudeLogin || kimiLogin || xaiLogin
+	if carpoolCommand.requested() && legacyCommandMode {
+		log.Error("carpool commands cannot be combined with another one-shot command")
+		return
+	}
+	if handled, errCarpoolCommand := runCarpoolCommand(context.Background(), cfg, configFilePath, carpoolCommand, defaultCarpoolCommandDependencies()); handled {
+		if errCarpoolCommand != nil {
+			log.WithError(errCarpoolCommand).Error("carpool command failed")
+		}
+		return
+	}
 
 	// In cloud deploy mode, check if we have a valid configuration
 	var configFileExists bool
@@ -588,7 +616,7 @@ func main() {
 		CallbackPort: oauthCallbackPort,
 	}
 
-	commandMode := vertexImport != "" || antigravityLogin || codexLogin || codexDeviceLogin || claudeLogin || kimiLogin || xaiLogin
+	commandMode := legacyCommandMode || carpoolCommand.requested()
 	cloudConfigMissing := isCloudDeploy && !configFileExists
 	homeMode := configLoadedFromHome || (cfg != nil && cfg.Home.Enabled)
 	exampleAPIKeySafeMode := shouldEnableExampleAPIKeySafeMode(cfg, commandMode, tuiMode, standalone, cloudConfigMissing, homeMode)

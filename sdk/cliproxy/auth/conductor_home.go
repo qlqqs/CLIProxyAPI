@@ -948,6 +948,9 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 	if m == nil {
 		return nil, &Error{Code: "auth_not_found", Message: "no auth available"}
 	}
+	if opts.CredentialScope.Enforced() {
+		return nil, credentialScopeUnsupportedError()
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1251,10 +1254,14 @@ func (m *Manager) findAllAntigravityCreditsCandidateAuths(ctx context.Context, r
 		return nil, nil
 	}
 	pinnedAuthID := pinnedAuthIDFromMetadata(opts.Metadata)
+	eligibility := authSelectionEligibilityForRequest(ctx, opts)
 	var candidates []creditsCandidateEntry
 	m.mu.RLock()
 	for _, auth := range m.auths {
 		if auth == nil || auth.Disabled || auth.Status == StatusDisabled {
+			continue
+		}
+		if !eligibility.allows(auth) {
 			continue
 		}
 		if pinnedAuthID != "" && auth.ID != pinnedAuthID {

@@ -20,7 +20,13 @@ const AutoServiceTier = "auto"
 
 // Record contains the usage statistics captured for a single provider request.
 type Record struct {
-	Provider string
+	// EventID uniquely identifies this emitted usage event when available.
+	EventID string
+	// RequestID correlates this event with one logical request when available.
+	RequestID string
+	// UsageKnown reports whether the upstream response explicitly contained usage.
+	UsageKnown bool
+	Provider   string
 	// ExecutorType stores the concrete executor type that handled the request.
 	ExecutorType string
 	Model        string
@@ -81,6 +87,28 @@ type reasoningEffortContextKey struct{}
 type serviceTierContextKey struct{}
 type generateContextKey struct{}
 type streamContextKey struct{}
+type requestIDContextKey struct{}
+
+// WithRequestID stores the logical request ID for usage events emitted from ctx.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestIDContextKey{}, requestID)
+}
+
+// RequestIDFromContext returns the logical request ID stored in ctx.
+func RequestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
+	return strings.TrimSpace(requestID)
+}
 
 // WithRequestedModelAlias stores the client-requested model name for usage sinks.
 func WithRequestedModelAlias(ctx context.Context, alias string) context.Context {
@@ -250,6 +278,7 @@ type Manager struct {
 	once     sync.Once
 	stopOnce sync.Once
 	cancel   context.CancelFunc
+	done     chan struct{}
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -263,7 +292,7 @@ type Manager struct {
 
 // NewManager constructs a manager with a buffered queue.
 func NewManager(buffer int) *Manager {
-	m := &Manager{}
+	m := &Manager{done: make(chan struct{})}
 	m.cond = sync.NewCond(&m.mu)
 	return m
 }
@@ -279,7 +308,10 @@ func (m *Manager) Start(ctx context.Context) {
 		}
 		var workerCtx context.Context
 		workerCtx, m.cancel = context.WithCancel(ctx)
-		go m.run(workerCtx)
+		go func() {
+			defer close(m.done)
+			m.run(workerCtx)
+		}()
 	})
 }
 
@@ -288,6 +320,7 @@ func (m *Manager) Stop() {
 	if m == nil {
 		return
 	}
+	m.Start(context.Background())
 	m.stopOnce.Do(func() {
 		if m.cancel != nil {
 			m.cancel()
@@ -297,6 +330,7 @@ func (m *Manager) Stop() {
 		m.mu.Unlock()
 		m.cond.Broadcast()
 	})
+	<-m.done
 }
 
 // Register appends a plugin to the delivery list.
@@ -328,8 +362,35 @@ func (m *Manager) RegisterNamed(name string, plugin Plugin) {
 		m.pluginsMu.Unlock()
 		return
 	}
+	for index, registered := range m.plugins {
+		if registered == nil {
+			m.named[name] = index
+			m.plugins[index] = plugin
+			m.pluginsMu.Unlock()
+			return
+		}
+	}
 	m.named[name] = len(m.plugins)
 	m.plugins = append(m.plugins, plugin)
+	m.pluginsMu.Unlock()
+}
+
+// UnregisterNamed removes a named plugin from future usage delivery.
+func (m *Manager) UnregisterNamed(name string) {
+	if m == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	m.pluginsMu.Lock()
+	if index, exists := m.named[name]; exists {
+		delete(m.named, name)
+		if index >= 0 && index < len(m.plugins) {
+			m.plugins[index] = nil
+		}
+	}
 	m.pluginsMu.Unlock()
 }
 
@@ -403,6 +464,9 @@ func RegisterPlugin(plugin Plugin) { DefaultManager().Register(plugin) }
 
 // RegisterNamedPlugin registers or replaces a named plugin on the default manager.
 func RegisterNamedPlugin(name string, plugin Plugin) { DefaultManager().RegisterNamed(name, plugin) }
+
+// UnregisterNamedPlugin removes a named plugin from the default manager.
+func UnregisterNamedPlugin(name string) { DefaultManager().UnregisterNamed(name) }
 
 // PublishRecord publishes a record using the default manager.
 func PublishRecord(ctx context.Context, record Record) { DefaultManager().Publish(ctx, record) }

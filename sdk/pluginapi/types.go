@@ -1339,6 +1339,12 @@ type ManagementResponse struct {
 
 // UsageRecord describes request usage and billing metadata.
 type UsageRecord struct {
+	// EventID uniquely identifies this emitted usage event when available.
+	EventID string
+	// RequestID correlates this event with one logical request when available.
+	RequestID string
+	// UsageKnown reports whether the upstream response explicitly contained usage.
+	UsageKnown bool
 	// Provider identifies the upstream provider.
 	Provider string
 	// ExecutorType identifies the executor implementation.

@@ -38,6 +38,27 @@ func TestGetContextWithCancelCapturesClientRequestMetadata(t *testing.T) {
 	}
 }
 
+func TestGetContextWithCancelPreservesRequestExecutionBoundary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	scope := coreexecutor.NewCredentialScope("auth-a", "auth-b")
+	requestCtx := WithRequestLifecycleID(request.Context(), "carpool-request")
+	requestCtx = coreexecutor.WithCredentialScope(requestCtx, scope)
+	ginCtx.Request = request.WithContext(requestCtx)
+
+	handler := &BaseAPIHandler{Cfg: &config.SDKConfig{}}
+	ctx, cancel := handler.GetContextWithCancel(nil, ginCtx, context.Background())
+	defer cancel()
+
+	if requestID := requestLifecycleIDFromContext(ctx); requestID != "carpool-request" {
+		t.Fatalf("request lifecycle ID = %q, want carpool-request", requestID)
+	}
+	if gotScope := coreexecutor.CredentialScopeFromContext(ctx); gotScope != scope {
+		t.Fatalf("credential scope = %#v, want original scope %#v", gotScope, scope)
+	}
+}
+
 func TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey(t *testing.T) {
 	ctx := WithExecutionSessionID(context.Background(), "session-1")
 

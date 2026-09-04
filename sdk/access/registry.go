@@ -79,6 +79,13 @@ func ClearExclusiveProvider() {
 	registryMu.Unlock()
 }
 
+// ExclusiveProvider returns the active exclusive provider identifier, if any.
+func ExclusiveProvider() string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	return exclusiveProvider
+}
+
 // RegisteredProviders returns the global provider instances in registration order.
 func RegisteredProviders() []Provider {
 	registryMu.RLock()

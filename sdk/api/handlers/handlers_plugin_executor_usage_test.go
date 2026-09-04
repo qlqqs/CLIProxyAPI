@@ -435,8 +435,79 @@ func TestHandlerPluginExecutorPublishesFailure(t *testing.T) {
 	if !record.Failed {
 		t.Error("record.Failed = false, want true")
 	}
+	if record.UsageKnown {
+		t.Error("record.UsageKnown = true, want false without usage detail")
+	}
 	if record.Fail.Body != "upstream plugin failure" {
 		t.Errorf("record.Fail.Body = %q, want %q", record.Fail.Body, "upstream plugin failure")
+	}
+}
+
+func TestHandlerPluginExecutorUsagePresenceAndRequestCorrelation(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		id        string
+		payload   []byte
+		wantKnown bool
+	}{
+		{
+			name:      "missing usage is unknown",
+			id:        "missing-usage",
+			payload:   []byte(`{"id":"chatcmpl-1","choices":[]}`),
+			wantKnown: false,
+		},
+		{
+			name:      "explicit zero usage is known",
+			id:        "zero-usage",
+			payload:   []byte(`{"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}`),
+			wantKnown: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			targetPluginID := "usage-presence-plugin-" + tc.id
+			plugin := newCapturePluginExecutorUsagePlugin(targetPluginID)
+			registerUsagePluginForTest(t, "test-plugin-executor-"+tc.id, plugin)
+			completions := make(chan pluginapi.RequestCompletion, 1)
+			mockHost := &mockPluginUsageHost{
+				execResp: coreexecutor.Response{Payload: tc.payload},
+			}
+			mockHost.hasRouters = true
+			mockHost.route = func(context.Context, pluginapi.ModelRouteRequest) (pluginapi.ModelRouteResponse, bool) {
+				return pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetExecutor, Target: targetPluginID}, true
+			}
+
+			handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil)
+			handler.SetModelRouterHost(mockHost)
+			handler.SetPluginHost(&handlerInterceptorTestHost{
+				completeRequest: func(_ context.Context, completion pluginapi.RequestCompletion) {
+					completions <- completion
+				},
+			})
+			requestID := "request-" + tc.id
+			ctx := WithRequestLifecycleID(context.Background(), requestID)
+			if _, _, errMsg := handler.ExecuteWithAuthManager(ctx, "openai", "gpt-4o", []byte(`{"model":"gpt-4o"}`), ""); errMsg != nil {
+				t.Fatalf("ExecuteWithAuthManager() error = %+v", errMsg)
+			}
+
+			record := plugin.waitRecord(t)
+			if record.UsageKnown != tc.wantKnown {
+				t.Fatalf("UsageKnown = %v, want %v", record.UsageKnown, tc.wantKnown)
+			}
+			if record.EventID == "" || record.RequestID != requestID {
+				t.Fatalf("usage correlation = event %q request %q", record.EventID, record.RequestID)
+			}
+			if mockHost.lastOptions.RequestID != requestID {
+				t.Fatalf("executor RequestID = %q, want %q", mockHost.lastOptions.RequestID, requestID)
+			}
+			select {
+			case completion := <-completions:
+				if completion.RequestID != requestID {
+					t.Fatalf("completion RequestID = %q, want %q", completion.RequestID, requestID)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("missing request completion")
+			}
+		})
 	}
 }
 

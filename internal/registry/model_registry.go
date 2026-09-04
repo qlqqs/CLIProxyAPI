@@ -1050,6 +1050,106 @@ func (r *ModelRegistry) GetAvailableModels(handlerType string) []map[string]any 
 	return models
 }
 
+// GetAvailableModelsForClients returns models exposed by at least one allowed client.
+// Client IDs are matched against the registry's stable registration IDs. The result
+// never falls back to clients outside the supplied set.
+func (r *ModelRegistry) GetAvailableModelsForClients(handlerType string, clientIDs []string) []map[string]any {
+	if r == nil || len(clientIDs) == 0 {
+		return nil
+	}
+
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	infos := r.availableModelInfosForClientsLocked(clientIDs)
+	models := make([]map[string]any, 0, len(infos))
+	for _, info := range infos {
+		if model := r.convertModelToMap(info, handlerType); model != nil {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
+// GetAvailableModelInfosForClients returns cloned model metadata exposed by at
+// least one allowed client. It never consults registrations outside clientIDs.
+func (r *ModelRegistry) GetAvailableModelInfosForClients(clientIDs []string) []*ModelInfo {
+	if r == nil || len(clientIDs) == 0 {
+		return nil
+	}
+
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	return r.availableModelInfosForClientsLocked(clientIDs)
+}
+
+func (r *ModelRegistry) availableModelInfosForClientsLocked(clientIDs []string) []*ModelInfo {
+	allowedClients := make(map[string]struct{}, len(clientIDs))
+	for _, clientID := range clientIDs {
+		clientID = strings.TrimSpace(clientID)
+		if clientID != "" {
+			allowedClients[clientID] = struct{}{}
+		}
+	}
+	if len(allowedClients) == 0 {
+		return nil
+	}
+
+	orderedClients := make([]string, 0, len(allowedClients))
+	for clientID := range allowedClients {
+		orderedClients = append(orderedClients, clientID)
+	}
+	sort.Strings(orderedClients)
+
+	byModel := make(map[string]*ModelInfo)
+	for _, clientID := range orderedClients {
+		clientModels := r.clientModels[clientID]
+		clientInfos := r.clientModelInfos[clientID]
+		seenForClient := make(map[string]struct{}, len(clientModels))
+		for _, modelID := range clientModels {
+			modelID = strings.TrimSpace(modelID)
+			if modelID == "" {
+				continue
+			}
+			if _, duplicate := seenForClient[modelID]; duplicate {
+				continue
+			}
+			seenForClient[modelID] = struct{}{}
+
+			registration := r.models[modelID]
+			if registration == nil {
+				continue
+			}
+			if reason, suspended := registration.SuspendedClients[clientID]; suspended {
+				if !strings.EqualFold(strings.TrimSpace(reason), "quota") {
+					continue
+				}
+			}
+			if _, exists := byModel[modelID]; exists {
+				continue
+			}
+			if info := clientInfos[modelID]; info != nil {
+				byModel[modelID] = cloneModelInfo(info)
+				continue
+			}
+			if registration.Info != nil {
+				byModel[modelID] = cloneModelInfo(registration.Info)
+			}
+		}
+	}
+
+	modelIDs := make([]string, 0, len(byModel))
+	for modelID := range byModel {
+		modelIDs = append(modelIDs, modelID)
+	}
+	sort.Strings(modelIDs)
+	result := make([]*ModelInfo, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		result = append(result, byModel[modelID])
+	}
+	return result
+}
+
 func modelRegistrationAvailability(registration *ModelRegistration, now time.Time) (bool, time.Time) {
 	if registration == nil {
 		return false, time.Time{}

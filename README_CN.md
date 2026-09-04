@@ -120,11 +120,82 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 - 支持 OpenAI Codex 多账户轮询
 - 支持 Grok Build 多账户轮询
 - 通过配置接入上游 OpenAI 兼容提供商（例如 OpenRouter）
+- 可选的管理员托管拼车模块，支持独立用户登录、车辆账号隔离和聚合用量
 - 可复用的 Go SDK（见 `docs/sdk-usage_CN.md`）
 
 ## 新手入门
 
 CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-for.me/cn/)
+
+## 拼车用户管理
+
+拼车模块默认关闭。启用后，现有 `/management.html` 仍用于管理 OAuth、上游账号和
+底层配置；新的 `/carpool/` 用于管理拼车用户、车辆、成员关系、账号分配和聚合
+用量。两套页面使用独立权限，拼车管理员不会获得 Management API 权限。
+
+第一阶段使用 SQLite，适用于单机、单个 CLIProxyAPI 进程。不要让多个进程同时
+打开同一个数据库文件，也不要把数据库放在 NFS 等网络文件系统上。
+
+在 `config.yaml` 中启用模块：
+
+```yaml
+carpool:
+  enabled: true
+  database-path: "./data/carpool.db"
+  report-timezone: "Asia/Shanghai"
+  usage-retention-days: 90
+  audit-retention-days: 180
+  session:
+    absolute-ttl: "24h"
+    idle-ttl: "2h"
+    cookie-secure: true
+  trusted-origins:
+    - "https://cpa.example.com"
+  trusted-proxy-cidrs:
+    - "172.18.0.0/16"
+```
+
+`database-path` 的相对路径以配置文件所在目录为基准。Docker Compose 默认把宿主机
+`${CLI_PROXY_CARPOOL_DATA_PATH:-./data}` 挂载到容器的 `/CLIProxyAPI/data`，容器
+重建后数据库仍会保留。
+
+服务启动前，通过交互式 TTY 创建首个拼车管理员。密码不会从命令行参数或环境
+变量读取：
+
+```bash
+./cli-proxy-api --config ./config.yaml --carpool-bootstrap-admin admin
+./cli-proxy-api --config ./config.yaml
+```
+
+然后访问 `/carpool/`。管理员在页面中创建乘客和车辆，再把现有上游账号分配给
+车辆；乘客首次登录后必须修改临时密码，之后自行创建用户 API Key。用户 Key 仅能
+使用所属车辆的账号，明文只在创建时显示一次。
+
+生产环境必须通过 HTTPS 访问，并保持 `cookie-secure: true`。反向代理终止 TLS 时，
+请把浏览器实际访问的完整 Origin 加入 `trusted-origins`；只有确实可信的代理网段才
+能加入 `trusted-proxy-cidrs`。本机纯 HTTP 调试可以暂时设置
+`cookie-secure: false`，不要在公网环境使用该设置。
+
+备份和恢复必须在 CLIProxyAPI 完全停止后执行。备份会先 checkpoint WAL，并在备份
+文件旁生成 `.manifest.json` 校验文件；恢复时两者必须同时存在：
+
+```bash
+./cli-proxy-api --config ./config.yaml --carpool-backup ./backups/carpool.db
+./cli-proxy-api --config ./config.yaml --carpool-restore ./backups/carpool.db
+```
+
+Docker Compose 可在停止服务后执行同样的离线命令：
+
+```bash
+docker compose stop cli-proxy-api
+docker compose run --rm cli-proxy-api ./CLIProxyAPI --config /CLIProxyAPI/config.yaml \
+  --carpool-backup /CLIProxyAPI/data/backups/carpool.db
+```
+
+当前限制：用户 Key 不支持 Home、Responses WebSocket、Realtime 或 wsrelay；这些
+入口会在连接上游前拒绝。旧全局 `api-keys` 保持原有行为，不受车辆范围约束，也不
+进入拼车报表，因此面向拼车用户的部署不应向乘客分发旧全局 Key。拼车用量用于运营
+可观测，不应作为严格一次计费账单。
 
 ## 管理 API 文档
 

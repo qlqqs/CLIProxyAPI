@@ -2257,6 +2257,30 @@ func TestUsageAdapterNormalizesOmittedGenerateToTrue(t *testing.T) {
 	}
 }
 
+func TestUsageAdapterPreservesCorrelationFields(t *testing.T) {
+	var got pluginapi.UsageRecord
+	plugin := usagePluginFunc(func(_ context.Context, record pluginapi.UsageRecord) {
+		got = record
+	})
+	host := newHostWithRecords(capabilityRecord{
+		id: "usage-correlation",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			UsagePlugin: plugin,
+		}},
+	})
+	adapter := &usageAdapter{host: host, pluginID: "usage-correlation"}
+
+	adapter.HandleUsage(context.Background(), coreusage.Record{
+		EventID:    "event-1",
+		RequestID:  "request-1",
+		UsageKnown: true,
+		Provider:   "openai",
+	})
+	if got.EventID != "event-1" || got.RequestID != "request-1" || !got.UsageKnown {
+		t.Fatalf("plugin correlation = event %q request %q known %v", got.EventID, got.RequestID, got.UsageKnown)
+	}
+}
+
 func TestUsageAdapterPreservesExplicitGenerateFalse(t *testing.T) {
 	var gotGenerate bool
 	plugin := usagePluginFunc(func(ctx context.Context, record pluginapi.UsageRecord) {

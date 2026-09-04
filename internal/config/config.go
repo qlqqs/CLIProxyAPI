@@ -19,6 +19,9 @@ type Config struct {
 	// Home config is runtime-only and is populated from -home-jwt.
 	Home HomeConfig `yaml:"-" json:"-"`
 
+	// Carpool config controls the optional user and vehicle sharing module.
+	Carpool CarpoolConfig `yaml:"carpool" json:"carpool"`
+
 	// CredentialConcurrency contains Home-authoritative credential lifecycle settings.
 	CredentialConcurrency CredentialConcurrencyConfig `yaml:"credential-concurrency" json:"credential-concurrency"`
 

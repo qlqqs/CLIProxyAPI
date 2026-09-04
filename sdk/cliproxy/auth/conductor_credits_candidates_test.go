@@ -72,6 +72,26 @@ func TestFindAllAntigravityCreditsCandidateAuths_PrefersKnownCreditsThenUnknown(
 	if pinned[0].auth.ID != "aa-unknown" {
 		t.Fatalf("pinned[0].auth.ID = %q, want %q", pinned[0].auth.ID, "aa-unknown")
 	}
+
+	scopedOpts := cliproxyexecutor.Options{
+		CredentialScope: cliproxyexecutor.NewCredentialScope("zz-credits"),
+	}
+	scoped, errScoped := m.findAllAntigravityCreditsCandidateAuths(context.Background(), "claude-sonnet-4-6", scopedOpts)
+	if errScoped != nil {
+		t.Fatalf("findAllAntigravityCreditsCandidateAuths(scoped) error = %v", errScoped)
+	}
+	if len(scoped) != 1 || scoped[0].auth.ID != "zz-credits" {
+		t.Fatalf("scoped candidates = %#v, want only zz-credits", scoped)
+	}
+
+	emptyScopeOpts := cliproxyexecutor.Options{CredentialScope: cliproxyexecutor.NewCredentialScope()}
+	emptyScoped, errEmptyScoped := m.findAllAntigravityCreditsCandidateAuths(context.Background(), "claude-sonnet-4-6", emptyScopeOpts)
+	if errEmptyScoped != nil {
+		t.Fatalf("findAllAntigravityCreditsCandidateAuths(empty scope) error = %v", errEmptyScoped)
+	}
+	if len(emptyScoped) != 0 {
+		t.Fatalf("empty-scope candidates = %#v, want none", emptyScoped)
+	}
 }
 
 func TestFindAllAntigravityCreditsCandidateAuths_HomeKVUnavailableReturnsError(t *testing.T) {

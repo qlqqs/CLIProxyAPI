@@ -5,8 +5,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
-func parsePluginExecutorResponseUsage(protocol string, payload []byte) usage.Detail {
-	return helps.ParsePluginExecutorResponseUsage(protocol, payload)
+func parsePluginExecutorResponseUsage(protocol string, payload []byte) (usage.Detail, bool) {
+	return helps.ParsePluginExecutorResponseUsageKnown(protocol, payload)
 }
 
 func observePluginExecutorStreamUsage(protocol string, payload []byte, buffer *helps.StreamUsageBuffer) {

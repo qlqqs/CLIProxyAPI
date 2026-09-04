@@ -50,16 +50,17 @@ func (s *Service) Run(ctx context.Context) error {
 	}()
 
 	usage.StartDefault(ctx)
+	if s.carpoolModule != nil {
+		s.carpoolModule.Start()
+	}
 	homeEnabled := s.cfg != nil && s.cfg.Home.Enabled
 	if homeEnabled {
 		forceHomeRuntimeConfig(s.cfg)
 		redisqueue.SetUsageStatisticsEnabled(true)
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
 	defer func() {
-		if err := s.Shutdown(shutdownCtx); err != nil {
+		if err := shutdownOnRunExit(s.Shutdown); err != nil {
 			log.Errorf("service shutdown returned error: %v", err)
 		}
 	}()
@@ -215,6 +216,15 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
+func shutdownOnRunExit(shutdown func(context.Context) error) error {
+	if shutdown == nil {
+		return nil
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	return shutdown(shutdownCtx)
+}
+
 // Shutdown gracefully stops background workers and the HTTP server.
 // It ensures all resources are properly cleaned up and connections are closed.
 // The shutdown is idempotent and can be called multiple times safely.
@@ -346,6 +356,14 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 
 		usage.StopDefault()
+		if s.carpoolModule != nil {
+			if errCloseCarpool := s.carpoolModule.Close(ctx); errCloseCarpool != nil {
+				log.WithError(errCloseCarpool).Error("failed to close carpool module")
+				if shutdownErr == nil {
+					shutdownErr = errCloseCarpool
+				}
+			}
+		}
 	})
 	return shutdownErr
 }

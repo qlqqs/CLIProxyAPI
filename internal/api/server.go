@@ -29,6 +29,7 @@ import (
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/http2"
 	"gopkg.in/yaml.v3"
@@ -186,6 +187,14 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	s.exampleAPIKeySafeModeActive.Store(s.exampleAPIKeySafeModeRequired(cfg))
 	s.handlers.SetPluginHost(optionState.pluginHost)
+	if len(optionState.completionObservers) > 0 {
+		observers := append([]func(context.Context, pluginapi.RequestCompletion){}, optionState.completionObservers...)
+		s.handlers.SetRequestCompletionObserver(func(ctx context.Context, completion pluginapi.RequestCompletion) {
+			for _, observer := range observers {
+				observer(ctx, completion)
+			}
+		})
+	}
 	if optionState.pluginHost != nil {
 		optionState.pluginHost.SetModelExecutor(s.handlers)
 		optionState.pluginHost.SetAuthManager(authManager)
@@ -226,8 +235,8 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.setupRoutes()
 
 	// Apply additional router configurators from options
-	if optionState.routerConfigurator != nil {
-		optionState.routerConfigurator(engine, s.handlers, cfg)
+	for _, configureRouter := range optionState.routerConfigurators {
+		configureRouter(engine, s.handlers, cfg)
 	}
 
 	// Register management routes when configuration or environment secrets are available,
@@ -239,7 +248,15 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		s.registerManagementRoutes()
 	}
 	s.refreshPluginManagementRoutes()
-	engine.NoRoute(s.pluginManagementNoRoute)
+	noRouteHandlers := append([]func(*gin.Context) bool{}, optionState.noRouteHandlers...)
+	engine.NoRoute(func(c *gin.Context) {
+		for _, handler := range noRouteHandlers {
+			if handler(c) {
+				return
+			}
+		}
+		s.pluginManagementNoRoute(c)
+	})
 
 	if optionState.keepAliveEnabled {
 		s.enableKeepAlive(optionState.keepAliveTimeout, optionState.keepAliveOnTimeout)

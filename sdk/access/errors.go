@@ -14,6 +14,7 @@ const (
 	AuthErrorCodeInvalidCredential AuthErrorCode = "invalid_credential"
 	AuthErrorCodeNotHandled        AuthErrorCode = "not_handled"
 	AuthErrorCodeInternal          AuthErrorCode = "internal_error"
+	AuthErrorCodeForbidden         AuthErrorCode = "forbidden"
 )
 
 // AuthError carries authentication failure details and HTTP status.
@@ -80,6 +81,15 @@ func NewInternalAuthError(message string, cause error) *AuthError {
 		normalizedMessage = "Authentication service error"
 	}
 	return newAuthError(AuthErrorCodeInternal, normalizedMessage, http.StatusInternalServerError, cause)
+}
+
+// NewForbiddenError reports an authenticated request that is not authorized.
+func NewForbiddenError(message string, cause error) *AuthError {
+	normalizedMessage := strings.TrimSpace(message)
+	if normalizedMessage == "" {
+		normalizedMessage = "Request is not authorized"
+	}
+	return newAuthError(AuthErrorCodeForbidden, normalizedMessage, http.StatusForbidden, cause)
 }
 
 func IsAuthErrorCode(authErr *AuthError, code AuthErrorCode) bool {

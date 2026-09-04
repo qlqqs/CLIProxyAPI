@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -170,6 +171,7 @@ func (e *interceptorCaptureExecutor) capture(req coreexecutor.Request, opts core
 		Metadata: req.Metadata,
 	}
 	e.lastOptions = coreexecutor.Options{
+		RequestID:       opts.RequestID,
 		Stream:          opts.Stream,
 		Alt:             opts.Alt,
 		Headers:         cloneHeader(opts.Headers),
@@ -244,6 +246,91 @@ func TestRequestLifecycleTrackerUsesUniqueExecutionIDs(t *testing.T) {
 	}
 	if first.completion.TraceID != "trace-1" || second.completion.TraceID != "trace-1" {
 		t.Fatalf("trace IDs = %q and %q", first.completion.TraceID, second.completion.TraceID)
+	}
+}
+
+func TestRequestLifecycleTrackerReusesPresetIDAndCompletesOnce(t *testing.T) {
+	const requestID = "request-fixed"
+	completionCount := 0
+	handler := NewBaseAPIHandlers(nil, nil)
+	handler.SetPluginHost(&handlerInterceptorTestHost{
+		completeRequest: func(_ context.Context, completion pluginapi.RequestCompletion) {
+			completionCount++
+			if completion.RequestID != requestID {
+				t.Fatalf("completion request ID = %q, want %q", completion.RequestID, requestID)
+			}
+		},
+	})
+	tracker := handler.newRequestLifecycleTracker(WithRequestLifecycleID(context.Background(), requestID), "openai", "model", "model", false, nil, "")
+	if tracker.requestID() != requestID {
+		t.Fatalf("tracker request ID = %q, want %q", tracker.requestID(), requestID)
+	}
+	tracker.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
+	tracker.complete(pluginapi.RequestCompletionFailed, http.StatusInternalServerError, errors.New("late failure"))
+	if completionCount != 1 {
+		t.Fatalf("completion count = %d, want 1", completionCount)
+	}
+}
+
+func TestHandlerExecutionOptionsReuseLifecycleID(t *testing.T) {
+	for _, operation := range []string{"execute", "count", "stream"} {
+		t.Run(operation, func(t *testing.T) {
+			model := "handler-request-id-" + operation
+			executor := &interceptorCaptureExecutor{
+				stream: func(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+					chunks := make(chan coreexecutor.StreamChunk, 1)
+					chunks <- coreexecutor.StreamChunk{Payload: []byte(`{"chunk":true}`)}
+					close(chunks)
+					return &coreexecutor.StreamResult{Chunks: chunks}, nil
+				},
+			}
+			handler := newInterceptorHandler(t, model, executor, &sdkconfig.SDKConfig{})
+			completions := make(chan pluginapi.RequestCompletion, 2)
+			handler.SetPluginHost(&handlerInterceptorTestHost{
+				completeRequest: func(_ context.Context, completion pluginapi.RequestCompletion) {
+					completions <- completion
+				},
+			})
+			requestID := "request-" + operation
+			ctx := WithRequestLifecycleID(context.Background(), requestID)
+			switch operation {
+			case "execute":
+				if _, _, errMsg := handler.ExecuteWithAuthManager(ctx, "openai", model, []byte(`{"model":"`+model+`"}`), ""); errMsg != nil {
+					t.Fatalf("ExecuteWithAuthManager() error = %+v", errMsg)
+				}
+			case "count":
+				if _, _, errMsg := handler.ExecuteCountWithAuthManager(ctx, "openai", model, []byte(`{"model":"`+model+`"}`), ""); errMsg != nil {
+					t.Fatalf("ExecuteCountWithAuthManager() error = %+v", errMsg)
+				}
+			case "stream":
+				dataChan, _, errChan := handler.ExecuteStreamWithAuthManager(ctx, "openai", model, []byte(`{"model":"`+model+`","stream":true}`), "")
+				for range dataChan {
+				}
+				for errMsg := range errChan {
+					if errMsg != nil {
+						t.Fatalf("ExecuteStreamWithAuthManager() error = %+v", errMsg)
+					}
+				}
+			}
+
+			_, opts := executor.captured()
+			if opts.RequestID != requestID {
+				t.Fatalf("executor RequestID = %q, want %q", opts.RequestID, requestID)
+			}
+			select {
+			case completion := <-completions:
+				if completion.RequestID != requestID {
+					t.Fatalf("completion RequestID = %q, want %q", completion.RequestID, requestID)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("missing request completion")
+			}
+			select {
+			case duplicate := <-completions:
+				t.Fatalf("duplicate completion = %+v", duplicate)
+			default:
+			}
+		})
 	}
 }
 

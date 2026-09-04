@@ -147,6 +147,9 @@ func (a *usageAdapter) HandleUsage(ctx context.Context, record coreusage.Record)
 		}
 	}()
 	plugin.HandleUsage(ctx, pluginapi.UsageRecord{
+		EventID:         record.EventID,
+		RequestID:       record.RequestID,
+		UsageKnown:      record.UsageKnown,
 		Provider:        record.Provider,
 		ExecutorType:    record.ExecutorType,
 		Model:           record.Model,

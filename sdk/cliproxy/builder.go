@@ -9,6 +9,7 @@ import (
 
 	configaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/access/config_access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
@@ -197,6 +198,9 @@ func (b *Builder) Build() (*Service, error) {
 	if errValidate := b.cfg.ValidateCredentialWeights(); errValidate != nil {
 		return nil, fmt.Errorf("cliproxy: validate credential weights: %w", errValidate)
 	}
+	if errValidate := b.cfg.ValidateCarpool(); errValidate != nil {
+		return nil, fmt.Errorf("cliproxy: validate carpool: %w", errValidate)
+	}
 	b.cfg.NormalizePluginsConfig()
 	if errResolvePluginsDir := b.cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && b.cfg.Plugins.Enabled {
 		return nil, fmt.Errorf("cliproxy: %w", errResolvePluginsDir)
@@ -236,7 +240,9 @@ func (b *Builder) Build() (*Service, error) {
 		pluginHost.ApplyConfig(context.Background(), b.cfg)
 		pluginHost.RegisterFrontendAuthProviders()
 	}
-	accessManager.SetProviders(sdkaccess.RegisteredProviders())
+	if b.cfg.Carpool.Enabled && sdkaccess.ExclusiveProvider() != "" {
+		return nil, fmt.Errorf("cliproxy: carpool cannot be enabled with an exclusive frontend authentication plugin")
+	}
 
 	coreManager := b.coreManager
 	cooldownStateStore := b.cooldownStateStore
@@ -264,6 +270,15 @@ func (b *Builder) Build() (*Service, error) {
 		coreManager.SetPluginScheduler(pluginHost)
 	}
 
+	var carpoolModule *carpool.Module
+	if b.cfg.Carpool.Enabled {
+		var errCarpool error
+		carpoolModule, errCarpool = carpool.Open(context.Background(), b.cfg, b.configPath, coreManager)
+		if errCarpool != nil {
+			return nil, fmt.Errorf("cliproxy: initialize carpool: %w", errCarpool)
+		}
+	}
+
 	service := &Service{
 		cfg:                 b.cfg,
 		configPath:          b.configPath,
@@ -276,6 +291,7 @@ func (b *Builder) Build() (*Service, error) {
 		coreManager:         coreManager,
 		cooldownStateStore:  cooldownStateStore,
 		pluginHost:          pluginHost,
+		carpoolModule:       carpoolModule,
 		appliedRoutingState: appliedRoutingState,
 		serverOptions:       append([]api.ServerOption(nil), b.serverOptions...),
 	}
@@ -289,6 +305,16 @@ func (b *Builder) Build() (*Service, error) {
 			service.reloadConfigFromWatcher()
 		}),
 	)
+	if carpoolModule != nil {
+		service.serverOptions = append(service.serverOptions, carpoolModule.ServerOptions()...)
+		accessManager.SetAuthenticatedRequestHook(carpoolModule.AuthenticatedRequestHook)
+	}
+	if !service.refreshRequestAccessProviders() {
+		if carpoolModule != nil {
+			_ = carpoolModule.Close(context.Background())
+		}
+		return nil, fmt.Errorf("cliproxy: configure request access providers")
+	}
 	return service, nil
 }
 

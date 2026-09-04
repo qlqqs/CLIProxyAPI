@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"sort"
+	"strings"
 
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
@@ -185,8 +187,72 @@ type WebSocketResponseEvent struct {
 // WebSocketResponseObserver receives upstream WebSocket response events during execution.
 type WebSocketResponseObserver func(context.Context, WebSocketResponseEvent)
 
+// CredentialScope is an immutable allowlist of upstream auth IDs for one request.
+// A nil scope is not enforced for backward compatibility; a constructed empty scope
+// is enforced and denies every auth ID.
+type CredentialScope struct {
+	authIDs []string
+	allowed map[string]struct{}
+}
+
+// NewCredentialScope constructs an enforced scope from auth IDs. IDs are trimmed,
+// de-duplicated, sorted, and copied so callers cannot mutate the resulting scope.
+func NewCredentialScope(authIDs ...string) *CredentialScope {
+	allowed := make(map[string]struct{}, len(authIDs))
+	for _, authID := range authIDs {
+		authID = strings.TrimSpace(authID)
+		if authID == "" {
+			continue
+		}
+		allowed[authID] = struct{}{}
+	}
+
+	normalized := make([]string, 0, len(allowed))
+	for authID := range allowed {
+		normalized = append(normalized, authID)
+	}
+	sort.Strings(normalized)
+
+	return &CredentialScope{
+		authIDs: normalized,
+		allowed: allowed,
+	}
+}
+
+// Enforced reports whether a scope exists. It is safe to call on a nil receiver.
+func (s *CredentialScope) Enforced() bool {
+	return s != nil
+}
+
+// Allows reports whether authID is allowed. A nil scope preserves unrestricted
+// legacy behavior, while a constructed empty scope rejects every ID.
+func (s *CredentialScope) Allows(authID string) bool {
+	if s == nil {
+		return true
+	}
+	authID = strings.TrimSpace(authID)
+	if authID == "" {
+		return false
+	}
+	_, ok := s.allowed[authID]
+	return ok
+}
+
+// IDs returns a sorted copy of the allowed auth IDs.
+func (s *CredentialScope) IDs() []string {
+	if s == nil || len(s.authIDs) == 0 {
+		return nil
+	}
+	return append([]string(nil), s.authIDs...)
+}
+
 // Options controls execution behavior for both streaming and non-streaming calls.
 type Options struct {
+	// RequestID identifies the logical downstream request across retries and usage events.
+	RequestID string
+	// CredentialScope limits every upstream credential selection for this request.
+	// Nil preserves unrestricted legacy behavior; a non-nil empty scope denies all credentials.
+	CredentialScope *CredentialScope
 	// Stream toggles streaming mode.
 	Stream bool
 	// Alt carries optional alternate format hint (e.g. SSE JSON key).

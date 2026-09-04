@@ -11,6 +11,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/client/grokbuild"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 func TestModelsDispatchByGrokShellUserAgent(t *testing.T) {
@@ -214,5 +215,54 @@ func TestGrokModelsPreferHomeOverRegistry(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "local-only-model") {
 		t.Fatalf("Home failure response leaked local registry model: %s", recorder.Body.String())
+	}
+}
+
+func TestGrokModelsUseCredentialScopeBeforeHome(t *testing.T) {
+	const (
+		allowedClient = "grok-scope-allowed-client"
+		outsideClient = "grok-scope-outside-client"
+		allowedModel  = "grok-scope-allowed-model"
+		outsideModel  = "grok-scope-outside-model"
+	)
+	modelRegistry := registry.GetGlobalRegistry()
+	modelRegistry.RegisterClient(allowedClient, "openai", []*registry.ModelInfo{{ID: allowedModel, DisplayName: "Allowed"}})
+	modelRegistry.RegisterClient(outsideClient, "openai", []*registry.ModelInfo{{ID: outsideModel, DisplayName: "Outside"}})
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(allowedClient)
+		modelRegistry.UnregisterClient(outsideClient)
+	})
+
+	server := newTestServer(t)
+	server.cfg.Home.Enabled = true
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version", nil)
+	request = request.WithContext(coreexecutor.WithCredentialScope(request.Context(), coreexecutor.NewCredentialScope(allowedClient)))
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = request
+	server.handleGrokModels(ginContext)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &response); errUnmarshal != nil {
+		t.Fatalf("decode response: %v", errUnmarshal)
+	}
+	var foundAllowed bool
+	for _, model := range response.Data {
+		if model.ID == outsideModel {
+			t.Fatalf("scoped Grok response contains outside model %q", outsideModel)
+		}
+		if model.ID == allowedModel {
+			foundAllowed = true
+		}
+	}
+	if !foundAllowed {
+		t.Fatalf("scoped Grok response does not contain %q: %s", allowedModel, recorder.Body.String())
 	}
 }

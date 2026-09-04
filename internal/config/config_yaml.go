@@ -334,6 +334,14 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		switch fullPath {
 		case "pprof.addr":
 			return node.Value == DefaultPprofAddr
+		case "carpool.database-path":
+			return node.Value == DefaultCarpoolDatabasePath
+		case "carpool.report-timezone":
+			return node.Value == DefaultCarpoolReportTimezone
+		case "carpool.session.absolute-ttl":
+			return node.Value == DefaultCarpoolSessionAbsoluteTTL
+		case "carpool.session.idle-ttl":
+			return node.Value == DefaultCarpoolSessionIdleTTL
 		case "remote-management.panel-github-repository":
 			return node.Value == DefaultPanelGitHubRepository
 		case "plugins.dir":
@@ -346,9 +354,17 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 	// Check integer defaults
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!int" {
 		switch fullPath {
+		case "carpool.usage-retention-days":
+			return node.Value == "90"
+		case "carpool.audit-retention-days":
+			return node.Value == "180"
 		case "error-logs-max-files":
 			return node.Value == "10"
 		}
+	}
+
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!bool" && fullPath == "carpool.session.cookie-secure" {
+		return node.Value == "true"
 	}
 
 	return false

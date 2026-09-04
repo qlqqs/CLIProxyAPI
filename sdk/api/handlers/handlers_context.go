@@ -22,6 +22,8 @@ type disallowFreeAuthContextKey struct{}
 
 type nestedExecutionTrackerKey struct{}
 
+type requestLifecycleIDContextKey struct{}
+
 type nestedExecutionTracker struct {
 	mu     sync.Mutex
 	called bool
@@ -63,6 +65,26 @@ func markNestedExecution(ctx context.Context) {
 	if tracker, ok := ctx.Value(nestedExecutionTrackerKey{}).(*nestedExecutionTracker); ok && tracker != nil {
 		tracker.mark()
 	}
+}
+
+// WithRequestLifecycleID returns a child context whose next handler lifecycle uses requestID.
+func WithRequestLifecycleID(ctx context.Context, requestID string) context.Context {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, requestLifecycleIDContextKey{}, requestID)
+}
+
+func requestLifecycleIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(requestLifecycleIDContextKey{}).(string)
+	return strings.TrimSpace(requestID)
 }
 
 // WithPinnedAuthID returns a child context that requests execution on a specific auth ID.

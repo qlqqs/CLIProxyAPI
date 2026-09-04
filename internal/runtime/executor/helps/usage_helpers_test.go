@@ -409,7 +409,7 @@ func TestParseGeminiUsageIncludesToolUsePromptTokens(t *testing.T) {
 	}
 }
 
-func TestParseGeminiStreamUsageSkipsZeroPlaceholder(t *testing.T) {
+func TestParseGeminiStreamUsageAcceptsExplicitZeroUsage(t *testing.T) {
 	lines := [][]byte{
 		[]byte(`data: {"usageMetadata":{"promptTokenCount":0,"candidatesTokenCount":0,"thoughtsTokenCount":0,"totalTokenCount":0}}`),
 		[]byte(`data: {"usageMetadata":{"promptTokenCount":17984,"candidatesTokenCount":2668,"thoughtsTokenCount":1028,"totalTokenCount":21680}}`),
@@ -423,10 +423,13 @@ func TestParseGeminiStreamUsageSkipsZeroPlaceholder(t *testing.T) {
 		}
 	}
 
-	if len(accepted) != 1 {
-		t.Fatalf("accepted usage count = %d, want 1", len(accepted))
+	if len(accepted) != 2 {
+		t.Fatalf("accepted usage count = %d, want 2", len(accepted))
 	}
-	detail := accepted[0]
+	if hasNonZeroTokenUsage(accepted[0]) || !accepted[0].TokenBreakdown.Valid() {
+		t.Fatalf("explicit zero usage detail = %+v, want valid zero-token detail", accepted[0])
+	}
+	detail := accepted[1]
 	if detail.InputTokens != 17984 || detail.OutputTokens != 2668 || detail.ReasoningTokens != 1028 || detail.TotalTokens != 21680 {
 		t.Fatalf("accepted usage detail = %+v", detail)
 	}
@@ -537,6 +540,16 @@ func TestParseInteractionsStreamUsageOfficialMetadata(t *testing.T) {
 	}
 	if detail.TotalTokens != 11 {
 		t.Fatalf("total tokens = %d, want 11", detail.TotalTokens)
+	}
+}
+
+func TestParseInteractionsStreamUsageAcceptsExplicitZeroUsage(t *testing.T) {
+	detail, ok := ParseInteractionsStreamUsage([]byte(`data: {"event_type":"finish","metadata":{"total_usage":{"total_input_tokens":0,"total_output_tokens":0,"total_tokens":0}}}`))
+	if !ok {
+		t.Fatal("ParseInteractionsStreamUsage() ok = false, want true")
+	}
+	if hasNonZeroTokenUsage(detail) || !detail.TokenBreakdown.Valid() {
+		t.Fatalf("detail = %+v, want valid zero-token detail", detail)
 	}
 }
 
@@ -845,6 +858,114 @@ func TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens(t *testing.T) {
 	}
 	if _, ok := reporter.buildAdditionalModelRecord("gpt-image-2", usage.Detail{CachedTokens: 2}); !ok {
 		t.Fatalf("expected non-zero cached token usage to be recorded")
+	}
+}
+
+func TestUsageReporterPublishesCorrelationAndKnownState(t *testing.T) {
+	newReporter := func() (*UsageReporter, *usage.Record) {
+		ctx := usage.WithRequestID(context.Background(), "request-1")
+		reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
+		var captured usage.Record
+		reporter.publishFn = func(_ context.Context, record usage.Record) {
+			captured = record
+		}
+		return reporter, &captured
+	}
+
+	t.Run("explicit zero usage is known", func(t *testing.T) {
+		reporter, captured := newReporter()
+		reporter.Publish(context.Background(), usage.Detail{})
+		if !captured.UsageKnown {
+			t.Fatal("UsageKnown = false, want true")
+		}
+		if captured.RequestID != "request-1" || captured.EventID == "" {
+			t.Fatalf("correlation = request %q event %q", captured.RequestID, captured.EventID)
+		}
+	})
+
+	t.Run("ensure without usage is unknown", func(t *testing.T) {
+		reporter, captured := newReporter()
+		reporter.EnsurePublished(context.Background())
+		if captured.UsageKnown {
+			t.Fatal("UsageKnown = true, want false")
+		}
+	})
+
+	t.Run("failure without detail is unknown", func(t *testing.T) {
+		reporter, captured := newReporter()
+		reporter.PublishFailure(context.Background(), errors.New("upstream failed"))
+		if !captured.Failed || captured.UsageKnown {
+			t.Fatalf("record = %+v, want failed unknown usage", *captured)
+		}
+	})
+
+	t.Run("failure with detail is known", func(t *testing.T) {
+		reporter, captured := newReporter()
+		reporter.PublishFailureWithDetail(context.Background(), usage.Detail{}, errors.New("upstream failed"))
+		if !captured.Failed || !captured.UsageKnown {
+			t.Fatalf("record = %+v, want failed known usage", *captured)
+		}
+	})
+}
+
+func TestUsageReporterAdditionalModelUsesDistinctEventID(t *testing.T) {
+	ctx := usage.WithRequestID(context.Background(), "request-1")
+	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
+	records := make([]usage.Record, 0, 2)
+	reporter.publishFn = func(_ context.Context, record usage.Record) {
+		records = append(records, record)
+	}
+
+	reporter.PublishAdditionalModel(context.Background(), "gpt-image-2", usage.Detail{InputTokens: 1})
+	reporter.Publish(context.Background(), usage.Detail{InputTokens: 2})
+
+	if len(records) != 2 {
+		t.Fatalf("record count = %d, want 2", len(records))
+	}
+	if records[0].EventID == "" || records[1].EventID == "" || records[0].EventID == records[1].EventID {
+		t.Fatalf("event IDs = %q and %q, want distinct non-empty IDs", records[0].EventID, records[1].EventID)
+	}
+	if records[0].RequestID != "request-1" || records[1].RequestID != "request-1" {
+		t.Fatalf("request IDs = %q and %q, want request-1", records[0].RequestID, records[1].RequestID)
+	}
+}
+
+func TestStreamUsageBufferPublishesKnownState(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		observe   func(*StreamUsageBuffer)
+		wantKnown bool
+	}{
+		{
+			name: "tier only is unknown",
+			observe: func(buffer *StreamUsageBuffer) {
+				buffer.ObserveOpenAIStream([]byte(`data: {"service_tier":"priority"}`))
+			},
+			wantKnown: false,
+		},
+		{
+			name: "explicit all-zero usage is known",
+			observe: func(buffer *StreamUsageBuffer) {
+				buffer.ObserveOpenAIStream([]byte(`data: {"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}`))
+			},
+			wantKnown: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buffer StreamUsageBuffer
+			tc.observe(&buffer)
+			reporter := NewUsageReporter(context.Background(), "openai", "gpt-5.4", nil)
+			var captured usage.Record
+			reporter.publishFn = func(_ context.Context, record usage.Record) {
+				captured = record
+			}
+			if !buffer.Publish(context.Background(), reporter) {
+				t.Fatal("Publish() = false, want true")
+			}
+			if captured.UsageKnown != tc.wantKnown {
+				t.Fatalf("UsageKnown = %v, want %v", captured.UsageKnown, tc.wantKnown)
+			}
+		})
 	}
 }
 

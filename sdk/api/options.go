@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/logging"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 // ServerOption customises HTTP server construction.
@@ -28,6 +30,16 @@ func WithEngineConfigurator(fn func(*gin.Engine)) ServerOption {
 // WithRouterConfigurator appends a callback after default routes are registered.
 func WithRouterConfigurator(fn func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)) ServerOption {
 	return internalapi.WithRouterConfigurator(fn)
+}
+
+// WithRequestCompletionObserver appends an observer for logical request completion events.
+func WithRequestCompletionObserver(observer func(context.Context, pluginapi.RequestCompletion)) ServerOption {
+	return internalapi.WithRequestCompletionObserver(observer)
+}
+
+// WithNoRouteHandler appends a handler consulted before the built-in plugin NoRoute handler.
+func WithNoRouteHandler(handler func(*gin.Context) bool) ServerOption {
+	return internalapi.WithNoRouteHandler(handler)
 }
 
 // WithLocalManagementPassword stores a runtime-only management password accepted for localhost requests.

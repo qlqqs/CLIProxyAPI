@@ -24,6 +24,7 @@ import (
 	coresession "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	"github.com/tidwall/gjson"
 	"golang.org/x/net/context"
 )
@@ -287,6 +288,9 @@ type BaseAPIHandler struct {
 	// ModelRouterHost optionally routes matching requests to a plugin executor, the router's own
 	// executor, or a built-in provider before model-to-provider resolution and auth selection.
 	ModelRouterHost PluginModelRouterHost
+
+	// RequestCompletionObserver optionally receives the same exactly-once logical request terminal event.
+	RequestCompletionObserver func(context.Context, pluginapi.RequestCompletion)
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -323,6 +327,14 @@ func (h *BaseAPIHandler) SetPluginHost(host PluginInterceptorHost) {
 		return
 	}
 	h.PluginHost = host
+}
+
+// SetRequestCompletionObserver configures an in-process logical request terminal observer.
+func (h *BaseAPIHandler) SetRequestCompletionObserver(observer func(context.Context, pluginapi.RequestCompletion)) {
+	if h == nil {
+		return
+	}
+	h.RequestCompletionObserver = observer
 }
 
 // SetModelRouterHost configures the optional plugin model router host.
@@ -401,6 +413,18 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 	var requestCtx context.Context
 	if c != nil && c.Request != nil {
 		requestCtx = c.Request.Context()
+	}
+	if requestCtx != nil {
+		if requestLifecycleIDFromContext(parentCtx) == "" {
+			if requestID := requestLifecycleIDFromContext(requestCtx); requestID != "" {
+				parentCtx = WithRequestLifecycleID(parentCtx, requestID)
+			}
+		}
+		if coreexecutor.CredentialScopeFromContext(parentCtx) == nil {
+			if scope := coreexecutor.CredentialScopeFromContext(requestCtx); scope != nil {
+				parentCtx = coreexecutor.WithCredentialScope(parentCtx, scope)
+			}
+		}
 	}
 
 	if requestCtx != nil && logging.GetRequestID(parentCtx) == "" {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
@@ -24,6 +25,7 @@ import (
 )
 
 type UsageReporter struct {
+	requestID           string
 	provider            string
 	executorType        string
 	model               string
@@ -47,6 +49,7 @@ type UsageReporter struct {
 	ttftStart           time.Time
 	ttftSet             bool
 	once                sync.Once
+	publishFn           func(context.Context, usage.Record)
 }
 
 type usageExecutor interface {
@@ -70,6 +73,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		alias = model
 	}
 	reporter := &UsageReporter{
+		requestID:   usage.RequestIDFromContext(ctx),
 		provider:    provider,
 		model:       model,
 		alias:       strings.TrimSpace(alias),
@@ -129,7 +133,7 @@ func ExecutorTypeName(executor any) string {
 }
 
 func (r *UsageReporter) Publish(ctx context.Context, detail usage.Detail) {
-	r.publishWithOutcome(ctx, detail, false, usage.Failure{})
+	r.publishWithOutcome(ctx, detail, false, usage.Failure{}, true)
 }
 
 func (r *UsageReporter) PublishAdditionalModel(ctx context.Context, model string, detail usage.Detail) {
@@ -308,15 +312,15 @@ func (r *UsageReporter) buildAdditionalModelRecord(model string, detail usage.De
 	if !hasNonZeroTokenUsage(detail) {
 		return usage.Record{}, false
 	}
-	return r.buildRecordForModel(model, detail, false, usage.Failure{}), true
+	return r.buildRecordForModel(model, detail, false, usage.Failure{}, true), true
 }
 
 func (r *UsageReporter) PublishFailure(ctx context.Context, errs ...error) {
-	r.publishWithOutcome(ctx, usage.Detail{}, true, failFromErrors(errs...))
+	r.publishWithOutcome(ctx, usage.Detail{}, true, failFromErrors(errs...), false)
 }
 
 func (r *UsageReporter) PublishFailureWithDetail(ctx context.Context, detail usage.Detail, errs ...error) {
-	r.publishWithOutcome(ctx, detail, true, failFromErrors(errs...))
+	r.publishWithOutcome(ctx, detail, true, failFromErrors(errs...), true)
 }
 
 func (r *UsageReporter) TrackFailure(ctx context.Context, errPtr *error) {
@@ -328,13 +332,13 @@ func (r *UsageReporter) TrackFailure(ctx context.Context, errPtr *error) {
 	}
 }
 
-func (r *UsageReporter) publishWithOutcome(ctx context.Context, detail usage.Detail, failed bool, fail usage.Failure) {
+func (r *UsageReporter) publishWithOutcome(ctx context.Context, detail usage.Detail, failed bool, fail usage.Failure, usageKnown bool) {
 	if r == nil {
 		return
 	}
 	detail = normalizeUsageDetailTotal(detail, r.provider, r.executorType)
 	r.once.Do(func() {
-		r.publishRecord(ctx, r.buildRecord(detail, failed, fail))
+		r.publishRecord(ctx, r.buildRecordWithUsageKnown(detail, failed, usageKnown, fail))
 	})
 }
 
@@ -362,31 +366,42 @@ func (r *UsageReporter) EnsurePublished(ctx context.Context) {
 		return
 	}
 	r.once.Do(func() {
-		r.publishRecord(ctx, r.buildRecord(usage.Detail{}, false, usage.Failure{}))
+		r.publishRecord(ctx, r.buildRecordWithUsageKnown(usage.Detail{}, false, false, usage.Failure{}))
 	})
 }
 
 func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
 	record.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+	if r != nil && r.publishFn != nil {
+		r.publishFn(ctx, record)
+		return
+	}
 	usage.PublishRecord(ctx, record)
 }
 
 func (r *UsageReporter) buildRecord(detail usage.Detail, failed bool, failures ...usage.Failure) usage.Record {
+	return r.buildRecordWithUsageKnown(detail, failed, true, failures...)
+}
+
+func (r *UsageReporter) buildRecordWithUsageKnown(detail usage.Detail, failed, usageKnown bool, failures ...usage.Failure) usage.Record {
 	var fail usage.Failure
 	if len(failures) > 0 {
 		fail = failures[0]
 	}
 	if r == nil {
-		return usage.Record{Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
+		return usage.Record{EventID: uuid.NewString(), UsageKnown: usageKnown, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
 	}
-	return r.buildRecordForModel(r.model, detail, failed, fail)
+	return r.buildRecordForModel(r.model, detail, failed, fail, usageKnown)
 }
 
-func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, failed bool, fail usage.Failure) usage.Record {
+func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, failed bool, fail usage.Failure, usageKnown bool) usage.Record {
 	if r == nil {
-		return usage.Record{Model: model, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
+		return usage.Record{EventID: uuid.NewString(), Model: model, UsageKnown: usageKnown, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
 	}
 	return usage.Record{
+		EventID:             uuid.NewString(),
+		RequestID:           r.requestID,
+		UsageKnown:          usageKnown,
 		Provider:            r.provider,
 		ExecutorType:        r.executorType,
 		Model:               model,
@@ -585,8 +600,9 @@ func resolveUsageAuthType(auth *cliproxyauth.Auth) string {
 
 // StreamUsageBuffer keeps the latest usage detail observed in a stream.
 type StreamUsageBuffer struct {
-	detail usage.Detail
-	ok     bool
+	detail     usage.Detail
+	ok         bool
+	usageKnown bool
 }
 
 var (
@@ -594,13 +610,16 @@ var (
 	openAIStreamServiceTierMarker = []byte(`"service_tier"`)
 )
 
-// Observe records detail when ok is true, allowing the final stream usage to win.
-func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
-	if b == nil || !ok {
+// Observe records explicitly present usage, allowing the final stream usage to win.
+func (b *StreamUsageBuffer) Observe(detail usage.Detail, usageKnown bool) {
+	if b == nil {
 		return
 	}
 	responseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
-	if responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+	if !usageKnown && responseServiceTier == "" {
+		return
+	}
+	if usageKnown {
 		preservedTier := b.detail.ResponseServiceTier
 		b.detail = detail
 		if b.detail.ResponseServiceTier == "" {
@@ -610,6 +629,7 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 		b.detail.ResponseServiceTier = responseServiceTier
 	}
 	b.ok = true
+	b.usageKnown = b.usageKnown || usageKnown
 }
 
 // ObserveOpenAIStream records response-tier state and the latest usage from an
@@ -645,7 +665,7 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 	if hasTierCandidate {
 		detail.ResponseServiceTier = extractResponseServiceTierFromValidJSON(payload)
 	}
-	b.Observe(detail, usageOK || detail.ResponseServiceTier != "")
+	b.Observe(detail, usageOK)
 }
 
 // Publish emits the latest observed usage detail, if any.
@@ -653,16 +673,16 @@ func (b *StreamUsageBuffer) Publish(ctx context.Context, reporter *UsageReporter
 	if b == nil || !b.ok || reporter == nil {
 		return false
 	}
-	reporter.Publish(ctx, b.detail)
+	reporter.publishWithOutcome(ctx, b.detail, false, usage.Failure{}, b.usageKnown)
 	return true
 }
 
 // PublishFailure emits the latest observed usage detail together with failure details.
 func (b *StreamUsageBuffer) PublishFailure(ctx context.Context, reporter *UsageReporter, errs ...error) bool {
-	if b == nil || reporter == nil {
+	if b == nil || !b.ok || reporter == nil {
 		return false
 	}
-	reporter.PublishFailureWithDetail(ctx, b.detail, errs...)
+	reporter.publishWithOutcome(ctx, b.detail, true, failFromErrors(errs...), b.usageKnown)
 	return true
 }
 
@@ -974,10 +994,6 @@ func parseInteractionsUsageDetail(node gjson.Result) usage.Detail {
 	return detail
 }
 
-func hasUsageDetail(detail usage.Detail) bool {
-	return hasNonZeroTokenUsage(detail)
-}
-
 func ParseInteractionsUsage(data []byte) usage.Detail {
 	root := gjson.ParseBytes(data)
 	node := firstExistingUsageNode(root, "usage", "total_usage", "metadata.total_usage", "metadata.usage", "usageMetadata", "usage_metadata", "interaction.usage", "interaction.total_usage", "interaction.metadata.total_usage")
@@ -1018,10 +1034,11 @@ func ParseInteractionsStreamUsage(line []byte) (usage.Detail, bool) {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
 	}
-	detail := ParseInteractionsUsage(payload)
-	if !hasUsageDetail(detail) {
+	root := gjson.ParseBytes(payload)
+	if !firstExistingUsageNode(root, "usage", "total_usage", "metadata.total_usage", "metadata.usage", "usageMetadata", "usage_metadata", "interaction.usage", "interaction.total_usage", "interaction.metadata.total_usage").Exists() {
 		return usage.Detail{}, false
 	}
+	detail := ParseInteractionsUsage(payload)
 	return detail, true
 }
 
@@ -1049,11 +1066,7 @@ func ParseGeminiStreamUsage(line []byte) (usage.Detail, bool) {
 	if !node.Exists() {
 		return usage.Detail{}, false
 	}
-	detail := parseGeminiFamilyUsageDetail(node)
-	if !hasNonZeroTokenUsage(detail) {
-		return usage.Detail{}, false
-	}
-	return detail, true
+	return parseGeminiFamilyUsageDetail(node), true
 }
 
 func firstExistingUsageNode(root gjson.Result, paths ...string) gjson.Result {

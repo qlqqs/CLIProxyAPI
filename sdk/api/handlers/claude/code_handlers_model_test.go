@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/tidwall/gjson"
 )
@@ -45,6 +47,50 @@ func TestClaudeModelsResponseUsesConfiguredDisplayName(t *testing.T) {
 		}
 	}
 	t.Fatalf("model %q not found in response", modelID)
+}
+
+func TestClaudeModelsResponseUsesCredentialScope(t *testing.T) {
+	const (
+		allowedClient = "claude-scope-allowed-client"
+		outsideClient = "claude-scope-outside-client"
+		allowedModel  = "claude-scope-allowed-model"
+		outsideModel  = "claude-scope-outside-model"
+	)
+	registryRef := registry.GetGlobalRegistry()
+	registryRef.RegisterClient(allowedClient, "claude", []*registry.ModelInfo{{ID: allowedModel, Object: "model"}})
+	registryRef.RegisterClient(outsideClient, "claude", []*registry.ModelInfo{{ID: outsideModel, Object: "model"}})
+	t.Cleanup(func() {
+		registryRef.UnregisterClient(allowedClient)
+		registryRef.UnregisterClient(outsideClient)
+	})
+
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	request := httptest.NewRequest("GET", "/v1/models", nil)
+	request = request.WithContext(coreexecutor.WithCredentialScope(context.Background(), coreexecutor.NewCredentialScope(allowedClient)))
+	ginContext.Request = request
+	NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{}).ClaudeModels(ginContext)
+
+	var response struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &response); errUnmarshal != nil {
+		t.Fatalf("decode response: %v", errUnmarshal)
+	}
+	var foundAllowed bool
+	for _, model := range response.Data {
+		if model.ID == outsideModel {
+			t.Fatalf("scoped response contains outside model %q", outsideModel)
+		}
+		if model.ID == allowedModel {
+			foundAllowed = true
+		}
+	}
+	if !foundAllowed {
+		t.Fatalf("scoped response does not contain %q: %s", allowedModel, recorder.Body.String())
+	}
 }
 
 func TestClaudeModelsResponseDisablesModelListCloaking(t *testing.T) {

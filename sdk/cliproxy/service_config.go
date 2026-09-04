@@ -2,6 +2,7 @@ package cliproxy
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"time"
 
@@ -115,10 +116,24 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 	}
 
 	s.cfgMu.Lock()
+	oldCfg := s.cfg
 	s.cfg = newCfg
 	s.cfgMu.Unlock()
 	s.configSequence++
+	if carpoolConfigChangeRequiresRestart(oldCfg, newCfg) {
+		log.Warn("carpool configuration changed; restart CLIProxyAPI to apply the new carpool settings")
+	}
 	return configCommit{cfg: newCfg, sequence: s.configSequence}
+}
+
+func carpoolConfigChangeRequiresRestart(oldCfg, newCfg *config.Config) bool {
+	if oldCfg == nil || newCfg == nil {
+		return false
+	}
+	if !oldCfg.Carpool.Enabled && !newCfg.Carpool.Enabled {
+		return false
+	}
+	return !reflect.DeepEqual(oldCfg.Carpool, newCfg.Carpool)
 }
 
 func (s *Service) configCommitCurrent(commit configCommit) bool {

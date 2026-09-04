@@ -89,16 +89,21 @@ type requestLifecycleTracker struct {
 	once         sync.Once
 	ctx          context.Context
 	host         PluginInterceptorHost
+	observer     func(context.Context, pluginapi.RequestCompletion)
 	skipPluginID string
 	completion   pluginapi.RequestCompletion
 }
 
 func (h *BaseAPIHandler) newRequestLifecycleTracker(ctx context.Context, sourceFormat, model, requestedModel string, stream bool, metadata map[string]any, skipPluginID string) *requestLifecycleTracker {
-	requestID := uuid.NewString()
+	requestID := requestLifecycleIDFromContext(ctx)
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
 	traceID := logging.GetRequestID(ctx)
 	return &requestLifecycleTracker{
 		ctx:          ctx,
 		host:         h.interceptorHost(),
+		observer:     h.RequestCompletionObserver,
 		skipPluginID: skipPluginID,
 		completion: pluginapi.RequestCompletion{
 			RequestID:      requestID,
@@ -131,6 +136,9 @@ func (t *requestLifecycleTracker) complete(outcome pluginapi.RequestCompletionOu
 		completion.CompletedAt = time.Now()
 		if err != nil {
 			completion.Error = err.Error()
+		}
+		if t.observer != nil {
+			t.observer(t.ctx, completion)
 		}
 		if t.skipPluginID != "" {
 			if host, ok := t.host.(requestLifecycleSkipHost); ok {

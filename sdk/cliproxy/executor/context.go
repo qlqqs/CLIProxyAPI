@@ -8,9 +8,35 @@ import (
 type downstreamWebsocketContextKey struct{}
 type requireUpstreamWebsocketContextKey struct{}
 type upstreamAttemptTrackerContextKey struct{}
+type credentialScopeContextKey struct{}
 
 type upstreamAttemptTracker struct {
 	attempted atomic.Bool
+}
+
+// WithCredentialScope stores an immutable credential scope for downstream execution.
+// A nil scope preserves unrestricted legacy behavior. An existing enforced scope
+// cannot be replaced or cleared by nested execution.
+func WithCredentialScope(ctx context.Context, scope *CredentialScope) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if CredentialScopeFromContext(ctx) != nil {
+		return ctx
+	}
+	if scope == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, credentialScopeContextKey{}, scope)
+}
+
+// CredentialScopeFromContext returns the request credential scope, if one is enforced.
+func CredentialScopeFromContext(ctx context.Context) *CredentialScope {
+	if ctx == nil {
+		return nil
+	}
+	scope, _ := ctx.Value(credentialScopeContextKey{}).(*CredentialScope)
+	return scope
 }
 
 // WithDownstreamWebsocket marks the current request as coming from a downstream websocket connection.

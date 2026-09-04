@@ -53,6 +53,29 @@ func TestMetadataConfigFieldsExposePluginSchema(t *testing.T) {
 	}
 }
 
+func TestUsageRecordJSONRoundTripPreservesCorrelationFields(t *testing.T) {
+	want := UsageRecord{EventID: "event-1", RequestID: "request-1", UsageKnown: true, Provider: "openai"}
+	raw, errMarshal := json.Marshal(want)
+	if errMarshal != nil {
+		t.Fatalf("Marshal() error = %v", errMarshal)
+	}
+	var got UsageRecord
+	if errUnmarshal := json.Unmarshal(raw, &got); errUnmarshal != nil {
+		t.Fatalf("Unmarshal() error = %v", errUnmarshal)
+	}
+	if got.EventID != want.EventID || got.RequestID != want.RequestID || got.UsageKnown != want.UsageKnown {
+		t.Fatalf("round-trip correlation = event %q request %q known %v", got.EventID, got.RequestID, got.UsageKnown)
+	}
+
+	var legacy UsageRecord
+	if errUnmarshal := json.Unmarshal([]byte(`{"Provider":"openai"}`), &legacy); errUnmarshal != nil {
+		t.Fatalf("legacy Unmarshal() error = %v", errUnmarshal)
+	}
+	if legacy.EventID != "" || legacy.RequestID != "" || legacy.UsageKnown {
+		t.Fatalf("legacy correlation fields = event %q request %q known %v, want zero values", legacy.EventID, legacy.RequestID, legacy.UsageKnown)
+	}
+}
+
 func TestAuthParseResponseSupportsMultipleAuths(t *testing.T) {
 	resp := AuthParseResponse{
 		Handled: true,

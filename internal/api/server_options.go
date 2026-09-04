@@ -11,12 +11,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 type serverOptionConfig struct {
 	extraMiddleware       []gin.HandlerFunc
 	engineConfigurator    func(*gin.Engine)
-	routerConfigurator    func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)
+	routerConfigurators   []func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)
+	completionObservers   []func(context.Context, pluginapi.RequestCompletion)
+	noRouteHandlers       []func(*gin.Context) bool
 	requestLoggerFactory  func(*config.Config, string) logging.RequestLogger
 	localPassword         string
 	keepAliveEnabled      bool
@@ -70,7 +73,28 @@ func WithEngineConfigurator(fn func(*gin.Engine)) ServerOption {
 // WithRouterConfigurator appends a callback after default routes are registered.
 func WithRouterConfigurator(fn func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)) ServerOption {
 	return func(cfg *serverOptionConfig) {
-		cfg.routerConfigurator = fn
+		if fn != nil {
+			cfg.routerConfigurators = append(cfg.routerConfigurators, fn)
+		}
+	}
+}
+
+// WithRequestCompletionObserver appends an observer for logical request completion events.
+func WithRequestCompletionObserver(observer func(context.Context, pluginapi.RequestCompletion)) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		if observer != nil {
+			cfg.completionObservers = append(cfg.completionObservers, observer)
+		}
+	}
+}
+
+// WithNoRouteHandler appends a handler consulted before the built-in plugin NoRoute handler.
+// The handler returns true after it writes the response.
+func WithNoRouteHandler(handler func(*gin.Context) bool) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		if handler != nil {
+			cfg.noRouteHandlers = append(cfg.noRouteHandlers, handler)
+		}
 	}
 }
 

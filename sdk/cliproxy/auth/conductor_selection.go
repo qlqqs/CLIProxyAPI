@@ -58,6 +58,7 @@ type authSelectionEligibility struct {
 	requiredKind     string
 	credentialPolicy string
 	disallowFreeAuth bool
+	credentialScope  *cliproxyexecutor.CredentialScope
 }
 
 func withRequiredAuthKind(ctx context.Context, requiredKind string) context.Context {
@@ -77,7 +78,10 @@ func credentialPolicyFromContext(ctx context.Context) string {
 }
 
 func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecutor.Options) authSelectionEligibility {
-	eligibility := authSelectionEligibility{disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata)}
+	eligibility := authSelectionEligibility{
+		disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata),
+		credentialScope:  opts.CredentialScope,
+	}
 	if ctx != nil {
 		eligibility.requiredKind, _ = ctx.Value(requiredAuthKindContextKey{}).(string)
 		eligibility.credentialPolicy, _ = ctx.Value(credentialPolicyContextKey{}).(string)
@@ -89,6 +93,9 @@ func (e authSelectionEligibility) allows(auth *Auth) bool {
 	if auth == nil {
 		return false
 	}
+	if !e.credentialScope.Allows(auth.ID) {
+		return false
+	}
 	if e.requiredKind != "" && auth.AuthKind() != e.requiredKind {
 		return false
 	}
@@ -96,6 +103,29 @@ func (e authSelectionEligibility) allows(auth *Auth) bool {
 		return false
 	}
 	return !e.disallowFreeAuth || !isFreeCodexAuth(auth)
+}
+
+func credentialScopeViolationError() *Error {
+	return &Error{
+		Code:       "credential_scope_violation",
+		Message:    "credential selection exceeded request scope",
+		HTTPStatus: http.StatusForbidden,
+	}
+}
+
+func credentialScopeUnsupportedError() *Error {
+	return &Error{
+		Code:       "credential_scope_unsupported",
+		Message:    "credential-scoped requests are unsupported by Home dispatch",
+		HTTPStatus: http.StatusForbidden,
+	}
+}
+
+func validateCredentialScopeSelection(scope *cliproxyexecutor.CredentialScope, selected *Auth) error {
+	if !scope.Enforced() || selected == nil || scope.Allows(selected.ID) {
+		return nil
+	}
+	return credentialScopeViolationError()
 }
 
 func (m *Manager) syncSchedulerFromSnapshot(auths []*Auth) {
@@ -812,6 +842,9 @@ func (m *Manager) pickViaPluginScheduler(ctx context.Context, scheduler PluginSc
 	}
 	if selected := pickSchedulerAuthByID(candidates, resp.AuthID); selected != nil {
 		return selected, true, nil
+	}
+	if authID := strings.TrimSpace(resp.AuthID); opts.CredentialScope.Enforced() && authID != "" && !opts.CredentialScope.Allows(authID) {
+		return nil, true, credentialScopeViolationError()
 	}
 
 	strategy, okStrategy := builtinSchedulerStrategy(resp.DelegateBuiltin)
@@ -1544,6 +1577,9 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	if selected == nil {
 		return nil, nil, &Error{Code: "auth_not_found", Message: "selector returned no auth"}
 	}
+	if errScope := validateCredentialScopeSelection(opts.CredentialScope, selected); errScope != nil {
+		return nil, nil, errScope
+	}
 	authCopy := selected.Clone()
 	if !selected.indexAssigned {
 		m.mu.Lock()
@@ -1769,6 +1805,9 @@ func (m *Manager) pickNext(ctx context.Context, provider, model string, opts cli
 	if selected == nil {
 		return nil, nil, &Error{Code: "auth_not_found", Message: "selector returned no auth"}
 	}
+	if errScope := validateCredentialScopeSelection(opts.CredentialScope, selected); errScope != nil {
+		return nil, nil, errScope
+	}
 	authCopy := selected.Clone()
 	if !selected.indexAssigned {
 		m.mu.Lock()
@@ -1877,6 +1916,9 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	if selected == nil {
 		return nil, nil, "", &Error{Code: "auth_not_found", Message: "selector returned no auth"}
 	}
+	if errScope := validateCredentialScopeSelection(opts.CredentialScope, selected); errScope != nil {
+		return nil, nil, "", errScope
+	}
 	providerKey := executorKeyFromAuth(selected)
 	executor, okExecutor := m.Executor(providerKey)
 	if !okExecutor {
@@ -1964,6 +2006,9 @@ func (m *Manager) pickNextMixed(ctx context.Context, providers []string, model s
 	}
 	if selected == nil {
 		return nil, nil, "", &Error{Code: "auth_not_found", Message: "selector returned no auth"}
+	}
+	if errScope := validateCredentialScopeSelection(opts.CredentialScope, selected); errScope != nil {
+		return nil, nil, "", errScope
 	}
 	executor, okExecutor := m.Executor(providerKey)
 	if !okExecutor {

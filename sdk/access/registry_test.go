@@ -79,3 +79,13 @@ func TestRegisteredProvidersIgnoresStaleExclusiveProvider(t *testing.T) {
 		t.Fatalf("RegisteredProviders()[0] = %q, want test-a", providers[0].Identifier())
 	}
 }
+
+func TestExclusiveProviderReturnsSnapshot(t *testing.T) {
+	ClearExclusiveProvider()
+	defer ClearExclusiveProvider()
+
+	SetExclusiveProvider("test-exclusive")
+	if got := ExclusiveProvider(); got != "test-exclusive" {
+		t.Fatalf("ExclusiveProvider() = %q, want test-exclusive", got)
+	}
+}

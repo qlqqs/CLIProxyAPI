@@ -41,6 +41,23 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
+# Optional administrator-managed carpool module. It is disabled by default.
+# The SQLite file must live on persistent local storage and may only be opened by one CPA process.
+carpool:
+  enabled: false
+  database-path: "./data/carpool.db"
+  report-timezone: "UTC"
+  usage-retention-days: 90
+  audit-retention-days: 180
+  session:
+    absolute-ttl: "24h"
+    idle-ttl: "2h"
+    cookie-secure: true
+  # Additional exact origins allowed to submit browser login and state-changing requests.
+  trusted-origins: []
+  # Forwarded client addresses are trusted only when the direct peer is inside one of these CIDRs.
+  trusted-proxy-cidrs: []
+
 # Enable debug logging
 debug: false
 
