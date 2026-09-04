@@ -1,0 +1,4 @@
+interface:
+  display_name: "Trellis 规划审查"
+  short_description: "用独立子代理对复杂 Trellis 规划进行多轮压力测试"
+  default_prompt: "使用 $trellis-brainstorm-review 收敛当前复杂需求，并让独立审查代理进行多轮反方审查。"
