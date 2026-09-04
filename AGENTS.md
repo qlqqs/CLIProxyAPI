@@ -45,7 +45,11 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Comments in English only
 - If editing code that already contains non-English comments, translate them to English (don’t add new non-English comments)
 - For user-visible strings, keep the existing language used in that file/area
-- New Markdown docs should be in English unless the file is explicitly language-specific (e.g. `README_CN.md`)
+- New Markdown documentation for this fork, including Trellis PRDs, research,
+  designs, implementation plans, and code specs, must be written in Simplified
+  Chinese. Keep code identifiers, API fields, commands, and code snippets in
+  their original form. This rule does not change the English-only requirement
+  for code comments.
 - As a rule, do not make standalone changes to `internal/translator/`. You may modify it only as part of broader changes elsewhere.
 - If a task requires changing only `internal/translator/`, run `gh repo view --json viewerPermission -q .viewerPermission` to confirm you have `WRITE`, `MAINTAIN`, or `ADMIN`. If you do, you may proceed; otherwise, file a GitHub issue including the goal, rationale, and the intended implementation code, then stop further work.
 - `internal/runtime/executor/` should contain executors and their unit tests only. Place any helper/supporting files under `internal/runtime/executor/helps/`.

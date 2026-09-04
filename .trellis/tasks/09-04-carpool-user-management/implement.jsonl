@@ -1,0 +1,10 @@
+{"file":"AGENTS.md","reason":"仓库级命令、目录限制、代码注释语言、超时与必跑构建规则。"}
+{"file":".trellis/spec/backend/index.md","reason":"后端开发入口、跨层追踪清单和质量门槛。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"确定 carpool 新模块、API、SDK、executor 与 translator 的职责边界。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"database/sql、事务、参数化查询、文件权限和持久化约定。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"领域错误分类、协议错误转换、流式错误和安全诊断约定。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"logrus、请求关联、异步数据复制及敏感信息禁止项。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"gofmt、测试、构建、并发和确定性时钟等实施质量要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"身份、scope、SQLite、API、用量和前端之间的端到端数据流检查。"}
+{"file":".trellis/tasks/09-04-carpool-user-management/research/current-architecture.md","reason":"当前鉴权、选路、用量、存储和管理前端的源码证据与锚点。"}
+{"file":".trellis/tasks/09-04-carpool-user-management/research/remaining-decisions-review.md","reason":"子代理五轮审查后的最终产品决策、技术门槛与禁止降级项。"}

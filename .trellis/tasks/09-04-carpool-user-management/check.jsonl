@@ -1,0 +1,9 @@
+{"file":"AGENTS.md","reason":"复核仓库命令、受限目录、注释语言和安全编码硬规则。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"检查新增模块归属以及 SDK、API、executor、translator 边界。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"审查 SQLite 查询、事务、迁移、权限和错误清理模式。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审查 HTTP/流式错误分类、cause 保留和敏感错误脱敏。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"审查日志、审计和异步事件没有泄露凭证或请求内容。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行格式、测试、构建、并发、资源清理和确定性检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"逐层核对身份到选路、事实到报表、DTO 到前端的数据契约。"}
+{"file":".trellis/tasks/09-04-carpool-user-management/research/current-architecture.md","reason":"用现有源码证据校验实现没有遗漏入口或复用错误组件。"}
+{"file":".trellis/tasks/09-04-carpool-user-management/research/remaining-decisions-review.md","reason":"按独立审查结论检查隔离、兼容、用量语义和发布阻断项。"}
