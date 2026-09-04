@@ -28,3 +28,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 完成 Trellis 项目规范初始化
+<!-- trellis-session: v=2 fp=736cbfc49762a2da -->
+
+**Date**: 2026-09-04
+**Task**: 完成 Trellis 项目规范初始化
+**Branch**: `main`
+
+### Summary
+
+提交 Trellis 0.6.16 多平台工作流、项目级后端规范与校验脚本；补充 Python 缓存忽略规则，完成生成物、格式、测试和构建检查，并归档 bootstrap 任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4db15f4` | chore(trellis): bootstrap project workflow |
+
+### Status
+
+[OK] **Completed**
