@@ -3,7 +3,7 @@
   "name": "passenger-access-quota",
   "title": "乘客改密说明与账号原生配额展示",
   "description": "保留改密门禁并解释数据仍在，按 CPA 原生窗口展示账号配额和缺失状态",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -12,7 +12,7 @@
   "assignee": "qlqqs",
   "createdAt": "2026-09-05",
   "completedAt": null,
-  "branch": null,
+  "branch": "feature/carpool-final-delivery",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "09-04-passenger-quota-usage",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "2026-09-14 状态校正：主体已随65826c03实现，不再标记planning；本轮随passenger-billing进行真实浏览器集成验收。历史PRD未验证条目不自动勾选；最终覆盖与限制见交付报告。",
   "meta": {}
 }

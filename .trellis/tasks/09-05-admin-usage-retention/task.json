@@ -3,7 +3,7 @@
   "name": "admin-usage-retention",
   "title": "管理端请求明细与数据保留",
   "description": "扩展逻辑请求明细筛选和展开，提供可配置保留及独立清理和本期重置操作",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -12,7 +12,7 @@
   "assignee": "qlqqs",
   "createdAt": "2026-09-05",
   "completedAt": null,
-  "branch": null,
+  "branch": "feature/carpool-final-delivery",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "09-04-passenger-quota-usage",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "2026-09-14 状态校正：主体已随65826c03实现，不再标记planning；本轮随passenger-billing进行真实浏览器集成验收。历史PRD未验证条目不自动勾选；最终覆盖与限制见交付报告。",
   "meta": {}
 }

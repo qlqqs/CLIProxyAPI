@@ -115,3 +115,59 @@ worker 退出后不自动重启。迟到回调若等待缓存空间，需要显�
 `Close` 推进；存在等待者时 `RetryPending` 必须返回记账不可用，防止 Close 越过尚未
 重新入队的记录关闭数据库。本轮不增加通用生产者 join，因此成功关停后仍出现生产者
 属于未承诺的尾部场景，不能声称该场景有自动恢复保证。
+
+## 9. 请求价格冻结与执行前校验（2026-09-14 追加交付）
+
+本节是用户随后要求完成的价格功能，替代第 1 节中“不属于此轮”的历史范围描述；
+不改变简化可靠性的取舍。
+
+### 适用入口与签名
+
+- `pricing.Freeze(*Catalog) *Snapshot`、`(*Manager).Snapshot() *Snapshot`：只读目录视图。
+- `(*Snapshot).Lookup(string) (ModelPrice, bool)`：返回独立价格值；调用方不能修改目录。
+- `runtime.NewAuthorizationSnapshot(..., ...*pricing.Snapshot)`：保留旧调用兼容性。
+- `executor.WithRequestValidator(context.Context, RequestValidator) context.Context`；
+  `RequestValidator` 签名为 `func(context.Context, string, Request) error`。
+- `executor.ValidateRequest(context.Context, string, Request) error`：未安装钩子则无操作。
+
+### 数据流契约
+
+生成授权时获取一次目录快照，同一引用同时供执行前校验和事件计价使用。请求中途更新
+目录不得改变重试、流式尾部或延迟异步事件的价格与 hash；更新后授权的新请求使用新目录。
+`Manager.Current()` 返回防御性副本，嵌套 tier 和有理数也不能泄漏可变引用。
+
+校验位于实际模型解析、账号选择及插件改写之后，上游调用之前。普通执行、流式、
+模型池、刷新后重试、嵌套执行都应传递上下文。HTTP handler 即使从 `Background()` 派生
+执行上下文，也必须继承拼车请求的 validator、同步 observer 和授权快照，同时保留调用方
+取消语义；只复制 scope/request ID 不能满足此契约。
+
+### 错误矩阵与示例
+
+| 场景 | 结果 |
+| --- | --- |
+| 当前实际模型有价格 | 使用授权时目录继续执行 |
+| 实际模型没有价格 | 本地 HTTP 422，`error.code=model_price_not_configured`，该次上游调用数不增加 |
+| 客户端别名有价、解析后模型无价 | 拒绝，不按客户端别名猜价 |
+| 本地校验拒绝 | 不更新账号冷却或健康失败状态，不扩大 scope |
+| 旧全局 Key 未安装钩子 | 原行为不变 |
+| 已执行事件缺必要 Token 维度 | 费用未知，不伪造零费用 |
+
+正确：目录 A 授权 → 更新 B → 原请求校验/计价仍用 A → 后续请求用 B。
+错误：writer 收到事件时重新读取 `Manager.Current()`，或只在入站模型名上校验。
+
+### 必须覆盖的断言
+
+必须通过真实 HTTP 链验证 422 和零上游调用，不能只直接调用 validator。用同步屏障或
+显式更新控制 A/B 次序，核对持久化金额及 hash；覆盖异步回退、深拷贝 tiers、流式及重试。
+禁止用新迁移、全局封锁或持久化 outbox 替代请求快照。
+
+## 10. 清理与账期操作不能混用截止时间
+
+`Control.PreviewRetention` 与 `RunRetention` 中，只有 `usage_details` 根据明细保留
+天数计算过期 cutoff；永久保留时，显式管理员明细清理仍可针对当前已完成记录。
+`reset_current_period`、`closed_periods` 必须使用当前时刻，不得减去 90/180/365 天。
+否则预览和执行可能均返回成功，却根本没有重置当前账期。
+
+必须在真实 SQLite 中固定时钟覆盖三个保留档位：已确认 0.225 重置后净额为 0，限额、
+上车锚点和账期边界不变，历史/未来账期不被重置；`period_to == now` 的已结束账期可删除。
+浏览器测试必须断言实际金额变化，不能只断言 HTTP 202 或成功 toast。

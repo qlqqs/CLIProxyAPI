@@ -12,7 +12,7 @@
   "assignee": "qlqqs",
   "createdAt": "2026-09-05",
   "completedAt": null,
-  "branch": "main",
+  "branch": "feature/carpool-final-delivery",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "09-04-passenger-quota-usage",
   "relatedFiles": [],
-  "notes": "2026-09-14 用户批准的简化修复已完成并通过独立检查及最终全量test/vet/扩大race/两种构建。固定pending背压、非计费隔离、插件顺序、清理保护；重启只保留不完整提示，不历史全局封锁。无新迁移/租约体系。接受crash精确恢复限制。价格冻结/缺价前置/浏览器仍待完成；不提交归档。",
+  "notes": "2026-09-14 本轮四项代码、真实浏览器及独立检查完成；全量test/vet、双构建通过。用户已确认两批本地提交及归档；见research/delivery-check.md和CARPOOL_RELEASE_NOTES.md。历史PRD未验证条目不自动完成。",
   "meta": {}
 }

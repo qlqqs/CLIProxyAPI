@@ -163,3 +163,14 @@ response, err := manager.Execute(ctx, provider, request, options)
 ```
 
 `scope` 必须来自服务端授权快照，不能由客户端 header、query 或 body 构造。
+
+## 浏览器配额与真实验收补充（2026-09-14）
+
+- 原生配额 `used_percent` 和金额 `usage_percent` 必须区分缺失与数字零。
+  `Number(null)` 会伪造零，不可用于判断是否具有观测数据。
+- 严格 CSP 下不能依赖 HTML `style` 属性驱动比例。使用原生 `progress` 的 `value/max`
+  和外部 CSS；未知比例不生成数值进度条，已知零保留，超额实际值不可截断成限额。
+- 同时验证语义和像素：正确的 aria 并不证明视觉宽度正确；真实浏览器中检查 53%、81%
+  的不同宽度、状态-only 无假进度和移动端布局，不用放宽 CSP 解决样式问题。
+- `test/carpool-browser.mjs` 只接收 `synthetic=true` 且 loopback 的 fixture，阻止外部请求。
+  截图必须在一次性秘密弹窗关闭后生成；结果与日志不保存 API Key 或临时密码。

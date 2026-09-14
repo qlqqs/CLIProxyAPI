@@ -373,11 +373,11 @@ function memberTable(items) {
 }
 
 function billingMarkup(billing) {
-  if (!billing || !billing.limit_usd) return `<span class="quota-missing">待管理员设置额度</span>`;
-  const percent = Number(billing.usage_percent);
-  const width = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+  if (!billing || billing.limit_usd == null || billing.limit_usd === "") return `<span class="quota-missing">待管理员设置额度</span>`;
+  const progress = percentageMeter(billing.usage_percent, "已用金额比例");
+  const meter = progress ? `<div class="quota-meter">${progress}<b>${escapeHTML(formatQuotaPercent(billing.usage_percent))}</b></div>` : "";
   const status = billing.status === "exhausted" || billing.status === "overage" ? "额度已用尽" : "可用";
-  return `<div class="billing-meter"><div class="billing-line"><strong>$${escapeHTML(billing.used_usd || "0")}</strong><span>/ $${escapeHTML(billing.limit_usd)}</span><em>${escapeHTML(status)}</em></div><div class="quota-meter-track" role="progressbar" aria-label="已用金额比例" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${escapeHTML(String(percent))}" style="--quota-width:${width}%"><span></span></div><small>剩余 $${escapeHTML(billing.remaining_usd || "0")} · ${escapeHTML(formatTime(billing.period_to))}${billing.unknown_cost_events ? ` · ${formatNumber(billing.unknown_cost_events)} 条费用未知` : ""}</small></div>`;
+  return `<div class="billing-meter"><div class="billing-line"><strong>$${escapeHTML(billing.used_usd || "0")}</strong><span>/ $${escapeHTML(billing.limit_usd)}</span><em>${escapeHTML(status)}</em></div>${meter}<small>剩余 $${escapeHTML(billing.remaining_usd || "0")}${billing.status === "overage" ? ` · 超额 $${escapeHTML(billing.overage_usd || "0")}` : ""} · ${escapeHTML(formatTime(billing.period_to))}${billing.unknown_cost_events ? ` · ${formatNumber(billing.unknown_cost_events)} 条费用未知` : ""}</small></div>`;
 }
 
 function accountTable(items) {
@@ -388,16 +388,21 @@ function accountTable(items) {
 }
 
 function formatQuotaPercent(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "";
-  return `${number.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%`;
+  if (!Number.isFinite(value)) return "";
+  return `${value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%`;
+}
+
+function percentageMeter(percent, label) {
+  if (!Number.isFinite(percent)) return "";
+  const value = Math.max(0, Math.min(100, percent));
+  return `<progress class="quota-meter-track" role="progressbar" aria-label="${escapeHTML(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${value}" aria-valuetext="${escapeHTML(formatQuotaPercent(percent))}" max="100" value="${value}">${escapeHTML(formatQuotaPercent(percent))}</progress>`;
 }
 
 function quotaProgress(window) {
-  const percent = Number(window.used_percent);
-  if (!Number.isFinite(percent)) return "";
-  const width = Math.max(0, Math.min(100, percent));
-  return `<div class="quota-meter"><div class="quota-meter-track" role="progressbar" aria-label="${escapeHTML(window.label || window.id)} 已用比例" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${escapeHTML(String(percent))}" style="--quota-width:${width}%"><span></span></div><b>${escapeHTML(formatQuotaPercent(percent))}</b></div>`;
+  const percent = window.used_percent;
+  const meter = percentageMeter(percent, `${window.label || window.id} 已用比例`);
+  if (!meter) return "";
+  return `<div class="quota-meter">${meter}<b>${escapeHTML(formatQuotaPercent(percent))}</b></div>`;
 }
 
 function quotaWindowMarkup(window) {

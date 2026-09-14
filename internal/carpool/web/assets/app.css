@@ -130,8 +130,10 @@ tr:last-child td { border-bottom: 0; }
 .quota-window-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 7px; font-size: 11px; }
 .quota-window-head span, .quota-window small, .quota-stale { color: var(--muted); font-size: 11px; }
 .quota-meter { display: flex; align-items: center; gap: 8px; }
-.quota-meter-track { height: 7px; flex: 1; overflow: hidden; border-radius: 999px; background: #0e171b; }
-.quota-meter-track span { display: block; width: var(--quota-width); height: 100%; border-radius: inherit; background: var(--accent); transition: width 200ms ease; }
+.quota-meter-track { display: block; appearance: none; width: 100%; min-width: 0; height: 7px; flex: 1; overflow: hidden; border: 0; border-radius: 999px; background: #0e171b; }
+.quota-meter-track::-webkit-progress-bar { border-radius: 999px; background: #0e171b; }
+.quota-meter-track::-webkit-progress-value { border-radius: 999px; background: var(--accent); }
+.quota-meter-track::-moz-progress-bar { border-radius: 999px; background: var(--accent); }
 .quota-meter b { min-width: 42px; text-align: right; font-family: var(--mono); font-size: 11px; font-weight: 600; }
 .quota-status-only { color: var(--info); font-size: 11px; }
 .quota-missing { color: var(--muted); font-size: 12px; }
