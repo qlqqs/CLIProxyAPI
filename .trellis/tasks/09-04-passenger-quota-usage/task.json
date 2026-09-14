@@ -1,0 +1,30 @@
+{
+  "id": "passenger-quota-usage",
+  "name": "passenger-quota-usage",
+  "title": "乘客端密码重置、用量配额与管理记录增强",
+  "description": "修复乘客端密码重置后的访问状态，并完善乘客配额、用量进度展示及管理端使用记录详情",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "qlqqs",
+  "assignee": "qlqqs",
+  "createdAt": "2026-09-04",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-05-passenger-access-quota",
+    "09-05-passenger-billing",
+    "09-05-admin-usage-retention"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "2026-09-14 金额子任务完成用户批准的简化记账修复（同步/运行中503/固定pending背压/非计费隔离/清理保护），全量检查通过；重启仅提示不完整，不全局历史封锁，接受crash精确恢复限制。父任务仍待价格冻结、缺价前置和浏览器验收，未提交归档。",
+  "meta": {}
+}

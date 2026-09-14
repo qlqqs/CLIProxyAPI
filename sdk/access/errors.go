@@ -10,11 +10,12 @@ import (
 type AuthErrorCode string
 
 const (
-	AuthErrorCodeNoCredentials     AuthErrorCode = "no_credentials"
-	AuthErrorCodeInvalidCredential AuthErrorCode = "invalid_credential"
-	AuthErrorCodeNotHandled        AuthErrorCode = "not_handled"
-	AuthErrorCodeInternal          AuthErrorCode = "internal_error"
-	AuthErrorCodeForbidden         AuthErrorCode = "forbidden"
+	AuthErrorCodeNoCredentials         AuthErrorCode = "no_credentials"
+	AuthErrorCodeInvalidCredential     AuthErrorCode = "invalid_credential"
+	AuthErrorCodeNotHandled            AuthErrorCode = "not_handled"
+	AuthErrorCodeInternal              AuthErrorCode = "internal_error"
+	AuthErrorCodeForbidden             AuthErrorCode = "forbidden"
+	AuthErrorCodeAccountingUnavailable AuthErrorCode = "accounting_unavailable"
 )
 
 // AuthError carries authentication failure details and HTTP status.
@@ -97,4 +98,9 @@ func IsAuthErrorCode(authErr *AuthError, code AuthErrorCode) bool {
 		return false
 	}
 	return authErr.Code == code
+}
+
+// NewAccountingUnavailableError exposes only the fixed safe admission code.
+func NewAccountingUnavailableError() *AuthError {
+	return newAuthError(AuthErrorCodeAccountingUnavailable, "accounting_unavailable", http.StatusServiceUnavailable, nil)
 }

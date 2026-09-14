@@ -280,10 +280,11 @@ type Manager struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 
-	mu     sync.Mutex
-	cond   *sync.Cond
-	queue  []queueItem
-	closed bool
+	mu         sync.Mutex
+	cond       *sync.Cond
+	queue      []queueItem
+	closed     bool
+	publishing int
 
 	pluginsMu sync.RWMutex
 	plugins   []Plugin
@@ -394,19 +395,33 @@ func (m *Manager) UnregisterNamed(name string) {
 	m.pluginsMu.Unlock()
 }
 
-// Publish enqueues a usage record for processing. If no plugin is registered
+// Publish synchronously observes a request record, then enqueues it for processing.
+// If no plugin is registered
 // the record will be discarded downstream.
 func (m *Manager) Publish(ctx context.Context, record Record) {
 	if m == nil {
 		return
 	}
-	// ensure worker is running even if Start was not called explicitly
+	// Register accepted publishers before observation so Stop also waits for
+	// synchronous callbacks, not only the asynchronous dispatch queue.
 	m.Start(context.Background())
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
+		// A late publisher must still let its owner retain occurred usage.
+		observeSynchronously(ctx, record)
 		return
 	}
+	m.publishing++
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.publishing--
+		m.mu.Unlock()
+		m.cond.Broadcast()
+	}()
+	ctx = observeSynchronously(ctx, record)
+	m.mu.Lock()
 	m.queue = append(m.queue, queueItem{ctx: ctx, record: record})
 	m.mu.Unlock()
 	m.cond.Signal()
@@ -415,7 +430,7 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 func (m *Manager) run(ctx context.Context) {
 	for {
 		m.mu.Lock()
-		for !m.closed && len(m.queue) == 0 {
+		for len(m.queue) == 0 && (!m.closed || m.publishing > 0) {
 			m.cond.Wait()
 		}
 		if len(m.queue) == 0 && m.closed {

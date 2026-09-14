@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	carpoolbilling "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/billing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
+	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
 	carpoolservice "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/service"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	log "github.com/sirupsen/logrus"
@@ -36,6 +39,7 @@ type Config struct {
 	TrustedOrigins  []string
 	TrustedProxyNet []*net.IPNet
 	Now             func() time.Time
+	Pricing         interface{ Status() pricing.CatalogStatus }
 }
 
 // API exposes the isolated carpool browser API.
@@ -46,6 +50,7 @@ type API struct {
 	sessionTTL      time.Duration
 	trustedProxies  []*net.IPNet
 	now             func() time.Time
+	pricing         interface{ Status() pricing.CatalogStatus }
 }
 
 type optionalJSON[T any] struct {
@@ -77,7 +82,7 @@ func New(control *carpoolservice.Control, cfg Config) (*API, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &API{control: control, originValidator: validator, cookieSecure: cfg.CookieSecure, sessionTTL: cfg.SessionTTL, trustedProxies: cfg.TrustedProxyNet, now: cfg.Now}, nil
+	return &API{control: control, originValidator: validator, cookieSecure: cfg.CookieSecure, sessionTTL: cfg.SessionTTL, trustedProxies: cfg.TrustedProxyNet, now: cfg.Now, pricing: cfg.Pricing}, nil
 }
 
 // RegisterRoutes attaches only explicit API and static routes.
@@ -117,11 +122,21 @@ func (a *API) RegisterRoutes(engine *gin.Engine) {
 	admin.PATCH("/cars/:car_ref", a.requireMutation(), a.updateCar)
 	admin.GET("/cars/:car_ref/members", a.listMembers)
 	admin.POST("/cars/:car_ref/members", a.requireMutation(), a.moveMember)
+	admin.PATCH("/cars/:car_ref/members/:member_ref/quota", a.requireMutation(), a.updateMemberQuota)
 	admin.DELETE("/cars/:car_ref/members/:member_ref", a.requireMutation(), a.removeMember)
 	admin.GET("/cars/:car_ref/accounts", a.listAccounts)
 	admin.POST("/cars/:car_ref/accounts", a.requireMutation(), a.moveAccount)
 	admin.DELETE("/cars/:car_ref/accounts/:account_ref", a.requireMutation(), a.removeAccount)
 	admin.GET("/usage", a.adminUsage)
+	admin.GET("/usage/requests", a.adminUsageRequests)
+	admin.GET("/usage/requests/:request_id", a.adminUsageRequest)
+	admin.GET("/billing/periods", a.adminBillingPeriods)
+	admin.GET("/pricing", a.pricingStatus)
+	admin.GET("/retention", a.retentionSettings)
+	admin.PATCH("/retention", a.requireMutation(), a.updateRetention)
+	admin.POST("/retention/preview", a.requireMutation(), a.previewRetention)
+	admin.POST("/retention/jobs", a.requireMutation(), a.runRetention)
+	admin.GET("/retention/jobs/:job_id", a.retentionJob)
 	admin.GET("/audit-events", a.auditEvents)
 }
 
@@ -374,7 +389,11 @@ func (a *API) myCar(c *gin.Context) {
 		writeMappedError(c, errCar)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"car": carResponse(summary), "report_timezone": a.control.ReportLocationName()})
+	response := gin.H{"car": carResponse(summary), "report_timezone": a.control.ReportLocationName()}
+	if _, billing, errBilling := a.control.PassengerBilling(c.Request.Context(), identity.User); errBilling == nil {
+		response["billing"] = billingResponse(billing)
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (a *API) myMemberUsage(c *gin.Context) {
@@ -390,7 +409,7 @@ func (a *API) myMemberUsage(c *gin.Context) {
 		aggregate := view.Usage
 		unknown += aggregate.UnknownUsageCount
 		incomplete += aggregate.IncompleteCount
-		items = append(items, memberUsageResponse(aggregate, view.Left))
+		items = append(items, memberUsageResponse(aggregate, view.Left, view.Billing))
 	}
 	c.JSON(http.StatusOK, reportResponse(period, items, unknown, incomplete))
 }
@@ -411,6 +430,7 @@ func (a *API) myAccounts(c *gin.Context) {
 			"status":      view.Health.Status,
 			"observed_at": optionalTime(view.Health.ObservedAt),
 			"stale":       view.Health.Stale,
+			"quota":       quotaResponse(view.Quota),
 			"usage": gin.H{
 				"logical_requests":     view.Usage.RequestCount,
 				"known_input_tokens":   view.Usage.KnownInputTokens,
@@ -421,6 +441,47 @@ func (a *API) myAccounts(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"period": period.Name, "data_from": period.From, "data_to": period.To, "items": items})
+}
+
+func quotaResponse(quota carpoolruntime.AccountQuota) gin.H {
+	windows := make([]gin.H, 0, len(quota.Windows))
+	for _, window := range quota.Windows {
+		windows = append(windows, gin.H{
+			"id":             window.ID,
+			"label":          window.Label,
+			"used_percent":   optionalFloat(window.UsedPercent),
+			"reset_at":       optionalTime(pointerTime(window.ResetAt)),
+			"window_minutes": optionalInt(window.WindowMinutes),
+			"status":         window.Status,
+		})
+	}
+	return gin.H{
+		"supported":   quota.Supported,
+		"observed_at": optionalTime(quota.ObservedAt),
+		"stale":       quota.Stale,
+		"windows":     windows,
+	}
+}
+
+func pointerTime(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
+func optionalFloat(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func optionalInt(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func (a *API) listUsers(c *gin.Context) {
@@ -613,33 +674,69 @@ func (a *API) updateCar(c *gin.Context) {
 
 func (a *API) listMembers(c *gin.Context) {
 	identity, _ := currentIdentity(c)
-	members, errMembers := a.control.ListMembers(c.Request.Context(), identity.User, c.Param("car_ref"))
+	members, errMembers := a.control.ListMembersWithBilling(c.Request.Context(), identity.User, c.Param("car_ref"))
 	if errMembers != nil {
 		writeMappedError(c, errMembers)
 		return
 	}
 	items := make([]gin.H, 0, len(members))
-	for _, member := range members {
-		items = append(items, gin.H{"member_ref": member.MemberRef, "display_name": member.DisplayName, "started_at": member.StartedAt})
+	for _, view := range members {
+		member := view.Membership
+		items = append(items, gin.H{"member_ref": member.MemberRef, "display_name": member.DisplayName, "started_at": member.StartedAt, "monthly_limit_usd": formatNanoUSD(member.MonthlyLimitNanoUSD), "billing_timezone": member.BillingTimezone, "billing": billingResponse(view.Billing)})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
 }
 
 func (a *API) moveMember(c *gin.Context) {
 	var request struct {
-		UserRef     string `json:"user_ref"`
-		DisplayName string `json:"display_name"`
+		UserRef         string  `json:"user_ref"`
+		DisplayName     string  `json:"display_name"`
+		MonthlyLimitUSD *string `json:"monthly_limit_usd"`
 	}
 	if !decodeJSON(c, &request) {
 		return
 	}
+	if request.MonthlyLimitUSD == nil {
+		writeMappedError(c, domain.ErrInvalid)
+		return
+	}
 	identity, _ := currentIdentity(c)
-	membership, errMove := a.control.MoveMember(c.Request.Context(), identity.User, c.Param("car_ref"), request.UserRef, request.DisplayName)
+	var limit *int64
+	if request.MonthlyLimitUSD != nil {
+		parsed, errParse := carpoolbilling.ParseNanoUSD(*request.MonthlyLimitUSD)
+		if errParse != nil {
+			writeMappedError(c, domain.ErrInvalid)
+			return
+		}
+		limit = &parsed
+	}
+	membership, errMove := a.control.MoveMemberWithLimit(c.Request.Context(), identity.User, c.Param("car_ref"), request.UserRef, request.DisplayName, limit)
 	if errMove != nil {
 		writeMappedError(c, errMove)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"member_ref": membership.MemberRef, "display_name": membership.DisplayName, "started_at": membership.StartedAt})
+	c.JSON(http.StatusCreated, membershipResponse(membership))
+}
+
+func (a *API) updateMemberQuota(c *gin.Context) {
+	var request struct {
+		MonthlyLimitUSD string `json:"monthly_limit_usd"`
+	}
+	if !decodeJSON(c, &request) {
+		return
+	}
+	limit, errParse := carpoolbilling.ParseNanoUSD(request.MonthlyLimitUSD)
+	if errParse != nil {
+		writeMappedError(c, domain.ErrInvalid)
+		return
+	}
+	identity, _ := currentIdentity(c)
+	membership, errUpdate := a.control.SetMemberMonthlyLimit(c.Request.Context(), identity.User, c.Param("car_ref"), c.Param("member_ref"), &limit)
+	if errUpdate != nil {
+		writeMappedError(c, errUpdate)
+		return
+	}
+	c.JSON(http.StatusOK, membershipResponse(membership))
 }
 
 func (a *API) removeMember(c *gin.Context) {
@@ -727,6 +824,219 @@ func (a *API) adminUsage(c *gin.Context) {
 		"account_ref": optionalString(query.AccountRef),
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func (a *API) adminUsageRequests(c *gin.Context) {
+	query, ok := usageRequestQuery(c)
+	if !ok {
+		return
+	}
+	identity, _ := currentIdentity(c)
+	page, err := a.control.AdminUsageRequests(c.Request.Context(), identity.User, query)
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	items := make([]gin.H, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, usageRequestResponse(item, false))
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": page.Total, "next_cursor": optionalString(page.NextCursor), "period": gin.H{"from": query.From, "to": query.To}})
+}
+
+func (a *API) adminUsageRequest(c *gin.Context) {
+	identity, _ := currentIdentity(c)
+	item, err := a.control.AdminUsageRequest(c.Request.Context(), identity.User, c.Param("request_id"))
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, usageRequestResponse(item, true))
+}
+
+func usageRequestResponse(item domain.UsageRequestDetail, includeEvents bool) gin.H {
+	r := item.Request
+	response := gin.H{"request_id": r.RequestID, "user_ref": optionalString(item.UserRef), "car_ref": optionalString(item.CarRef), "api_key_ref": optionalString(item.APIKeyRef), "member_ref": optionalString(r.MemberRefSnapshot), "display_name": optionalString(r.DisplayNameSnapshot), "model": optionalString(r.RequestedModel), "stream": r.Stream, "started_at": r.StartedAt, "completed_at": optionalTime(pointerTimeFrom(r.CompletedAt)), "outcome": r.Outcome, "status_class": r.StatusClass, "reason_code": r.ReasonCode, "upstream_attempted": r.UpstreamAttempted, "billing_status": r.BillingStatus, "billed_usd": formatNanoUSD(r.BilledNanoUSD), "event_count": item.EventCount, "unknown_cost_events": item.UnknownEvents}
+	if includeEvents {
+		events := make([]gin.H, 0, len(item.Events))
+		for _, e := range item.Events {
+			events = append(events, usageEventResponse(e))
+		}
+		response["events"] = events
+	}
+	return response
+}
+
+func pointerTimeFrom(value *time.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return *value
+}
+
+func usageEventResponse(e domain.UsageEvent) gin.H {
+	return gin.H{"event_id": e.EventID, "account_ref": optionalString(e.AccountRefSnapshot), "safe_label": optionalString(e.SafeLabelSnapshot), "provider": optionalString(e.Provider), "model": optionalString(e.Model), "event_seq": optionalInt(e.EventSeq), "attempt_no": optionalInt(e.AttemptNo), "usage_known": e.UsageKnown, "input_tokens": optionalInt(e.InputTokens), "output_tokens": optionalInt(e.OutputTokens), "cached_tokens": optionalInt(e.CachedTokens), "reasoning_tokens": optionalInt(e.ReasoningTokens), "total_tokens": optionalInt(e.TotalTokens), "failed": e.Failed, "status_class": e.StatusClass, "requested_at": e.RequestedAt, "recorded_at": e.RecordedAt, "pricing_status": e.PricingStatus, "pricing_reason": e.PricingReason, "cost_usd": formatNanoUSD(e.CostNanoUSD)}
+}
+
+func formatNanoUSD(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return carpoolbilling.FormatDecimal(*value)
+}
+
+func usageRequestQuery(c *gin.Context) (carpoolservice.UsageRequestQuery, bool) {
+	q := carpoolservice.UsageRequestQuery{Period: strings.TrimSpace(c.Query("period")), CarRef: strings.TrimSpace(c.Query("car_ref")), UserRef: strings.TrimSpace(c.Query("user_ref")), AccountRef: strings.TrimSpace(c.Query("account_ref")), APIKeyRef: strings.TrimSpace(c.Query("api_key_ref")), Model: strings.TrimSpace(c.Query("model")), Outcome: strings.TrimSpace(c.Query("outcome")), BillingStatus: strings.TrimSpace(c.Query("billing_status")), RequestID: strings.TrimSpace(c.Query("request_id")), Cursor: strings.TrimSpace(c.Query("cursor")), Limit: 25}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		n, e := strconv.Atoi(raw)
+		if e != nil || n < 1 || n > 25 {
+			writeAPIError(c, http.StatusUnprocessableEntity, "invalid_pagination", "分页参数无效")
+			return q, false
+		}
+		q.Limit = n
+	}
+	rawFrom, hasFrom := c.GetQuery("from")
+	rawTo, hasTo := c.GetQuery("to")
+	if hasFrom != hasTo || (hasFrom && q.Period != "") {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_report_range", "报表时间范围无效")
+		return q, false
+	}
+	if hasFrom {
+		from, e1 := parseUTCTime(strings.TrimSpace(rawFrom))
+		to, e2 := parseUTCTime(strings.TrimSpace(rawTo))
+		if e1 != nil || e2 != nil {
+			writeAPIError(c, http.StatusUnprocessableEntity, "invalid_report_range", "报表时间范围必须使用 UTC RFC3339 时间")
+			return q, false
+		}
+		q.From, q.To = &from, &to
+	}
+	return q, true
+}
+
+func (a *API) adminBillingPeriods(c *gin.Context) {
+	identity, _ := currentIdentity(c)
+	from, to := time.Time{}, time.Time{}
+	var err error
+	if v := strings.TrimSpace(c.Query("from")); v != "" {
+		from, err = parseUTCTime(v)
+	}
+	if err == nil {
+		if v := strings.TrimSpace(c.Query("to")); v != "" {
+			to, err = parseUTCTime(v)
+		}
+	}
+	if err != nil {
+		writeAPIError(c, 422, "invalid_report_range", "时间范围无效")
+		return
+	}
+	periods, err := a.control.AdminBillingPeriods(c.Request.Context(), identity.User, strings.TrimSpace(c.Query("membership_id")), strings.TrimSpace(c.Query("car_id")), from, to, 100)
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	items := make([]gin.H, 0, len(periods))
+	for _, p := range periods {
+		items = append(items, gin.H{"period_id": p.ID, "membership_id": p.MembershipID, "member_ref": p.MemberRefSnapshot, "car_id": p.CarID, "period_from": p.From, "period_to": p.To, "limit_usd": formatNanoUSD(p.LimitNanoUSD), "confirmed_usd": formatNanoUSD(&p.ConfirmedNanoUSD), "reset_baseline_usd": formatNanoUSD(&p.ResetBaselineNanoUSD), "unknown_cost_events": p.UnknownCostEvents, "revision": p.Revision})
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
+}
+
+func (a *API) pricingStatus(c *gin.Context) {
+	if a.pricing == nil {
+		c.JSON(http.StatusOK, gin.H{"available": false, "source": "", "hash": nil, "catalog_url": nil, "loaded_at": nil, "last_checked_at": nil, "last_success_at": nil, "failure_reason": "价格目录服务未启用"})
+		return
+	}
+	status := a.pricing.Status()
+	c.JSON(http.StatusOK, gin.H{
+		"available":       status.Available,
+		"hash":            optionalString(status.Hash),
+		"source":          optionalString(status.Source),
+		"catalog_url":     optionalString(status.CatalogURL),
+		"loaded_at":       optionalTime(status.LoadedAt),
+		"last_checked_at": optionalTime(status.LastCheckedAt),
+		"last_success_at": optionalTime(status.LastSuccessAt),
+		"failure_reason":  optionalString(status.FailureReason),
+	})
+}
+
+func (a *API) retentionSettings(c *gin.Context) {
+	identity, _ := currentIdentity(c)
+	settings, err := a.control.RetentionSettings(c.Request.Context(), identity.User)
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, retentionSettingsResponse(settings))
+}
+func retentionSettingsResponse(s domain.RetentionSettings) gin.H {
+	return gin.H{"override_days": optionalInt(s.OverrideDays), "effective_days": s.EffectiveDays, "default_days": s.DefaultDays, "source": s.Source}
+}
+
+func (a *API) updateRetention(c *gin.Context) {
+	var req struct {
+		Days *int64 `json:"days"`
+	}
+	if !decodeJSON(c, &req) {
+		return
+	}
+	identity, _ := currentIdentity(c)
+	s, err := a.control.UpdateRetentionSettings(c.Request.Context(), identity.User, req.Days)
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, retentionSettingsResponse(s))
+}
+func (a *API) previewRetention(c *gin.Context) {
+	var req struct {
+		Operation string `json:"operation"`
+	}
+	if !decodeJSON(c, &req) {
+		return
+	}
+	identity, _ := currentIdentity(c)
+	expected, inflight, err := a.control.PreviewRetention(c.Request.Context(), identity.User, strings.TrimSpace(req.Operation))
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"operation": req.Operation, "expected_count": expected, "in_flight_count": inflight, "confirmation_required": true})
+}
+func (a *API) runRetention(c *gin.Context) {
+	var req struct {
+		Operation string `json:"operation"`
+		Confirm   bool   `json:"confirm"`
+	}
+	if !decodeJSON(c, &req) {
+		return
+	}
+	if !req.Confirm {
+		writeAPIError(c, http.StatusUnprocessableEntity, "confirmation_required", "清理操作需要明确确认")
+		return
+	}
+	identity, _ := currentIdentity(c)
+	job, err := a.control.RunRetention(c.Request.Context(), identity.User, strings.TrimSpace(req.Operation))
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, retentionJobResponse(job))
+}
+func (a *API) retentionJob(c *gin.Context) {
+	identity, _ := currentIdentity(c)
+	if identity.User.Role != domain.UserRoleAdmin {
+		writeMappedError(c, carpoolservice.ErrForbidden)
+		return
+	}
+	job, err := a.control.RetentionJob(c.Request.Context(), identity.User, c.Param("job_id"))
+	if err != nil {
+		writeMappedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, retentionJobResponse(job))
+}
+func retentionJobResponse(j domain.RetentionJob) gin.H {
+	return gin.H{"job_id": j.ID, "operation": j.Operation, "status": j.Status, "requested_at": j.RequestedAt, "completed_at": optionalTime(pointerTimeFrom(j.CompletedAt)), "actor_ref": j.ActorRef, "expected_count": j.ExpectedCount, "deleted_count": j.DeletedCount, "in_flight_count": j.InFlightCount, "failure_reason": optionalString(j.FailureReason)}
 }
 
 func (a *API) auditEvents(c *gin.Context) {
@@ -820,7 +1130,17 @@ func writeAPIError(c *gin.Context, status int, code, message string) {
 }
 
 func sessionResponse(identity carpoolservice.SessionIdentity, timezone string) gin.H {
-	return gin.H{"user_ref": identity.User.UserRef, "display_name": identity.User.DefaultDisplayName, "role": identity.User.Role, "must_change_password": identity.User.MustChangePassword, "csrf_token": identity.Session.CSRFToken, "expires_at": identity.Session.ExpiresAt, "module_status": "healthy", "report_timezone": timezone}
+	return gin.H{"user_ref": identity.User.UserRef, "display_name": identity.User.DefaultDisplayName, "role": identity.User.Role, "must_change_password": identity.User.MustChangePassword, "password_change_reason": passwordChangeReason(identity.User), "csrf_token": identity.Session.CSRFToken, "expires_at": identity.Session.ExpiresAt, "module_status": "healthy", "report_timezone": timezone}
+}
+
+func passwordChangeReason(user domain.User) string {
+	if !user.MustChangePassword {
+		return ""
+	}
+	if user.PasswordVersion <= 1 {
+		return "initial_password"
+	}
+	return "admin_reset"
 }
 
 func userResponse(user domain.User) gin.H {
@@ -857,9 +1177,19 @@ func accountCandidateResponse(candidate carpoolservice.AccountCandidate) gin.H {
 	}
 }
 
-func memberUsageResponse(row domain.MemberUsageAggregate, left bool) gin.H {
-	return gin.H{"member_ref": row.MemberRef, "display_name": row.DisplayName, "left": left, "logical_requests": row.RequestCount, "succeeded": row.SucceededCount, "failed": row.FailedCount, "rejected": row.RejectedCount, "canceled": row.CanceledCount, "incomplete": row.IncompleteCount, "known_input_tokens": row.KnownInputTokens, "known_output_tokens": row.KnownOutputTokens, "known_total_tokens": row.KnownTotalTokens, "unknown_usage_events": row.UnknownUsageCount}
+func memberUsageResponse(row domain.MemberUsageAggregate, left bool, billing domain.BillingSnapshot) gin.H {
+	return gin.H{"member_ref": row.MemberRef, "display_name": row.DisplayName, "left": left, "logical_requests": row.RequestCount, "succeeded": row.SucceededCount, "failed": row.FailedCount, "rejected": row.RejectedCount, "canceled": row.CanceledCount, "incomplete": row.IncompleteCount, "known_input_tokens": row.KnownInputTokens, "known_output_tokens": row.KnownOutputTokens, "known_total_tokens": row.KnownTotalTokens, "unknown_usage_events": row.UnknownUsageCount, "billing": billingResponse(billing)}
 }
+
+func membershipResponse(member domain.Membership) gin.H {
+	return gin.H{"member_ref": member.MemberRef, "display_name": member.DisplayName, "started_at": member.StartedAt, "monthly_limit_usd": formatNanoUSD(member.MonthlyLimitNanoUSD), "billing_timezone": member.BillingTimezone}
+}
+
+func billingResponse(snapshot domain.BillingSnapshot) gin.H {
+	return gin.H{"currency": snapshot.Currency, "status": snapshot.Status, "limit_usd": formatNanoUSD(snapshot.LimitNanoUSD), "used_usd": formatNanoUSD(pointerInt64(snapshot.ConfirmedNanoUSD)), "remaining_usd": formatNanoUSD(snapshot.RemainingNanoUSD), "overage_usd": formatNanoUSD(pointerInt64(snapshot.OverageNanoUSD)), "usage_percent": optionalInt(snapshot.UsagePercent), "unknown_cost_events": snapshot.UnknownCostEvents, "data_complete": snapshot.DataComplete, "period_from": snapshot.PeriodFrom, "period_to": snapshot.PeriodTo, "timezone": snapshot.Timezone, "coverage_from": optionalTime(pointerTimeFrom(snapshot.CoverageFrom))}
+}
+
+func pointerInt64(value int64) *int64 { return &value }
 
 func adminUsageResponse(row domain.AdminUsageAggregate) gin.H {
 	response := gin.H{

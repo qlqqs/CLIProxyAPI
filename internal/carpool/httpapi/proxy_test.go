@@ -126,12 +126,14 @@ func newProxyAuthorizationFixture(t *testing.T) proxyAuthorizationFixture {
 	if errCar != nil {
 		t.Fatalf("CreateCar() error = %v", errCar)
 	}
+	limitNanoUSD := int64(25_000_000_000)
 	if _, errMember := store.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{
-		UserID:          passenger.ID,
-		CarID:           car.ID,
-		DisplayName:     "Passenger",
-		DisplayNameKey:  "passenger",
-		CreatedByUserID: admin.ID,
+		UserID:              passenger.ID,
+		CarID:               car.ID,
+		DisplayName:         "Passenger",
+		DisplayNameKey:      "passenger",
+		CreatedByUserID:     admin.ID,
+		MonthlyLimitNanoUSD: &limitNanoUSD,
 	}}); errMember != nil {
 		t.Fatalf("MoveMembership() error = %v", errMember)
 	}

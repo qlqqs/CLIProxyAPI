@@ -41,9 +41,15 @@ func (s *Store) CleanupRetention(ctx context.Context, cleanup RetentionCleanup) 
 	usageDeleted, errUsage := deleteRetentionBatch(ctx, tx, "expired usage events", `
 		DELETE FROM usage_events
 		WHERE event_id IN (
-			SELECT event_id
-			FROM usage_events
-			WHERE requested_at < ?
+			SELECT e.event_id
+			FROM usage_events AS e
+			WHERE e.requested_at < ?
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM proxy_requests AS p
+				WHERE p.request_id = e.request_id
+				  AND p.outcome IN ('in_progress', 'incomplete')
+			  )
 			ORDER BY requested_at, event_id
 			LIMIT ?
 		)
@@ -58,7 +64,7 @@ func (s *Store) CleanupRetention(ctx context.Context, cleanup RetentionCleanup) 
 		WHERE request_id IN (
 			SELECT p.request_id
 			FROM proxy_requests AS p
-			WHERE p.outcome <> 'in_progress'
+			WHERE p.outcome NOT IN ('in_progress', 'incomplete')
 			  AND p.completed_at < ?
 			  AND NOT EXISTS (
 				SELECT 1

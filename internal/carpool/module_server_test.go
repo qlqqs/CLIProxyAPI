@@ -165,16 +165,18 @@ func serverRouteStreamPayload(format sdktranslator.Format) []byte {
 }
 
 type serverRouteFixture struct {
-	module      *Module
-	server      *api.Server
-	engine      *gin.Engine
-	recorder    *serverRouteRecorder
-	accessToken string
-	passenger   domain.User
-	apiKeyID    string
+	module       *Module
+	server       *api.Server
+	engine       *gin.Engine
+	recorder     *serverRouteRecorder
+	accessToken  string
+	passenger    domain.User
+	apiKeyID     string
+	databasePath string
+	configPath   string
 }
 
-func newServerRouteFixture(t *testing.T, homeEnabled bool) *serverRouteFixture {
+func newServerRouteFixture(t *testing.T, homeEnabled bool, expectedWriteFailures ...bool) *serverRouteFixture {
 	t.Helper()
 	ctx := context.Background()
 	root, databasePath, configPath := moduleTestPaths(t)
@@ -200,7 +202,7 @@ func newServerRouteFixture(t *testing.T, homeEnabled bool) *serverRouteFixture {
 		if errClose := module.Close(context.Background()); errClose != nil {
 			t.Errorf("Module.Close() error = %v", errClose)
 		}
-		if metrics := module.writer.Snapshot(); metrics.WriteFailures != 0 {
+		if metrics := module.writer.Snapshot(); metrics.WriteFailures != 0 && (len(expectedWriteFailures) == 0 || !expectedWriteFailures[0]) {
 			t.Errorf("accounting write failures = %d, want 0", metrics.WriteFailures)
 		}
 	})
@@ -243,8 +245,9 @@ func newServerRouteFixture(t *testing.T, homeEnabled bool) *serverRouteFixture {
 	if errCarB != nil {
 		t.Fatalf("CreateCar(B) error = %v", errCarB)
 	}
+	limitNanoUSD := int64(25_000_000_000)
 	if _, errMember := module.store.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{
-		UserID: passenger.ID, CarID: carA.ID, DisplayName: "Route Passenger", DisplayNameKey: "route passenger", CreatedByUserID: admin.ID,
+		UserID: passenger.ID, CarID: carA.ID, DisplayName: "Route Passenger", DisplayNameKey: "route passenger", CreatedByUserID: admin.ID, MonthlyLimitNanoUSD: &limitNanoUSD,
 	}}); errMember != nil {
 		t.Fatalf("MoveMembership() error = %v", errMember)
 	}
@@ -302,6 +305,7 @@ func newServerRouteFixture(t *testing.T, homeEnabled bool) *serverRouteFixture {
 	return &serverRouteFixture{
 		module: module, server: server, engine: engine, recorder: recorder,
 		accessToken: secret.Token, passenger: passenger, apiKeyID: apiKey.KeyID,
+		databasePath: databasePath, configPath: configPath,
 	}
 }
 

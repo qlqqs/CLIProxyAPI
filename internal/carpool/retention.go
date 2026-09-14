@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 	carpoolsqlite "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/store/sqlite"
 	log "github.com/sirupsen/logrus"
 )
@@ -17,6 +18,10 @@ const (
 
 type retentionStore interface {
 	CleanupRetention(context.Context, carpoolsqlite.RetentionCleanup) (carpoolsqlite.RetentionCleanupResult, error)
+}
+
+type retentionSettingsStore interface {
+	GetRetentionSettings(context.Context, int64) (domain.RetentionSettings, error)
 }
 
 type retentionCleanerConfig struct {
@@ -129,8 +134,18 @@ func (c *retentionCleaner) run(ctx context.Context, ticks <-chan time.Time) {
 
 func (c *retentionCleaner) cleanupPass(ctx context.Context) {
 	now := c.now().UTC()
+	usageRetention := c.usageRetention
+	if configured, ok := c.store.(retentionSettingsStore); ok {
+		if settings, errSettings := configured.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour))); errSettings == nil {
+			if settings.EffectiveDays == 0 {
+				usageRetention = now.Sub(time.Unix(0, 1))
+			} else {
+				usageRetention = time.Duration(settings.EffectiveDays) * 24 * time.Hour
+			}
+		}
+	}
 	cleanup := carpoolsqlite.RetentionCleanup{
-		UsageCutoff: now.Add(-c.usageRetention),
+		UsageCutoff: now.Add(-usageRetention),
 		AuditCutoff: now.Add(-c.auditRetention),
 		BatchSize:   c.batchSize,
 	}

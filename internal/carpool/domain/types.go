@@ -130,6 +130,10 @@ type Membership struct {
 	EndedAt         *time.Time
 	EndedReason     string
 	CreatedByUserID string
+	// MonthlyLimitNanoUSD is nil for legacy members until an administrator sets a limit.
+	MonthlyLimitNanoUSD *int64
+	BillingTimezone     string
+	BillingAnchorAt     time.Time
 }
 
 type MembershipMove struct {
@@ -179,6 +183,11 @@ type ProxyRequest struct {
 	StatusClass         string
 	ReasonCode          string
 	UpstreamAttempted   bool
+	BillingPeriodID     string
+	PricingCatalogHash  string
+	PricingCoverageFrom *time.Time
+	BillingStatus       string
+	BilledNanoUSD       *int64
 }
 
 type ProxyRequestAuthScope struct {
@@ -202,26 +211,76 @@ type RequestCompletion struct {
 }
 
 type UsageEvent struct {
-	EventID            string
-	RequestID          string
-	EventSeq           *int64
-	AttemptNo          *int64
-	AuthID             string
-	AssignmentID       string
-	AccountRefSnapshot string
-	SafeLabelSnapshot  string
-	Provider           string
-	Model              string
-	UsageKnown         bool
-	InputTokens        *int64
-	OutputTokens       *int64
-	CachedTokens       *int64
-	ReasoningTokens    *int64
-	TotalTokens        *int64
-	Failed             bool
-	StatusClass        string
-	RequestedAt        time.Time
-	RecordedAt         time.Time
+	EventID             string
+	RequestID           string
+	BillingPeriodID     string
+	EventSeq            *int64
+	AttemptNo           *int64
+	AuthID              string
+	AssignmentID        string
+	AccountRefSnapshot  string
+	SafeLabelSnapshot   string
+	Provider            string
+	Model               string
+	UsageKnown          bool
+	InputTokens         *int64
+	OutputTokens        *int64
+	CachedTokens        *int64
+	ReasoningTokens     *int64
+	TotalTokens         *int64
+	Failed              bool
+	StatusClass         string
+	RequestedAt         time.Time
+	RecordedAt          time.Time
+	CanonicalSchema     int
+	CanonicalQuality    string
+	UncachedInputTokens *int64
+	CacheReadTokens     *int64
+	CacheWriteTokens    *int64
+	NonReasoningTokens  *int64
+	RequestServiceTier  string
+	ResponseServiceTier string
+	PricingStatus       string
+	PricingReason       string
+	PriceInputPerToken  string
+	PriceOutputPerToken string
+	PriceCacheRead      string
+	PriceCacheWrite     string
+	CostNanoUSD         *int64
+}
+
+// BillingPeriod is a monthly anniversary period represented in UTC.
+type BillingPeriod struct {
+	ID                   string
+	MembershipID         string
+	MemberRefSnapshot    string
+	CarID                string
+	Timezone             string
+	AnchorAt             time.Time
+	From                 time.Time
+	To                   time.Time
+	LimitNanoUSD         *int64
+	ConfirmedNanoUSD     int64
+	ResetBaselineNanoUSD int64
+	UnknownCostEvents    int64
+	Revision             int64
+}
+
+// BillingSnapshot is the safe amount projection returned by browser APIs.
+type BillingSnapshot struct {
+	Currency          string
+	Status            string
+	LimitNanoUSD      *int64
+	ConfirmedNanoUSD  int64
+	RemainingNanoUSD  *int64
+	OverageNanoUSD    int64
+	UsagePercent      *int64
+	UnknownCostEvents int64
+	DataComplete      bool
+	PeriodFrom        time.Time
+	PeriodTo          time.Time
+	Timezone          string
+	CoverageFrom      *time.Time
 }
 
 type AuditEvent struct {
@@ -239,6 +298,8 @@ type AuditEvent struct {
 }
 
 type ProxyAuthorization struct {
+	// NonBillable is set only by the server for model metadata reads.
+	NonBillable         bool
 	RequestID           string
 	UserID              string
 	APIKeyID            string
@@ -248,6 +309,8 @@ type ProxyAuthorization struct {
 	StartedAt           time.Time
 	RuntimeAuthIDs      []string
 	PreflightReasonCode string
+	PricingCatalogHash  string
+	PricingCoverageFrom *time.Time
 }
 
 type AuthorizationSnapshot struct {
@@ -328,4 +391,53 @@ type AdminUsageAggregate struct {
 	KnownReasoningTokens int64
 	KnownTotalTokens     int64
 	UnknownUsageCount    int64
+}
+
+// UsageRequestDetail is a safe, one-row logical request projection. Events are
+// returned separately so retries never inflate the logical request count.
+type UsageRequestDetail struct {
+	Request       ProxyRequest
+	UserRef       string
+	CarRef        string
+	APIKeyRef     string
+	EventCount    int64
+	UnknownEvents int64
+	Events        []UsageEvent
+}
+
+// UsageRequestFilter contains resolved identifiers and safe display filters.
+type UsageRequestFilter struct {
+	From           time.Time
+	To             time.Time
+	CarID          string
+	UserID         string
+	AssignmentID   string
+	APIKeyID       string
+	RequestedModel string
+	Outcome        string
+	BillingStatus  string
+	RequestID      string
+}
+
+// RetentionSettings controls request detail retention. A nil override uses the
+// configured default; zero means retain forever.
+type RetentionSettings struct {
+	OverrideDays  *int64
+	EffectiveDays int64
+	DefaultDays   int64
+	Source        string
+}
+
+type RetentionJob struct {
+	ID            string
+	Operation     string
+	Status        string
+	RequestedAt   time.Time
+	CompletedAt   *time.Time
+	ActorRef      string
+	Confirmation  string
+	ExpectedCount int64
+	DeletedCount  int64
+	InFlightCount int64
+	FailureReason string
 }

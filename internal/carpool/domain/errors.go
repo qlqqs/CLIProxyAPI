@@ -3,6 +3,7 @@ package domain
 import "errors"
 
 var (
+	ErrAccountingUnavailable = errors.New("accounting_unavailable")
 	ErrNotFound              = errors.New("carpool: not found")
 	ErrConflict              = errors.New("carpool: conflict")
 	ErrBusy                  = errors.New("carpool: database busy")

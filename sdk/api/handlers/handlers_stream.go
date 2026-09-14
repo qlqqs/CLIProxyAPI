@@ -157,7 +157,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		var completionErr error
 		var streamUsage helps.StreamUsageBuffer
 		defer func() {
-			lifecycle.complete(completionOutcome, completionStatus, completionErr)
+			defer lifecycle.complete(completionOutcome, completionStatus, completionErr)
 			if reporter != nil && !nestedTracker.hasNestedExecution() {
 				if completionOutcome != pluginapi.RequestCompletionSucceeded && completionErr != nil {
 					if !streamUsage.PublishFailure(execCtx, reporter, completionErr) {

@@ -49,6 +49,9 @@ carpool:
   report-timezone: "UTC"
   usage-retention-days: 90
   audit-retention-days: 180
+  pricing:
+    # Remote LiteLLM-compatible price catalog; the bundled snapshot is used if unavailable.
+    catalog-url: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
   session:
     absolute-ttl: "24h"
     idle-ttl: "2h"

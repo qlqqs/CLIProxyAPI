@@ -26,6 +26,13 @@ type pageCursor struct {
 	Time    string `json:"time,omitempty"`
 }
 
+type usageCursor struct {
+	Version   int    `json:"v"`
+	Kind      string `json:"kind"`
+	Started   string `json:"started"`
+	RequestID string `json:"request_id"`
+}
+
 // ReportPeriod is a server-computed UTC half-open reporting interval.
 type ReportPeriod struct {
 	Name string
@@ -117,6 +124,30 @@ func decodePageCursor(encoded, kind string) (string, error) {
 		return "", fmt.Errorf("carpool: invalid page cursor: %w", domain.ErrInvalid)
 	}
 	return cursor.Value, nil
+}
+
+func encodeUsageCursor(started time.Time, requestID string) string {
+	payload, _ := json.Marshal(usageCursor{Version: pageCursorVersion, Kind: "usage_requests", Started: started.UTC().Format(time.RFC3339Nano), RequestID: requestID})
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeUsageCursor(encoded string) (time.Time, string, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return time.Time{}, "", nil
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(payload) == 0 || len(payload) > maximumPageCursorBytes {
+		return time.Time{}, "", fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	}
+	var c usageCursor
+	if json.Unmarshal(payload, &c) != nil || c.Version != pageCursorVersion || c.Kind != "usage_requests" || c.RequestID == "" {
+		return time.Time{}, "", fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	}
+	t, err := time.Parse(time.RFC3339Nano, c.Started)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	}
+	return t.UTC(), c.RequestID, nil
 }
 
 func encodeAuditCursor(before time.Time, beforeID string) string {

@@ -103,6 +103,9 @@ func (a *API) AuthenticatedRequestHook(ctx context.Context, request *http.Reques
 	upgrade := headerContainsToken(request.Header, "Connection", "upgrade") || strings.TrimSpace(request.Header.Get("Upgrade")) != ""
 	snapshot, errAuthorize := a.control.AuthorizeProxy(ctx, userID, apiKeyID, result.Principal, request.Method, request.URL.Path, upgrade)
 	if errAuthorize != nil {
+		if errors.Is(errAuthorize, domain.ErrAccountingUnavailable) {
+			return sdkaccess.NewAccountingUnavailableError()
+		}
 		if errors.Is(errAuthorize, domain.ErrAuthorizationRejected) || errors.Is(errAuthorize, domain.ErrNotFound) || errors.Is(errAuthorize, domain.ErrConflict) {
 			return sdkaccess.NewForbiddenError("Carpool request is not authorized", errAuthorize)
 		}

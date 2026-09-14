@@ -374,6 +374,12 @@ func (s *Store) MoveMembership(ctx context.Context, move domain.MembershipMove) 
 	if membership.StartedAt.IsZero() {
 		membership.StartedAt = now
 	}
+	if strings.TrimSpace(membership.BillingTimezone) == "" {
+		membership.BillingTimezone = "UTC"
+	}
+	if membership.BillingAnchorAt.IsZero() {
+		membership.BillingAnchorAt = membership.StartedAt
+	}
 	if membership.UserID == "" || membership.CarID == "" || membership.DisplayName == "" || membership.DisplayNameKey == "" || membership.CreatedByUserID == "" {
 		return domain.Membership{}, fmt.Errorf("sqlite store: incomplete membership move: %w", domain.ErrInvalid)
 	}
@@ -432,12 +438,14 @@ func (s *Store) MoveMembership(ctx context.Context, move domain.MembershipMove) 
 	}
 	if _, errInsert := tx.ExecContext(ctx, `
 		INSERT INTO memberships (
-			id, member_ref, user_id, car_id, display_name, display_name_key,
-			started_at, ended_at, ended_reason, created_by_user_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '', ?)
+		    id, member_ref, user_id, car_id, display_name, display_name_key,
+		    started_at, ended_at, ended_reason, created_by_user_id,
+		    monthly_limit_nano_usd, billing_timezone, billing_anchor_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?, ?, ?)
 	`, membership.ID, membership.MemberRef, membership.UserID, membership.CarID,
 		membership.DisplayName, membership.DisplayNameKey, toDatabaseTime(membership.StartedAt),
-		membership.CreatedByUserID); errInsert != nil {
+		membership.CreatedByUserID, nullableInt64(membership.MonthlyLimitNanoUSD), membership.BillingTimezone,
+		toDatabaseTime(membership.BillingAnchorAt)); errInsert != nil {
 		return domain.Membership{}, rollback(tx, fmt.Errorf("sqlite store: create membership: %w", classifyError(errInsert)))
 	}
 	if errVersions := bumpCarVersions(ctx, tx, now, membership.CarID, previousCarID); errVersions != nil {
@@ -458,7 +466,8 @@ func (s *Store) CurrentMembership(ctx context.Context, userID string) (domain.Me
 	}
 	return scanMembership(s.db.QueryRowContext(ctx, `
 		SELECT id, member_ref, user_id, car_id, display_name, display_name_key,
-		       started_at, ended_at, ended_reason, created_by_user_id
+		       started_at, ended_at, ended_reason, created_by_user_id,
+		       monthly_limit_nano_usd, billing_timezone, billing_anchor_at
 		FROM memberships WHERE user_id = ? AND ended_at IS NULL
 	`, userID))
 }
@@ -658,20 +667,21 @@ func (s *Store) GetProxyRequest(ctx context.Context, requestID string) (domain.P
 		return domain.ProxyRequest{}, errReady
 	}
 	var request domain.ProxyRequest
-	var carID, membershipID, memberRef, displayName, scopeHash sql.NullString
+	var carID, membershipID, memberRef, displayName, scopeHash, billingPeriodID, catalogHash, billingStatus sql.NullString
 	var startedAt int64
-	var completedAt sql.NullInt64
+	var completedAt, coverageFrom, billedNano sql.NullInt64
 	errScan := s.db.QueryRowContext(ctx, `
 		SELECT request_id, user_id, api_key_id, car_id, membership_id,
 		       member_ref_snapshot, display_name_snapshot, scope_hash, scope_size,
 		       source_format, requested_model, stream, started_at, completed_at,
-		       outcome, status_class, reason_code, upstream_attempted
+		       outcome, status_class, reason_code, upstream_attempted,
+		       billing_period_id, pricing_catalog_hash, pricing_coverage_from, billing_status, billed_nano_usd
 		FROM proxy_requests WHERE request_id = ?
 	`, requestID).Scan(&request.RequestID, &request.UserID, &request.APIKeyID, &carID,
 		&membershipID, &memberRef, &displayName, &scopeHash, &request.ScopeSize,
 		&request.SourceFormat, &request.RequestedModel, &request.Stream, &startedAt,
 		&completedAt, &request.Outcome, &request.StatusClass, &request.ReasonCode,
-		&request.UpstreamAttempted)
+		&request.UpstreamAttempted, &billingPeriodID, &catalogHash, &coverageFrom, &billingStatus, &billedNano)
 	if errScan != nil {
 		return domain.ProxyRequest{}, scanError("get proxy request", errScan)
 	}
@@ -680,6 +690,11 @@ func (s *Store) GetProxyRequest(ctx context.Context, requestID string) (domain.P
 	request.MemberRefSnapshot = memberRef.String
 	request.DisplayNameSnapshot = displayName.String
 	request.ScopeHash = scopeHash.String
+	request.BillingPeriodID = billingPeriodID.String
+	request.PricingCatalogHash = catalogHash.String
+	request.PricingCoverageFrom = fromNullableDatabaseTime(coverageFrom)
+	request.BillingStatus = billingStatus.String
+	request.BilledNanoUSD = fromNullableInt64(billedNano)
 	request.StartedAt = fromDatabaseTime(startedAt)
 	request.CompletedAt = fromNullableDatabaseTime(completedAt)
 	return request, nil
@@ -738,6 +753,13 @@ func (s *Store) InsertUsageEvent(ctx context.Context, event domain.UsageEvent) (
 	if event.RecordedAt.IsZero() {
 		event.RecordedAt = s.currentTime()
 	}
+	if event.PricingStatus == "" {
+		if event.UsageKnown {
+			event.PricingStatus = "pending"
+		} else {
+			event.PricingStatus = "unknown"
+		}
+	}
 
 	tx, errBegin := s.db.BeginTx(ctx, nil)
 	if errBegin != nil {
@@ -753,17 +775,25 @@ func (s *Store) InsertUsageEvent(ctx context.Context, event domain.UsageEvent) (
 	}
 	result, errInsert := tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO usage_events (
-			event_id, request_id, event_seq, attempt_no, auth_id, assignment_id,
+			event_id, request_id, billing_period_id, event_seq, attempt_no, auth_id, assignment_id,
 			account_ref_snapshot, safe_label_snapshot, provider, model, usage_known,
 			input_tokens, output_tokens, cached_tokens, reasoning_tokens, total_tokens,
-			failed, status_class, requested_at, recorded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, event.EventID, event.RequestID, nullableInt64(event.EventSeq), nullableInt64(event.AttemptNo),
+			failed, status_class, requested_at, recorded_at,
+			canonical_schema, canonical_quality, uncached_input_tokens, cache_read_tokens,
+			cache_write_tokens, non_reasoning_tokens, request_service_tier, response_service_tier,
+			pricing_status, pricing_reason, price_input_per_token, price_output_per_token,
+			price_cache_read, price_cache_write, cost_nano_usd
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, event.EventID, event.RequestID, nullableString(event.BillingPeriodID), nullableInt64(event.EventSeq), nullableInt64(event.AttemptNo),
 		event.AuthID, event.AssignmentID, event.AccountRefSnapshot, event.SafeLabelSnapshot,
 		event.Provider, event.Model, boolToInt(event.UsageKnown), nullableInt64(event.InputTokens),
 		nullableInt64(event.OutputTokens), nullableInt64(event.CachedTokens), nullableInt64(event.ReasoningTokens),
 		nullableInt64(event.TotalTokens), boolToInt(event.Failed), event.StatusClass,
-		toDatabaseTime(event.RequestedAt), toDatabaseTime(event.RecordedAt))
+		toDatabaseTime(event.RequestedAt), toDatabaseTime(event.RecordedAt), event.CanonicalSchema, event.CanonicalQuality,
+		nullableInt64(event.UncachedInputTokens), nullableInt64(event.CacheReadTokens), nullableInt64(event.CacheWriteTokens),
+		nullableInt64(event.NonReasoningTokens), event.RequestServiceTier, event.ResponseServiceTier,
+		event.PricingStatus, event.PricingReason, event.PriceInputPerToken, event.PriceOutputPerToken,
+		event.PriceCacheRead, event.PriceCacheWrite, nullableInt64(event.CostNanoUSD))
 	if errInsert != nil {
 		return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: insert usage event: %w", classifyError(errInsert)))
 	}
@@ -871,15 +901,22 @@ func scanUser(row *sql.Row) (domain.User, error) {
 func scanMembership(row *sql.Row) (domain.Membership, error) {
 	var membership domain.Membership
 	var startedAt int64
-	var endedAt sql.NullInt64
+	var endedAt, limit, anchor sql.NullInt64
+	var timezone string
 	errScan := row.Scan(&membership.ID, &membership.MemberRef, &membership.UserID,
 		&membership.CarID, &membership.DisplayName, &membership.DisplayNameKey,
-		&startedAt, &endedAt, &membership.EndedReason, &membership.CreatedByUserID)
+		&startedAt, &endedAt, &membership.EndedReason, &membership.CreatedByUserID,
+		&limit, &timezone, &anchor)
 	if errScan != nil {
 		return domain.Membership{}, scanError("get current membership", errScan)
 	}
 	membership.StartedAt = fromDatabaseTime(startedAt)
 	membership.EndedAt = fromNullableDatabaseTime(endedAt)
+	membership.MonthlyLimitNanoUSD = fromNullableInt64(limit)
+	membership.BillingTimezone = timezone
+	if anchor.Valid {
+		membership.BillingAnchorAt = fromDatabaseTime(anchor.Int64)
+	}
 	return membership, nil
 }
 
@@ -1017,6 +1054,14 @@ func fromNullableInt(value sql.NullInt64) *int {
 		return nil
 	}
 	result := int(value.Int64)
+	return &result
+}
+
+func fromNullableInt64(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Int64
 	return &result
 }
 

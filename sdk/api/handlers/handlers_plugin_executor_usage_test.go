@@ -793,3 +793,50 @@ func (h *mockPluginUsageHost) ExecutePluginExecutorStream(ctx context.Context, p
 	h.lastOptions = opts
 	return h.streamResult, nil
 }
+
+func TestPluginStreamPublishesUsageBeforeCompletion(t *testing.T) {
+	for _, outcome := range []pluginapi.RequestCompletionOutcome{pluginapi.RequestCompletionSucceeded, pluginapi.RequestCompletionFailed, pluginapi.RequestCompletionCanceled} {
+		t.Run(string(outcome), func(t *testing.T) {
+			chunks := make(chan coreexecutor.StreamChunk, 2)
+			chunks <- coreexecutor.StreamChunk{Payload: []byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":25,\"total_tokens\":40}}\n\n")}
+			if outcome == pluginapi.RequestCompletionFailed {
+				chunks <- coreexecutor.StreamChunk{Err: errors.New("stream failure")}
+			}
+			if outcome != pluginapi.RequestCompletionCanceled {
+				close(chunks)
+			}
+			host := &mockPluginUsageHost{streamResult: &coreexecutor.StreamResult{Chunks: chunks}}
+			host.hasRouters = true
+			host.route = func(context.Context, pluginapi.ModelRouteRequest) (pluginapi.ModelRouteResponse, bool) {
+				return pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetExecutor, Target: "ordered-usage-plugin"}, true
+			}
+			handler := NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil)
+			handler.SetModelRouterHost(host)
+			events := make(chan string, 4)
+			completed := make(chan pluginapi.RequestCompletion, 1)
+			handler.SetRequestCompletionObserver(func(_ context.Context, c pluginapi.RequestCompletion) { events <- "completion"; completed <- c })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx = usage.WithSynchronousObserver(ctx, func(_ context.Context, r usage.Record) { events <- "usage" })
+			data, _, errs := handler.ExecuteStreamWithAuthManager(ctx, "openai", "gpt-4o", []byte(`{"model":"gpt-4o","stream":true}`), "")
+			for range data {
+				if outcome == pluginapi.RequestCompletionCanceled {
+					cancel()
+				}
+			}
+			for range errs {
+			}
+			select {
+			case c := <-completed:
+				if c.Outcome != outcome {
+					t.Fatalf("outcome = %v", c.Outcome)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("completion missing")
+			}
+			if first, second := <-events, <-events; first != "usage" || second != "completion" {
+				t.Fatalf("order = %s, %s", first, second)
+			}
+		})
+	}
+}

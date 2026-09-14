@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	carpoolbilling "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/billing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
 	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
@@ -78,6 +80,9 @@ type Repository interface {
 
 	CurrentMembership(context.Context, string) (domain.Membership, error)
 	ListCurrentMembershipsByCar(context.Context, string) ([]domain.Membership, error)
+	SetMonthlyLimit(context.Context, string, *int64, *domain.AuditEvent) (domain.Membership, error)
+	EnsureBillingPeriod(context.Context, domain.BillingPeriod) (domain.BillingPeriod, error)
+	GetBillingPeriod(context.Context, string, time.Time) (domain.BillingPeriod, error)
 	MoveMembership(context.Context, domain.MembershipMove) (domain.Membership, error)
 	EndMembership(context.Context, string, string, time.Time, *domain.AuditEvent) error
 
@@ -91,6 +96,17 @@ type Repository interface {
 	MemberUsageByCar(context.Context, string, time.Time, time.Time) ([]domain.MemberUsageAggregate, error)
 	AccountUsageByCar(context.Context, string, time.Time, time.Time) ([]domain.AccountUsageAggregate, error)
 	AdminUsage(context.Context, domain.AdminUsageFilter) ([]domain.AdminUsageAggregate, error)
+	ListUsageRequests(context.Context, domain.UsageRequestFilter, time.Time, string, int) ([]domain.UsageRequestDetail, error)
+	CountUsageRequests(context.Context, domain.UsageRequestFilter) (int64, error)
+	GetUsageRequestDetail(context.Context, string) (domain.UsageRequestDetail, error)
+	ListBillingPeriods(context.Context, string, string, time.Time, time.Time, int) ([]domain.BillingPeriod, error)
+	GetRetentionSettings(context.Context, int64) (domain.RetentionSettings, error)
+	SetRetentionOverride(context.Context, *int64, *domain.AuditEvent) (domain.RetentionSettings, error)
+	PreviewRetention(context.Context, string, time.Time) (int64, int64, error)
+	ExecuteRetention(context.Context, string, time.Time, int) (int64, int64, error)
+	CreateRetentionJob(context.Context, string, string, int64) (domain.RetentionJob, error)
+	GetRetentionJob(context.Context, string) (domain.RetentionJob, error)
+	FinishRetentionJob(context.Context, string, string, int64, int64, string) error
 	InsertAuditEvent(context.Context, domain.AuditEvent) (domain.AuditEvent, error)
 	ListAuditEvents(context.Context, time.Time, string, int) ([]domain.AuditEvent, error)
 }
@@ -103,33 +119,37 @@ type AuthCatalog interface {
 
 // ControlConfig defines stable business behavior for one process lifetime.
 type ControlConfig struct {
-	SessionAbsoluteTTL time.Duration
-	SessionIdleTTL     time.Duration
-	ReportLocation     *time.Location
-	UsageRetention     time.Duration
-	HomeEnabled        bool
-	Now                func() time.Time
-	Random             io.Reader
-	PasswordHasher     PasswordHasher
-	LoginLimiter       *LoginLimiter
-	CandidateRefKey    []byte
+	SessionAbsoluteTTL  time.Duration
+	SessionIdleTTL      time.Duration
+	ReportLocation      *time.Location
+	UsageRetention      time.Duration
+	HomeEnabled         bool
+	Now                 func() time.Time
+	Random              io.Reader
+	PasswordHasher      PasswordHasher
+	LoginLimiter        *LoginLimiter
+	CandidateRefKey     []byte
+	AccountingAdmission func(context.Context) error
+	PricingProvider     interface{ Current() *pricing.Catalog }
 }
 
 // Control coordinates carpool identity, assignment, authorization, and reporting.
 type Control struct {
-	repository        Repository
-	authCatalog       AuthCatalog
-	absoluteTTL       time.Duration
-	idleTTL           time.Duration
-	reportLocation    *time.Location
-	usageRetention    time.Duration
-	homeEnabled       bool
-	now               func() time.Time
-	random            io.Reader
-	hasher            PasswordHasher
-	loginLimiter      *LoginLimiter
-	dummyPasswordHash string
-	candidateRefKey   []byte
+	repository          Repository
+	authCatalog         AuthCatalog
+	absoluteTTL         time.Duration
+	idleTTL             time.Duration
+	reportLocation      *time.Location
+	usageRetention      time.Duration
+	homeEnabled         bool
+	now                 func() time.Time
+	random              io.Reader
+	hasher              PasswordHasher
+	loginLimiter        *LoginLimiter
+	dummyPasswordHash   string
+	candidateRefKey     []byte
+	accountingAdmission func(context.Context) error
+	pricingProvider     interface{ Current() *pricing.Catalog }
 }
 
 // SessionIdentity is a validated browser session and its current user.
@@ -176,13 +196,15 @@ type CarUpdate struct {
 type MemberView struct {
 	Membership domain.Membership
 	Usage      domain.MemberUsageAggregate
+	Billing    domain.BillingSnapshot
 	Left       bool
 }
 
-// AccountView is a safe assignment, health, and usage projection.
+// AccountView is a safe assignment, health, quota, and usage projection.
 type AccountView struct {
 	Assignment domain.AuthAssignment
 	Health     carpoolruntime.AccountHealth
+	Quota      carpoolruntime.AccountQuota
 	Usage      domain.AccountUsageAggregate
 }
 
@@ -211,6 +233,16 @@ type AdminUsageQuery struct {
 	UserRef    string
 	AccountRef string
 	GroupBy    domain.AdminUsageGroup
+}
+
+type UsageRequestQuery struct {
+	Period                                   string
+	From, To                                 *time.Time
+	CarRef, UserRef                          string
+	AccountRef, APIKeyRef                    string
+	Model, Outcome, BillingStatus, RequestID string
+	Cursor                                   string
+	Limit                                    int
 }
 
 // AdminUsageReport is a resolved administrator usage report.
@@ -272,20 +304,30 @@ func NewControl(repository Repository, authCatalog AuthCatalog, cfg ControlConfi
 		return nil, fmt.Errorf("carpool control: account candidate reference key must be at least %d bytes", sha256.Size)
 	}
 	return &Control{
-		repository:        repository,
-		authCatalog:       authCatalog,
-		absoluteTTL:       cfg.SessionAbsoluteTTL,
-		idleTTL:           cfg.SessionIdleTTL,
-		reportLocation:    cfg.ReportLocation,
-		usageRetention:    cfg.UsageRetention,
-		homeEnabled:       cfg.HomeEnabled,
-		now:               cfg.Now,
-		random:            cfg.Random,
-		hasher:            cfg.PasswordHasher,
-		loginLimiter:      cfg.LoginLimiter,
-		dummyPasswordHash: dummyPasswordHash,
-		candidateRefKey:   candidateRefKey,
+		repository:          repository,
+		authCatalog:         authCatalog,
+		absoluteTTL:         cfg.SessionAbsoluteTTL,
+		idleTTL:             cfg.SessionIdleTTL,
+		reportLocation:      cfg.ReportLocation,
+		usageRetention:      cfg.UsageRetention,
+		homeEnabled:         cfg.HomeEnabled,
+		now:                 cfg.Now,
+		random:              cfg.Random,
+		hasher:              cfg.PasswordHasher,
+		loginLimiter:        cfg.LoginLimiter,
+		dummyPasswordHash:   dummyPasswordHash,
+		candidateRefKey:     candidateRefKey,
+		pricingProvider:     cfg.PricingProvider,
+		accountingAdmission: cfg.AccountingAdmission,
 	}, nil
+}
+
+// PricingCatalog returns the active immutable catalog for request snapshots.
+func (c *Control) PricingCatalog() *pricing.Catalog {
+	if c == nil || c.pricingProvider == nil {
+		return nil
+	}
+	return c.pricingProvider.Current()
 }
 
 // BootstrapAdmin creates the first administrator without a default credential.
@@ -752,8 +794,24 @@ func (c *Control) UpdateCar(ctx context.Context, actor domain.User, carRef strin
 }
 
 func (c *Control) MoveMember(ctx context.Context, actor domain.User, carRef, userRef, displayName string) (domain.Membership, error) {
+	return c.moveMember(ctx, actor, carRef, userRef, displayName, nil)
+}
+
+// MoveMemberWithLimit boards a passenger and assigns the optional monthly USD limit.
+// The legacy wrapper remains available for database migrations and older clients.
+func (c *Control) MoveMemberWithLimit(ctx context.Context, actor domain.User, carRef, userRef, displayName string, limitNanoUSD *int64) (domain.Membership, error) {
+	if limitNanoUSD == nil {
+		return domain.Membership{}, domain.ErrInvalid
+	}
+	return c.moveMember(ctx, actor, carRef, userRef, displayName, limitNanoUSD)
+}
+
+func (c *Control) moveMember(ctx context.Context, actor domain.User, carRef, userRef, displayName string, limitNanoUSD *int64) (domain.Membership, error) {
 	if actor.Role != domain.UserRoleAdmin {
 		return domain.Membership{}, ErrForbidden
+	}
+	if limitNanoUSD != nil && *limitNanoUSD < 0 {
+		return domain.Membership{}, domain.ErrInvalid
 	}
 	car, errCar := c.carByRef(ctx, carRef)
 	if errCar != nil {
@@ -779,7 +837,33 @@ func (c *Control) MoveMember(ctx context.Context, actor domain.User, carRef, use
 		return domain.Membership{}, errCurrent
 	}
 	audit := c.audit(sessionAuditActorType, actor.UserRef, "move_member", "user", user.UserRef, "succeeded", "")
-	return c.repository.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{MemberRef: memberRef, UserID: user.ID, CarID: car.ID, DisplayName: displayName, DisplayNameKey: displayKey, StartedAt: c.currentTime(), CreatedByUserID: actor.ID}, ExpectedCurrentID: expected, EndCurrentReason: "moved", Audit: &audit})
+	return c.repository.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{MemberRef: memberRef, UserID: user.ID, CarID: car.ID, DisplayName: displayName, DisplayNameKey: displayKey, StartedAt: c.currentTime(), CreatedByUserID: actor.ID, MonthlyLimitNanoUSD: copyInt64(limitNanoUSD)}, ExpectedCurrentID: expected, EndCurrentReason: "moved", Audit: &audit})
+}
+
+// SetMemberMonthlyLimit updates the current membership limit immediately.
+func (c *Control) SetMemberMonthlyLimit(ctx context.Context, actor domain.User, carRef, memberRef string, limitNanoUSD *int64) (domain.Membership, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return domain.Membership{}, ErrForbidden
+	}
+	if limitNanoUSD == nil || *limitNanoUSD < 0 {
+		return domain.Membership{}, domain.ErrInvalid
+	}
+	car, errCar := c.carByRef(ctx, carRef)
+	if errCar != nil {
+		return domain.Membership{}, errCar
+	}
+	members, errMembers := c.repository.ListCurrentMembershipsByCar(ctx, car.ID)
+	if errMembers != nil {
+		return domain.Membership{}, errMembers
+	}
+	for _, member := range members {
+		if member.MemberRef != strings.TrimSpace(memberRef) {
+			continue
+		}
+		audit := c.audit(sessionAuditActorType, actor.UserRef, "update_member_limit", "membership", member.MemberRef, "succeeded", "")
+		return c.repository.SetMonthlyLimit(ctx, member.ID, limitNanoUSD, &audit)
+	}
+	return domain.Membership{}, domain.ErrNotFound
 }
 
 func (c *Control) RemoveMember(ctx context.Context, actor domain.User, carRef, memberRef string) error {
@@ -813,6 +897,32 @@ func (c *Control) ListMembers(ctx context.Context, actor domain.User, carRef str
 		return nil, errCar
 	}
 	return c.repository.ListCurrentMembershipsByCar(ctx, car.ID)
+}
+
+// ListMembersWithBilling returns current members with their live monthly billing projection.
+// The projection is built from the same ledger used by passenger views so both roles see
+// identical limits, confirmed spend, and period boundaries.
+func (c *Control) ListMembersWithBilling(ctx context.Context, actor domain.User, carRef string) ([]MemberView, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return nil, ErrForbidden
+	}
+	car, errCar := c.carByRef(ctx, carRef)
+	if errCar != nil {
+		return nil, errCar
+	}
+	members, errMembers := c.repository.ListCurrentMembershipsByCar(ctx, car.ID)
+	if errMembers != nil {
+		return nil, errMembers
+	}
+	views := make([]MemberView, 0, len(members))
+	for _, member := range members {
+		billing, errBilling := c.billingSnapshot(ctx, member)
+		if errBilling != nil {
+			return nil, errBilling
+		}
+		views = append(views, MemberView{Membership: member, Billing: billing})
+	}
+	return views, nil
 }
 
 func (c *Control) MoveAccount(ctx context.Context, actor domain.User, carRef, authID, safeLabel string) (domain.AuthAssignment, error) {
@@ -1021,7 +1131,11 @@ func (c *Control) PassengerMembers(ctx context.Context, user domain.User, period
 		if !ok {
 			aggregate = domain.MemberUsageAggregate{MembershipID: member.ID, MemberRef: member.MemberRef, DisplayName: member.DisplayName}
 		}
-		views = append(views, MemberView{Membership: member, Usage: aggregate})
+		billingSnapshot, errBilling := c.billingSnapshot(ctx, member)
+		if errBilling != nil {
+			return ReportPeriod{}, nil, errBilling
+		}
+		views = append(views, MemberView{Membership: member, Usage: aggregate, Billing: billingSnapshot})
 		seen[member.ID] = struct{}{}
 	}
 	for _, aggregate := range aggregates {
@@ -1032,6 +1146,45 @@ func (c *Control) PassengerMembers(ctx context.Context, user domain.User, period
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].Usage.DisplayName < views[j].Usage.DisplayName })
 	return period, views, nil
+}
+
+// billingSnapshot ensures the current monthly ledger exists before projecting it.
+func (c *Control) billingSnapshot(ctx context.Context, membership domain.Membership) (domain.BillingSnapshot, error) {
+	now := c.currentTime()
+	anchor := membership.BillingAnchorAt
+	if anchor.IsZero() {
+		anchor = membership.StartedAt
+	}
+	location := c.reportLocation
+	if strings.TrimSpace(membership.BillingTimezone) != "" {
+		if loaded, errLoad := time.LoadLocation(strings.TrimSpace(membership.BillingTimezone)); errLoad == nil {
+			location = loaded
+		}
+	}
+	period, errPeriod := carpoolbilling.MonthlyPeriod(anchor, now, location)
+	if errPeriod != nil {
+		return domain.BillingSnapshot{}, errPeriod
+	}
+	stored, errEnsure := c.repository.EnsureBillingPeriod(ctx, domain.BillingPeriod{
+		MembershipID: membership.ID, MemberRefSnapshot: membership.MemberRef, CarID: membership.CarID,
+		Timezone: location.String(), AnchorAt: anchor, From: period.From, To: period.To,
+		LimitNanoUSD: copyInt64(membership.MonthlyLimitNanoUSD), Revision: 1,
+	})
+	if errEnsure != nil {
+		return domain.BillingSnapshot{}, errEnsure
+	}
+	return carpoolbilling.Snapshot(carpoolbilling.Period{From: stored.From, To: stored.To}, stored.LimitNanoUSD,
+		stored.ConfirmedNanoUSD, stored.ResetBaselineNanoUSD, stored.UnknownCostEvents, stored.Timezone, nil), nil
+}
+
+// PassengerBilling returns the current passenger ledger projection.
+func (c *Control) PassengerBilling(ctx context.Context, user domain.User) (domain.Membership, domain.BillingSnapshot, error) {
+	_, membership, errCar := c.PassengerCar(ctx, user)
+	if errCar != nil {
+		return domain.Membership{}, domain.BillingSnapshot{}, errCar
+	}
+	snapshot, errSnapshot := c.billingSnapshot(ctx, membership)
+	return membership, snapshot, errSnapshot
 }
 
 func (c *Control) PassengerAccounts(ctx context.Context, user domain.User, periodName string) (ReportPeriod, []AccountView, error) {
@@ -1062,7 +1215,12 @@ func (c *Control) PassengerAccounts(ctx context.Context, user domain.User, perio
 		if c.authCatalog != nil {
 			auth, _ = c.authCatalog.GetByID(assignment.AuthID)
 		}
-		views = append(views, AccountView{Assignment: assignment, Health: carpoolruntime.ProjectAccountHealth(auth, now, defaultStatusMaxAge), Usage: usageByAssignment[assignment.ID]})
+		views = append(views, AccountView{
+			Assignment: assignment,
+			Health:     carpoolruntime.ProjectAccountHealth(auth, now, defaultStatusMaxAge),
+			Quota:      carpoolruntime.ProjectAccountQuota(auth, now, defaultStatusMaxAge),
+			Usage:      usageByAssignment[assignment.ID],
+		})
 	}
 	return period, views, nil
 }
@@ -1139,6 +1297,214 @@ func (c *Control) AdminUsage(ctx context.Context, actor domain.User, query Admin
 	return AdminUsageReport{Period: period, RetentionCutoff: retentionCutoff, GroupBy: groupBy, Items: items}, nil
 }
 
+// AdminUsageRequests returns a stable, fixed-size page of logical requests.
+func (c *Control) AdminUsageRequests(ctx context.Context, actor domain.User, query UsageRequestQuery) (Page[domain.UsageRequestDetail], error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return Page[domain.UsageRequestDetail]{}, ErrForbidden
+	}
+	now := c.currentTime()
+	cutoff := now.Add(-c.usageRetention)
+	if settings, settingsErr := c.repository.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour))); settingsErr == nil {
+		if settings.EffectiveDays == 0 {
+			cutoff = time.Unix(0, 0)
+		} else {
+			cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+		}
+	}
+	var period ReportPeriod
+	var err error
+	if query.From != nil || query.To != nil {
+		if query.From == nil || query.To == nil || query.Period != "" {
+			return Page[domain.UsageRequestDetail]{}, domain.ErrInvalid
+		}
+		period, err = ValidateCustomReportPeriod(*query.From, *query.To, cutoff)
+	} else {
+		name := strings.TrimSpace(query.Period)
+		if name == "" {
+			name = "today"
+		}
+		period, err = ResolveReportPeriod(name, now, c.reportLocation)
+		if err == nil && period.From.Before(cutoff) {
+			period.From = cutoff
+		}
+	}
+	if err != nil {
+		return Page[domain.UsageRequestDetail]{}, err
+	}
+	f := domain.UsageRequestFilter{From: period.From, To: period.To, RequestedModel: strings.TrimSpace(query.Model), Outcome: strings.TrimSpace(query.Outcome), BillingStatus: strings.TrimSpace(query.BillingStatus), RequestID: strings.TrimSpace(query.RequestID)}
+	for _, item := range []struct {
+		ref, kind string
+		dst       *string
+	}{{strings.TrimSpace(query.CarRef), "car", &f.CarID}, {strings.TrimSpace(query.UserRef), "usr", &f.UserID}, {strings.TrimSpace(query.AccountRef), "acct", &f.AssignmentID}, {strings.TrimSpace(query.APIKeyRef), "key", &f.APIKeyID}} {
+		if item.ref == "" {
+			continue
+		}
+		if item.kind != "key" {
+			if errRef := validatePublicRef(item.ref, item.kind); errRef != nil {
+				return Page[domain.UsageRequestDetail]{}, errRef
+			}
+		}
+		switch item.kind {
+		case "car":
+			v, e := c.repository.GetCarByRef(ctx, item.ref)
+			if e != nil {
+				return Page[domain.UsageRequestDetail]{}, e
+			}
+			*item.dst = v.ID
+		case "usr":
+			v, e := c.repository.GetUserByRef(ctx, item.ref)
+			if e != nil {
+				return Page[domain.UsageRequestDetail]{}, e
+			}
+			*item.dst = v.ID
+		case "acct":
+			v, e := c.repository.GetAuthAssignmentByRef(ctx, item.ref)
+			if e != nil {
+				return Page[domain.UsageRequestDetail]{}, e
+			}
+			*item.dst = v.ID
+		case "key":
+			*item.dst = item.ref
+		}
+	}
+	before, beforeID, errCursor := decodeUsageCursor(query.Cursor)
+	if errCursor != nil {
+		return Page[domain.UsageRequestDetail]{}, errCursor
+	}
+	items, errList := c.repository.ListUsageRequests(ctx, f, before, beforeID, 26)
+	if errList != nil {
+		return Page[domain.UsageRequestDetail]{}, errList
+	}
+	page := Page[domain.UsageRequestDetail]{Items: items}
+	if len(items) > 25 {
+		page.Items = items[:25]
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor = encodeUsageCursor(last.Request.StartedAt, last.Request.RequestID)
+	}
+	page.Total, err = c.repository.CountUsageRequests(ctx, f)
+	if err != nil {
+		return Page[domain.UsageRequestDetail]{}, err
+	}
+	return page, nil
+}
+
+func (c *Control) AdminUsageRequest(ctx context.Context, actor domain.User, requestID string) (domain.UsageRequestDetail, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return domain.UsageRequestDetail{}, ErrForbidden
+	}
+	return c.repository.GetUsageRequestDetail(ctx, strings.TrimSpace(requestID))
+}
+
+func (c *Control) AdminBillingPeriods(ctx context.Context, actor domain.User, membershipID, carID string, from, to time.Time, limit int) ([]domain.BillingPeriod, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return nil, ErrForbidden
+	}
+	return c.repository.ListBillingPeriods(ctx, membershipID, carID, from, to, limit)
+}
+
+func (c *Control) RetentionSettings(ctx context.Context, actor domain.User) (domain.RetentionSettings, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return domain.RetentionSettings{}, ErrForbidden
+	}
+	return c.repository.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour)))
+}
+
+func (c *Control) UpdateRetentionSettings(ctx context.Context, actor domain.User, days *int64) (domain.RetentionSettings, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return domain.RetentionSettings{}, ErrForbidden
+	}
+	if days != nil && (*days < 0 || (*days != 0 && *days != 90 && *days != 180 && *days != 365)) {
+		return domain.RetentionSettings{}, domain.ErrInvalid
+	}
+	audit := c.audit(sessionAuditActorType, actor.UserRef, "update_retention", "settings", "retention", "succeeded", "")
+	return c.repository.SetRetentionOverride(ctx, days, &audit)
+}
+
+func (c *Control) PreviewRetention(ctx context.Context, actor domain.User, operation string) (int64, int64, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return 0, 0, ErrForbidden
+	}
+	if !validRetentionOperation(operation) {
+		return 0, 0, domain.ErrInvalid
+	}
+	settings, err := c.RetentionSettings(ctx, actor)
+	if err != nil {
+		return 0, 0, err
+	}
+	now := c.currentTime()
+	cutoff := now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+	if settings.EffectiveDays == 0 {
+		// A permanent automatic policy disables expiry, but an explicit admin
+		// cleanup must still target completed records up to the current instant.
+		cutoff = now.Add(time.Nanosecond)
+	}
+	return c.repository.PreviewRetention(ctx, operation, cutoff)
+}
+
+func (c *Control) RunRetention(ctx context.Context, actor domain.User, operation string) (domain.RetentionJob, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return domain.RetentionJob{}, ErrForbidden
+	}
+	if !validRetentionOperation(operation) {
+		return domain.RetentionJob{}, domain.ErrInvalid
+	}
+	settings, err := c.RetentionSettings(ctx, actor)
+	if err != nil {
+		return domain.RetentionJob{}, err
+	}
+	now := c.currentTime()
+	cutoff := now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+	if settings.EffectiveDays == 0 {
+		// A permanent automatic policy disables expiry, but an explicit admin
+		// cleanup must still target completed records up to the current instant.
+		cutoff = now.Add(time.Nanosecond)
+	}
+	expected, inFlight, err := c.repository.PreviewRetention(ctx, operation, cutoff)
+	if err != nil {
+		return domain.RetentionJob{}, err
+	}
+	job, err := c.repository.CreateRetentionJob(ctx, operation, actor.UserRef, expected)
+	if err != nil {
+		return domain.RetentionJob{}, err
+	}
+	job.InFlightCount = inFlight
+	deleted, inflight, err := c.repository.ExecuteRetention(ctx, operation, cutoff, 1000)
+	job.DeletedCount = deleted
+	job.InFlightCount = inflight
+	completedAt := c.currentTime()
+	job.CompletedAt = &completedAt
+	if err != nil {
+		job.Status = "failed"
+		job.FailureReason = "执行失败"
+	} else {
+		job.Status = "completed"
+	}
+	_ = c.repository.FinishRetentionJob(ctx, job.ID, job.Status, job.DeletedCount, job.InFlightCount, job.FailureReason)
+	return job, err
+}
+
+func (c *Control) RetentionJob(ctx context.Context, actor domain.User, jobID string) (domain.RetentionJob, error) {
+	if actor.Role != domain.UserRoleAdmin {
+		return domain.RetentionJob{}, ErrForbidden
+	}
+	if strings.TrimSpace(jobID) == "" {
+		return domain.RetentionJob{}, domain.ErrInvalid
+	}
+	return c.repository.GetRetentionJob(ctx, jobID)
+}
+
+func validRetentionOperation(op string) bool {
+	return op == "usage_details" || op == "closed_periods" || op == "reset_current_period"
+}
+
+func copyInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
 func (c *Control) ListAuditEvents(ctx context.Context, actor domain.User, query AuditListQuery) (Page[domain.AuditEvent], error) {
 	if actor.Role != domain.UserRoleAdmin {
 		return Page[domain.AuditEvent]{}, ErrForbidden
@@ -1172,10 +1538,25 @@ func (c *Control) ListAuditEvents(ctx context.Context, actor domain.User, query 
 
 // AuthorizeProxy freezes the user's current vehicle and runtime account upper bound.
 func (c *Control) AuthorizeProxy(ctx context.Context, userID, apiKeyID, callerScope, method, path string, upgrade bool) (*carpoolruntime.AuthorizationSnapshot, error) {
+	return c.authorizeProxy(ctx, userID, apiKeyID, callerScope, method, path, upgrade, "")
+}
+
+// AuthorizeProxyWithModel performs the same authorization while carrying the
+// requested model into the durable request snapshot.
+func (c *Control) AuthorizeProxyWithModel(ctx context.Context, userID, apiKeyID, callerScope, method, path, model string, upgrade bool) (*carpoolruntime.AuthorizationSnapshot, error) {
+	return c.authorizeProxy(ctx, userID, apiKeyID, callerScope, method, path, upgrade, model)
+}
+
+func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerScope, method, path string, upgrade bool, model string) (*carpoolruntime.AuthorizationSnapshot, error) {
 	policy := carpoolruntime.CarpoolProxyRoutePolicy(method, path, upgrade)
 	reasonCode := policy.ReasonCode
 	if c.homeEnabled {
 		reasonCode = "home_not_supported"
+	}
+	if reasonCode == "" && !strings.EqualFold(strings.TrimSpace(method), "GET") && c.accountingAdmission != nil {
+		if errAccounting := c.accountingAdmission(ctx); errAccounting != nil {
+			return nil, errAccounting
+		}
 	}
 	runtimeAuthIDs := make([]string, 0)
 	if reasonCode == "" && c.authCatalog != nil {
@@ -1187,7 +1568,16 @@ func (c *Control) AuthorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 		}
 	}
 	requestID := uuid.NewString()
-	snapshot, errAuthorize := c.repository.AuthorizeAndBeginProxyRequest(ctx, domain.ProxyAuthorization{RequestID: requestID, UserID: userID, APIKeyID: apiKeyID, SourceFormat: policy.SourceFormat, StartedAt: c.currentTime(), RuntimeAuthIDs: runtimeAuthIDs, PreflightReasonCode: reasonCode})
+	var catalogHash string
+	var coverageFrom *time.Time
+	if catalog := c.PricingCatalog(); catalog != nil {
+		catalogHash = catalog.Hash
+		if loadedAt, errLoaded := time.Parse(time.RFC3339, catalog.LoadedAt); errLoaded == nil {
+			loadedAt = loadedAt.UTC()
+			coverageFrom = &loadedAt
+		}
+	}
+	snapshot, errAuthorize := c.repository.AuthorizeAndBeginProxyRequest(ctx, domain.ProxyAuthorization{NonBillable: policy.Allowed && strings.EqualFold(strings.TrimSpace(method), "GET"), RequestID: requestID, UserID: userID, APIKeyID: apiKeyID, SourceFormat: policy.SourceFormat, RequestedModel: strings.TrimSpace(model), StartedAt: c.currentTime(), RuntimeAuthIDs: runtimeAuthIDs, PreflightReasonCode: reasonCode, PricingCatalogHash: catalogHash, PricingCoverageFrom: coverageFrom})
 	if errAuthorize != nil {
 		return nil, errAuthorize
 	}

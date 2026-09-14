@@ -342,6 +342,8 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 			return node.Value == DefaultCarpoolSessionAbsoluteTTL
 		case "carpool.session.idle-ttl":
 			return node.Value == DefaultCarpoolSessionIdleTTL
+		case "carpool.pricing.catalog-url":
+			return node.Value == DefaultCarpoolPricingCatalogURL
 		case "remote-management.panel-github-repository":
 			return node.Value == DefaultPanelGitHubRepository
 		case "plugins.dir":

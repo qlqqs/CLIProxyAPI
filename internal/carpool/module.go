@@ -14,12 +14,15 @@ import (
 	carpoolaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/accounting"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/httpapi"
+	carpoolpricing "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
+	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
 	carpoolservice "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/service"
 	carpoolsqlite "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/store/sqlite"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -32,9 +35,11 @@ type Module struct {
 	httpAPI    *httpapi.API
 	provider   sdkaccess.Provider
 	writer     *accounting.Writer
+	pricing    *carpoolpricing.Manager
 	retention  *retentionCleaner
 	startOnce  sync.Once
-	closeOnce  sync.Once
+	closeMu    sync.Mutex
+	closed     bool
 	closeError error
 }
 
@@ -78,16 +83,36 @@ func Open(ctx context.Context, cfg *config.Config, configPath string, authCatalo
 		return operationErr
 	}
 	now := time.Now
-	if _, errRecover := store.RecoverInterruptedRequests(ctx, now().UTC()); errRecover != nil {
+	if recovered, errRecover := store.RecoverInterruptedRequests(ctx, now().UTC()); errRecover != nil {
 		return nil, closeStore(fmt.Errorf("carpool: recover interrupted requests: %w", errRecover))
+	} else if recovered > 0 {
+		log.WithField("reason", "carpool_accounting_possibly_incomplete").WithField("requests", recovered).Warn("interrupted requests may have incomplete accounting; new generation remains available")
+	}
+	catalog, errCatalog := carpoolpricing.DefaultCatalog()
+	if errCatalog != nil {
+		return nil, closeStore(fmt.Errorf("carpool: load pricing catalog: %w", errCatalog))
+	}
+	catalog.LoadedAt = now().UTC().Format(time.RFC3339)
+	pricingManager, errPricingManager := carpoolpricing.NewManager(ctx, carpoolpricing.ManagerConfig{
+		Initial: catalog, URL: carpoolCfg.Pricing.CatalogURL, Persistence: store, Now: now,
+	})
+	if errPricingManager != nil {
+		return nil, closeStore(fmt.Errorf("carpool: initialize pricing catalog: %w", errPricingManager))
+	}
+	// Historical interruption is a coverage warning, not a startup admission gate.
+	writer, errWriter := accounting.NewWriter(store, accounting.Config{Now: now, CatalogProvider: pricingManager})
+	if errWriter != nil {
+		return nil, closeStore(errWriter)
 	}
 	control, errControl := carpoolservice.NewControl(store, authCatalog, carpoolservice.ControlConfig{
-		SessionAbsoluteTTL: absoluteTTL,
-		SessionIdleTTL:     idleTTL,
-		ReportLocation:     reportLocation,
-		UsageRetention:     time.Duration(carpoolCfg.UsageRetentionDays) * 24 * time.Hour,
-		HomeEnabled:        cfg.Home.Enabled,
-		Now:                now,
+		SessionAbsoluteTTL:  absoluteTTL,
+		SessionIdleTTL:      idleTTL,
+		ReportLocation:      reportLocation,
+		UsageRetention:      time.Duration(carpoolCfg.UsageRetentionDays) * 24 * time.Hour,
+		HomeEnabled:         cfg.Home.Enabled,
+		Now:                 now,
+		PricingProvider:     pricingManager,
+		AccountingAdmission: writer.CheckAdmission,
 	})
 	if errControl != nil {
 		return nil, closeStore(errControl)
@@ -98,20 +123,19 @@ func Open(ctx context.Context, cfg *config.Config, configPath string, authCatalo
 		TrustedOrigins:  carpoolCfg.TrustedOrigins,
 		TrustedProxyNet: trustedProxies,
 		Now:             now,
+		Pricing:         pricingManager,
 	})
 	if errAPI != nil {
 		return nil, closeStore(errAPI)
 	}
-	writer, errWriter := accounting.NewWriter(store, accounting.Config{Now: now})
-	if errWriter != nil {
-		return nil, closeStore(errWriter)
-	}
+
 	return &Module{
 		store:    store,
 		control:  control,
 		httpAPI:  browserAPI,
 		provider: carpoolaccess.NewProvider(store, now),
 		writer:   writer,
+		pricing:  pricingManager,
 		retention: newRetentionCleaner(store, retentionCleanerConfig{
 			UsageRetention: time.Duration(carpoolCfg.UsageRetentionDays) * 24 * time.Hour,
 			AuditRetention: time.Duration(carpoolCfg.AuditRetentionDays) * 24 * time.Hour,
@@ -141,7 +165,20 @@ func (m *Module) AuthenticatedRequestHook(ctx context.Context, request *http.Req
 	if m == nil || m.httpAPI == nil {
 		return sdkaccess.NewInternalAuthError("Carpool authorization service unavailable", nil)
 	}
-	return m.httpAPI.AuthenticatedRequestHook(ctx, request, result)
+	if errAuthorize := m.httpAPI.AuthenticatedRequestHook(ctx, request, result); errAuthorize != nil {
+		return errAuthorize
+	}
+	if request != nil {
+		if snapshot, ok := carpoolruntime.AuthorizationFromContext(request.Context()); ok {
+			// Bind identity to the server snapshot, not caller-supplied record IDs.
+			requestCtx := usage.WithSynchronousObserver(request.Context(), func(observeCtx context.Context, record usage.Record) {
+				record.RequestID = snapshot.RequestID()
+				m.writer.ObserveUsage(observeCtx, record)
+			})
+			*request = *request.WithContext(requestCtx)
+		}
+	}
+	return nil
 }
 
 // ServerOptions returns composable HTTP integrations owned by the module.
@@ -151,13 +188,45 @@ func (m *Module) ServerOptions() []api.ServerOption {
 	}
 	return []api.ServerOption{
 		api.WithMiddleware(m.httpAPI.ProxyCredentialGuard()),
-		api.WithMiddleware(m.httpAPI.ScopedModelRequestCompletion(m.writer.HandleRequestCompletion)),
+		api.WithMiddleware(m.httpAPI.ScopedModelRequestCompletion(m.observeModelRequestCompletion)),
 		api.WithRouterConfigurator(func(engine *gin.Engine, _ *handlers.BaseAPIHandler, _ *config.Config) {
 			m.httpAPI.RegisterRoutes(engine)
 		}),
-		api.WithRequestCompletionObserver(m.writer.HandleRequestCompletion),
+		api.WithRequestCompletionObserver(m.observeRequestCompletion),
 		api.WithNoRouteHandler(m.httpAPI.HandleNoRoute),
 	}
+}
+
+// scopedAccountingPlugin keeps global-key events outside the billing retry queue.
+type scopedAccountingPlugin struct {
+	writer *accounting.Writer
+}
+
+func (p scopedAccountingPlugin) HandleUsage(ctx context.Context, record usage.Record) {
+	snapshot, ok := carpoolruntime.AuthorizationFromContext(ctx)
+	if !ok {
+		return
+	}
+	record.RequestID = snapshot.RequestID()
+	p.writer.HandleUsage(ctx, record)
+}
+
+func (m *Module) observeRequestCompletion(ctx context.Context, completion pluginapi.RequestCompletion) {
+	snapshot, ok := carpoolruntime.AuthorizationFromContext(ctx)
+	if !ok {
+		return
+	}
+	completion.RequestID = snapshot.RequestID()
+	m.writer.HandleRequestCompletion(ctx, completion)
+}
+
+func (m *Module) observeModelRequestCompletion(ctx context.Context, completion pluginapi.RequestCompletion) {
+	snapshot, ok := carpoolruntime.AuthorizationFromContext(ctx)
+	if !ok {
+		return
+	}
+	completion.RequestID = snapshot.RequestID()
+	m.writer.HandleNonBillableRequestCompletion(ctx, completion)
 }
 
 // Start registers the accounting sink and starts its bounded writer.
@@ -166,8 +235,11 @@ func (m *Module) Start() {
 		return
 	}
 	m.startOnce.Do(func() {
-		usage.RegisterNamedPlugin(accountingPluginName, m.writer)
+		usage.RegisterNamedPlugin(accountingPluginName, scopedAccountingPlugin{writer: m.writer})
 		m.writer.Start()
+		if m.pricing != nil {
+			m.pricing.Start(context.Background())
+		}
 		if m.retention != nil {
 			m.retention.Start()
 		}
@@ -179,18 +251,33 @@ func (m *Module) Close(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
-	m.closeOnce.Do(func() {
-		if m.retention != nil {
-			m.closeError = errors.Join(m.closeError, m.retention.Close(ctx))
-		}
+	m.closeMu.Lock()
+	defer m.closeMu.Unlock()
+	if m.closed {
 		if m.writer != nil {
-			usage.UnregisterNamedPlugin(accountingPluginName)
-			m.closeError = errors.Join(m.closeError, m.writer.Close(ctx))
+			return errors.Join(m.closeError, m.writer.Close(ctx))
 		}
-		if m.store != nil {
-			m.closeError = errors.Join(m.closeError, m.store.Checkpoint(ctx))
-			m.closeError = errors.Join(m.closeError, m.store.Close())
-		}
-	})
+		return m.closeError
+	}
+	var drainError error
+	if m.pricing != nil {
+		drainError = errors.Join(drainError, m.pricing.Close(ctx))
+	}
+	if m.retention != nil {
+		drainError = errors.Join(drainError, m.retention.Close(ctx))
+	}
+	if m.writer != nil {
+		usage.UnregisterNamedPlugin(accountingPluginName)
+		drainError = errors.Join(drainError, m.writer.Close(ctx))
+	}
+	if drainError != nil {
+		// Keep SQLite open for any undrained producer/writer and a later Close.
+		return errors.Join(m.closeError, drainError)
+	}
+	if m.store != nil {
+		m.closeError = errors.Join(m.closeError, m.store.Checkpoint(ctx))
+		m.closeError = errors.Join(m.closeError, m.store.Close())
+	}
+	m.closed = true
 	return m.closeError
 }

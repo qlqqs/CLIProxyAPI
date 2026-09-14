@@ -180,6 +180,12 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 		if statusCode >= http.StatusInternalServerError {
 			log.Errorf("authentication middleware error: %v", err)
 		}
+		if err.Code == sdkaccess.AuthErrorCodeAccountingUnavailable {
+			c.AbortWithStatusJSON(statusCode, gin.H{"error": gin.H{
+				"message": err.Message, "type": "server_error", "code": string(err.Code),
+			}})
+			return
+		}
 		if realtimeError {
 			errorType := "authentication_error"
 			code := "invalid_api_key"

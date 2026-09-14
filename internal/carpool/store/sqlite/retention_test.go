@@ -118,6 +118,39 @@ func TestCleanupRetentionProcessesDeterministicBatches(t *testing.T) {
 	assertRetentionRowCount(t, store, "SELECT COUNT(*) FROM proxy_request_auth_scopes", 0)
 }
 
+func TestExecuteRetentionClosedPeriodsDetachesRequestReferences(t *testing.T) {
+	ctx := context.Background()
+	cutoff := time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC)
+	store := openTestStore(t, filepath.Join(t.TempDir(), "carpool.db"), func() time.Time {
+		return cutoff.Add(24 * time.Hour)
+	})
+	defer closeTestStore(t, store)
+	fixture := newRetentionFixture(t, ctx, store)
+	period, errPeriod := store.EnsureBillingPeriod(ctx, domain.BillingPeriod{
+		MembershipID: fixture.membership.ID, MemberRefSnapshot: fixture.membership.MemberRef,
+		CarID: fixture.car.ID, Timezone: "UTC", AnchorAt: cutoff.Add(-72 * time.Hour),
+		From: cutoff.Add(-48 * time.Hour), To: cutoff.Add(-24 * time.Hour),
+	})
+	if errPeriod != nil {
+		t.Fatalf("EnsureBillingPeriod() error = %v", errPeriod)
+	}
+	seedRetentionRequest(t, ctx, store, fixture, "closed-period-request",
+		cutoff.Add(-36*time.Hour), timePointer(cutoff.Add(-30*time.Hour)), cutoff.Add(-32*time.Hour))
+	if _, errUpdate := store.db.ExecContext(ctx, "UPDATE proxy_requests SET billing_period_id = ? WHERE request_id = ?", period.ID, "closed-period-request"); errUpdate != nil {
+		t.Fatalf("attach request to billing period: %v", errUpdate)
+	}
+
+	deleted, inFlight, errExecute := store.ExecuteRetention(ctx, "closed_periods", cutoff, 10)
+	if errExecute != nil {
+		t.Fatalf("ExecuteRetention(closed_periods) error = %v", errExecute)
+	}
+	if deleted != 1 || inFlight != 0 {
+		t.Fatalf("ExecuteRetention(closed_periods) = (%d, %d), want (1, 0)", deleted, inFlight)
+	}
+	assertRetentionRowCount(t, store, "SELECT COUNT(*) FROM billing_periods WHERE id = ?", 0, period.ID)
+	assertRetentionRowCount(t, store, "SELECT COUNT(*) FROM proxy_requests WHERE request_id = ? AND billing_period_id IS NULL", 1, "closed-period-request")
+}
+
 func TestCleanupRetentionValidatesInputAndContext(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "carpool.db"), nil)
 	defer closeTestStore(t, store)
@@ -303,4 +336,68 @@ func assertRetentionRowCount(t *testing.T, store *Store, query string, want int,
 
 func timePointer(value time.Time) *time.Time {
 	return &value
+}
+
+func TestRetentionProtectsInterruptedFactsAndPeriods(t *testing.T) {
+	for _, operation := range []string{"automatic", "usage_details", "closed_periods"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx := context.Background()
+			cutoff := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
+			store := openTestStore(t, filepath.Join(t.TempDir(), "carpool.db"), nil)
+			defer closeTestStore(t, store)
+			fixture := newRetentionFixture(t, ctx, store)
+			for i, outcome := range []string{"in_progress", "incomplete", "succeeded"} {
+				from := cutoff.Add(-time.Duration(10-i*2) * 24 * time.Hour)
+				period, err := store.EnsureBillingPeriod(ctx, domain.BillingPeriod{
+					MembershipID: fixture.membership.ID, MemberRefSnapshot: fixture.membership.MemberRef,
+					CarID: fixture.car.ID, Timezone: "UTC", AnchorAt: from, From: from, To: from.Add(24 * time.Hour),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				seedRetentionRequest(t, ctx, store, fixture, outcome, from, timePointer(from.Add(time.Hour)), from)
+				if _, err = store.db.ExecContext(ctx, `UPDATE proxy_requests SET outcome=?, completed_at=CASE WHEN ?='in_progress' THEN NULL ELSE completed_at END, billing_period_id=? WHERE request_id=?`, outcome, outcome, period.ID, outcome); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = store.db.ExecContext(ctx, `UPDATE usage_events SET billing_period_id=? WHERE request_id=?`, period.ID, outcome); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if operation == "automatic" {
+				result, err := store.CleanupRetention(ctx, RetentionCleanup{UsageCutoff: cutoff, AuditCutoff: cutoff, BatchSize: 100})
+				if err != nil || result.ProxyRequestsDeleted != 1 || result.UsageEventsDeleted != 1 {
+					t.Fatalf("cleanup = %#v, %v", result, err)
+				}
+			} else {
+				preview, _, err := store.PreviewRetention(ctx, operation, cutoff)
+				if err != nil || preview != 1 {
+					t.Fatalf("preview = %d, %v", preview, err)
+				}
+				deleted, _, err := store.ExecuteRetention(ctx, operation, cutoff, 100)
+				if err != nil || deleted != preview {
+					t.Fatalf("execute = %d, %v", deleted, err)
+				}
+			}
+			for _, outcome := range []string{"in_progress", "incomplete"} {
+				assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM proxy_requests WHERE request_id=? AND outcome=? AND billing_period_id IS NOT NULL`, 1, outcome, outcome)
+				assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM usage_events WHERE request_id=? AND billing_period_id IS NOT NULL`, 1, outcome)
+				assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM proxy_request_auth_scopes WHERE request_id=?`, 1, outcome)
+				assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM billing_periods WHERE id=(SELECT billing_period_id FROM proxy_requests WHERE request_id=?)`, 1, outcome)
+			}
+			// Reset offsets confirmed spend and unknown totals, not raw facts or interruption markers.
+			at := cutoff.Add(-10 * 24 * time.Hour).Add(time.Hour)
+			if _, err := store.db.ExecContext(ctx, `UPDATE billing_periods SET unknown_cost_events=2`); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.ExecuteRetention(ctx, "reset_current_period", at, 100); err != nil {
+				t.Fatal(err)
+			}
+			assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM billing_periods WHERE unknown_cost_events=0 AND id=(SELECT billing_period_id FROM proxy_requests WHERE request_id='in_progress')`, 1)
+			assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM proxy_requests WHERE outcome IN ('in_progress','incomplete')`, 2)
+			for _, outcome := range []string{"in_progress", "incomplete"} {
+				assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM proxy_requests WHERE request_id=? AND outcome=? AND billing_period_id IS NOT NULL`, 1, outcome, outcome)
+				assertRetentionRowCount(t, store, `SELECT COUNT(*) FROM usage_events WHERE request_id=? AND billing_period_id IS NOT NULL`, 1, outcome)
+			}
+		})
+	}
 }

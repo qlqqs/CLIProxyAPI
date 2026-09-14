@@ -16,6 +16,7 @@ const (
 	DefaultCarpoolReportTimezone     = "UTC"
 	DefaultCarpoolUsageRetention     = 90
 	DefaultCarpoolAuditRetention     = 180
+	DefaultCarpoolPricingCatalogURL  = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 	DefaultCarpoolSessionAbsoluteTTL = "24h"
 	DefaultCarpoolSessionIdleTTL     = "2h"
 )
@@ -27,9 +28,15 @@ type CarpoolConfig struct {
 	ReportTimezone     string               `yaml:"report-timezone" json:"report-timezone"`
 	UsageRetentionDays int                  `yaml:"usage-retention-days" json:"usage-retention-days"`
 	AuditRetentionDays int                  `yaml:"audit-retention-days" json:"audit-retention-days"`
+	Pricing            CarpoolPricingConfig `yaml:"pricing" json:"pricing"`
 	Session            CarpoolSessionConfig `yaml:"session" json:"session"`
 	TrustedOrigins     []string             `yaml:"trusted-origins" json:"trusted-origins"`
 	TrustedProxyCIDRs  []string             `yaml:"trusted-proxy-cidrs" json:"trusted-proxy-cidrs"`
+}
+
+// CarpoolPricingConfig configures the optional remote model price snapshot.
+type CarpoolPricingConfig struct {
+	CatalogURL string `yaml:"catalog-url" json:"catalog-url"`
 }
 
 // CarpoolSessionConfig configures browser session behavior for the carpool UI.
@@ -46,6 +53,7 @@ func DefaultCarpoolConfig() CarpoolConfig {
 		ReportTimezone:     DefaultCarpoolReportTimezone,
 		UsageRetentionDays: DefaultCarpoolUsageRetention,
 		AuditRetentionDays: DefaultCarpoolAuditRetention,
+		Pricing:            CarpoolPricingConfig{CatalogURL: DefaultCarpoolPricingCatalogURL},
 		Session: CarpoolSessionConfig{
 			AbsoluteTTL:  DefaultCarpoolSessionAbsoluteTTL,
 			IdleTTL:      DefaultCarpoolSessionIdleTTL,
@@ -90,6 +98,9 @@ func (cfg CarpoolConfig) Validate() error {
 	if cfg.AuditRetentionDays <= 0 {
 		return fmt.Errorf("carpool: audit-retention-days must be positive")
 	}
+	if errPricing := validateCarpoolPricingURL(cfg.Pricing.CatalogURL); errPricing != nil {
+		return errPricing
+	}
 	absoluteTTL, errAbsolute := parsePositiveCarpoolDuration("session.absolute-ttl", cfg.Session.AbsoluteTTL)
 	if errAbsolute != nil {
 		return errAbsolute
@@ -110,6 +121,14 @@ func (cfg CarpoolConfig) Validate() error {
 		if _, _, errCIDR := net.ParseCIDR(strings.TrimSpace(rawCIDR)); errCIDR != nil {
 			return fmt.Errorf("carpool: invalid trusted-proxy-cidrs entry %q: %w", rawCIDR, errCIDR)
 		}
+	}
+	return nil
+}
+
+func validateCarpoolPricingURL(raw string) error {
+	parsed, errParse := url.Parse(strings.TrimSpace(raw))
+	if errParse != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("carpool: pricing.catalog-url must be an http(s) URL without userinfo")
 	}
 	return nil
 }

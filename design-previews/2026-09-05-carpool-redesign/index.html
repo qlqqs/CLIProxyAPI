@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>拼车额度工作台 · 四方向设计样机</title>
+  <style>
+    :root {
+      --ink: #19212b;
+      --muted: #66717f;
+      --line: #d8dde3;
+      --canvas: #eef1f4;
+      --paper: #ffffff;
+      --accent: #146c94;
+      --warn: #bc5c2e;
+      --good: #15765a;
+      --qmdp-control-height: 72px;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .preview-page { width: min(1480px, 100%); margin: 0 auto; padding: 32px 28px 56px; }
+    .preview-intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.48fr);
+      gap: 28px;
+      align-items: end;
+      padding: 18px 4px 28px;
+      border-bottom: 1px solid var(--line);
+    }
+    .preview-kicker { margin: 0 0 8px; color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .preview-intro h1 { margin: 0; max-width: 680px; font-size: clamp(28px, 4vw, 48px); line-height: 1.08; letter-spacing: -.045em; }
+    .preview-intro p { margin: 12px 0 0; max-width: 700px; color: var(--muted); }
+    .preview-legend { display: grid; gap: 9px; padding: 14px 16px; border-left: 3px solid var(--ink); background: rgb(255 255 255 / 62%); color: var(--muted); }
+    .preview-legend strong { color: var(--ink); font-size: 13px; }
+    .preview-legend span { display: flex; gap: 8px; align-items: baseline; }
+    .preview-legend b { color: var(--ink); font-variant-numeric: tabular-nums; }
+    .preview-controls {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 20px;
+      margin: 24px 0 26px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+    .preview-controls label { display: grid; gap: 5px; color: var(--muted); font-weight: 700; }
+    .preview-controls .dial-head { display: flex; justify-content: space-between; gap: 10px; color: var(--ink); }
+    .preview-controls output { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .preview-controls input { width: 100%; accent-color: var(--accent); }
+    .directions-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .direction-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); background: var(--paper); box-shadow: 0 8px 22px rgb(25 33 43 / 7%); }
+    .direction-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 16px 18px 12px; }
+    .direction-head h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+    .direction-head small { display: block; margin-top: 3px; color: var(--muted); }
+    .recommend { padding: 4px 8px; border: 1px solid #c9d9e1; color: var(--accent); background: #f1f8fb; font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .mockup { min-height: 350px; margin: 0 12px; overflow: hidden; position: relative; }
+    .direction-brief { min-height: 70px; padding: 13px 18px 10px; color: var(--muted); font-size: 13px; }
+    .direction-brief strong { color: var(--ink); }
+    .qmdp-pick-button { display: block; width: calc(100% - 36px); margin: 0 18px 18px; padding: 11px 14px; border: 1px solid var(--ink); color: var(--paper); background: var(--ink); font: inherit; font-weight: 800; text-align: left; cursor: pointer; }
+    .qmdp-pick-button:hover { background: var(--accent); border-color: var(--accent); }
+    .qmdp-pick-button:focus-visible { outline: 3px solid #5b9db8; outline-offset: 3px; }
+    .dir-a, .dir-b, .dir-c, .dir-d { width: 100%; height: 100%; }
+
+    /* A · daylight dispatch desk */
+    .dir-a { padding: 18px; color: #1a2d36; background: #e8f4f5; font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; }
+    .dir-a .a-top { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding-bottom: 16px; border-bottom: 1px solid #b9d4d6; }
+    .dir-a .a-brand { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 850; letter-spacing: .08em; }
+    .dir-a .a-brand-mark { display: grid; place-items: center; width: 28px; height: 28px; color: #fff; background: #176d82; font-size: 11px; }
+    .dir-a .a-nav { display: flex; gap: 14px; color: #5b7479; font-size: 11px; }
+    .dir-a .a-nav b { color: #176d82; }
+    .dir-a .a-budget { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; margin-top: 18px; }
+    .dir-a .a-budget-label { color: #527076; font-size: 11px; font-weight: 700; }
+    .dir-a .a-budget-amount { font-size: 26px; line-height: 1; font-weight: 820; letter-spacing: -.05em; }
+    .dir-a .a-budget-amount span { color: #527076; font-size: 12px; font-weight: 700; letter-spacing: 0; }
+    .dir-a .a-rail { grid-column: 1 / -1; display: grid; grid-template-columns: 36.8% 1fr; height: 14px; margin-top: 9px; overflow: hidden; background: #c9e0df; }
+    .dir-a .a-rail-used { background: #176d82; }
+    .dir-a .a-rail-rest { background: #f0b48b; }
+    .dir-a .a-rail-notes { grid-column: 1 / -1; display: flex; justify-content: space-between; color: #527076; font-size: 10px; }
+    .dir-a .a-section { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-top: 22px; }
+    .dir-a .a-section h3 { margin: 0; font-size: 13px; }
+    .dir-a .a-section span { color: #527076; font-size: 10px; }
+    .dir-a .a-members { display: grid; gap: 7px; margin-top: 8px; }
+    .dir-a .a-member { display: grid; grid-template-columns: 82px 1fr 70px; gap: 10px; align-items: center; padding: 9px 10px; background: #f8ffff; border: 1px solid #c7dfe0; }
+    .dir-a .a-member-name { font-weight: 800; }
+    .dir-a .a-member-state { margin-top: 2px; color: #6a8083; font-size: 10px; }
+    .dir-a .a-mini-rail { height: 6px; background: #d6e6e5; }
+    .dir-a .a-mini-rail i { display: block; height: 100%; background: #176d82; }
+    .dir-a .a-member.over .a-mini-rail i { background: #c76538; }
+    .dir-a .a-member.over .a-member-cost { color: #b34d28; }
+    .dir-a .a-member-cost { text-align: right; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .dir-a .a-account-row { display: flex; gap: 8px; margin-top: 15px; color: #527076; font-size: 10px; }
+    .dir-a .a-account-row b { color: #176d82; }
+
+    /* B · dark monitoring cockpit */
+    .dir-b { padding: 16px; color: #d5e6e8; background: #121a20; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace; }
+    .dir-b .b-status { display: flex; justify-content: space-between; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #33464d; color: #8eaaaf; font-size: 10px; letter-spacing: .04em; }
+    .dir-b .b-live { color: #65d0ba; }
+    .dir-b .b-live::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #65d0ba; }
+    .dir-b .b-readout { display: grid; grid-template-columns: 1fr auto; gap: 4px 20px; align-items: end; padding: 20px 0 14px; }
+    .dir-b .b-readout small { color: #8eaaaf; font-size: 10px; }
+    .dir-b .b-readout strong { color: #f3fcfb; font-size: 38px; line-height: 1; letter-spacing: -.1em; }
+    .dir-b .b-readout strong em { color: #8eaaaf; font-size: 12px; font-style: normal; letter-spacing: 0; }
+    .dir-b .b-readout .b-window { color: #e7ae5b; font-size: 11px; text-align: right; }
+    .dir-b .b-segments { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; }
+    .dir-b .b-segments i { height: 14px; background: #2e4148; }
+    .dir-b .b-segments i.on { background: #4eb7ad; }
+    .dir-b .b-segments i.warn { background: #e7ae5b; }
+    .dir-b .b-scale { display: flex; justify-content: space-between; color: #6e878d; font-size: 9px; }
+    .dir-b .b-columns { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-top: 18px; }
+    .dir-b .b-panel { padding: 11px; border: 1px solid #33464d; background: #17232a; }
+    .dir-b .b-panel h3 { margin: 0 0 9px; color: #8eaaaf; font-size: 10px; font-weight: 500; letter-spacing: .05em; }
+    .dir-b .b-member { display: grid; grid-template-columns: 1fr auto; gap: 4px; padding: 7px 0; border-top: 1px solid #293940; font-size: 10px; }
+    .dir-b .b-member:first-of-type { border-top: 0; }
+    .dir-b .b-member b { color: #d5e6e8; font-weight: 500; }
+    .dir-b .b-member span { color: #65d0ba; font-variant-numeric: tabular-nums; }
+    .dir-b .b-member.over span { color: #ee9b60; }
+    .dir-b .b-event { display: grid; grid-template-columns: 47px 1fr auto; gap: 6px; padding: 6px 0; border-top: 1px solid #293940; color: #8eaaaf; font-size: 9px; }
+    .dir-b .b-event strong { color: #d5e6e8; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dir-b .b-event em { color: #e7ae5b; font-style: normal; }
+    .dir-b .b-foot { display: flex; justify-content: space-between; margin-top: 13px; color: #6e878d; font-size: 9px; }
+
+    /* C · precision ledger */
+    .dir-c { padding: 20px 18px; color: #252424; background: #fbfaf5; font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; }
+    .dir-c .c-masthead { display: flex; justify-content: space-between; align-items: end; padding-bottom: 10px; border-bottom: 3px double #252424; }
+    .dir-c .c-masthead h3 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 19px; font-weight: 600; letter-spacing: -.03em; }
+    .dir-c .c-masthead span { font-family: Georgia, serif; font-size: 10px; }
+    .dir-c .c-index { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #9a9991; color: #68665f; font-family: Georgia, serif; font-size: 10px; }
+    .dir-c .c-total { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; padding: 17px 0 13px; }
+    .dir-c .c-total small { color: #68665f; font-size: 10px; }
+    .dir-c .c-total strong { font-family: Georgia, serif; font-size: 32px; line-height: 1; font-weight: 500; letter-spacing: -.07em; }
+    .dir-c .c-total em { display: block; margin-top: 5px; color: #ae4930; font-size: 10px; font-style: normal; text-align: right; }
+    .dir-c .c-rule { height: 8px; border-top: 1px solid #252424; border-bottom: 1px solid #252424; }
+    .dir-c .c-ledger { margin-top: 12px; }
+    .dir-c .c-row { display: grid; grid-template-columns: 68px 1fr 70px; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #d4d1c6; font-size: 10px; }
+    .dir-c .c-row.head { padding-top: 0; border-bottom: 1px solid #252424; color: #68665f; font-family: Georgia, serif; }
+    .dir-c .c-row b { font-weight: 700; }
+    .dir-c .c-row .c-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dir-c .c-row .c-amount { font-family: Georgia, serif; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+    .dir-c .c-row.alert .c-amount { color: #ae4930; }
+    .dir-c .c-detail { padding: 7px 8px; border-left: 2px solid #ae4930; background: #f3eee4; color: #68665f; font-size: 9px; }
+    .dir-c .c-detail b { color: #252424; font-weight: 700; }
+    .dir-c .c-bottom { display: flex; justify-content: space-between; gap: 10px; margin-top: 13px; color: #68665f; font-family: Georgia, serif; font-size: 9px; }
+    .dir-c .c-bottom strong { color: #ae4930; font-weight: 600; }
+
+    /* D · transport wayfinding board */
+    .dir-d { padding: 16px; color: #161616; background: #f5f3ec; font-family: Arial, "Noto Sans SC", sans-serif; }
+    .dir-d .d-route { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 11px 12px; color: #fff; background: #171717; }
+    .dir-d .d-route-no { display: grid; place-items: center; width: 33px; height: 33px; color: #171717; background: #f2c230; font-size: 16px; font-weight: 900; }
+    .dir-d .d-route strong { font-size: 12px; letter-spacing: .04em; }
+    .dir-d .d-route small { display: block; margin-top: 2px; color: #c5c5c5; font-size: 9px; }
+    .dir-d .d-route time { font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .dir-d .d-callout { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 13px 0 10px; border-bottom: 2px solid #171717; }
+    .dir-d .d-callout b { font-size: 22px; letter-spacing: -.06em; }
+    .dir-d .d-callout span { color: #595959; font-size: 10px; text-align: right; }
+    .dir-d .d-callout strong { color: #ae3f2b; }
+    .dir-d .d-seat-list { display: grid; gap: 6px; margin-top: 12px; }
+    .dir-d .d-seat { display: grid; grid-template-columns: 27px 1fr auto; gap: 10px; align-items: center; min-height: 39px; padding: 6px 8px; border: 1px solid #c8c4b8; background: #fffdf7; }
+    .dir-d .d-seat-no { color: #7b786e; font-size: 10px; font-weight: 700; }
+    .dir-d .d-seat-name { font-size: 11px; font-weight: 800; }
+    .dir-d .d-seat-meta { display: block; margin-top: 1px; color: #68655d; font-size: 9px; font-weight: 400; }
+    .dir-d .d-seat-amount { font-size: 11px; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+    .dir-d .d-seat-amount small { display: block; color: #68655d; font-size: 8px; font-weight: 400; }
+    .dir-d .d-seat.over { border-left: 5px solid #ae3f2b; }
+    .dir-d .d-seat.over .d-seat-amount { color: #ae3f2b; }
+    .dir-d .d-seat.pending { border-left: 5px solid #f2c230; }
+    .dir-d .d-seat.pending .d-seat-amount { color: #806500; }
+    .dir-d .d-account-band { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; margin-top: 14px; padding-top: 11px; border-top: 1px solid #c8c4b8; }
+    .dir-d .d-account-band b { padding: 4px 6px; color: #171717; background: #f2c230; font-size: 9px; }
+    .dir-d .d-account-band p { margin: 0; color: #595959; font-size: 9px; }
+
+    @media (max-width: 980px) {
+      .preview-intro { grid-template-columns: 1fr; }
+      .directions-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .preview-page { padding: 18px 12px 40px; }
+      .preview-intro { padding-top: 8px; }
+      .preview-controls { grid-template-columns: 1fr; gap: 12px; }
+      .mockup { min-height: 360px; margin: 0 7px; }
+      .direction-head { padding-left: 13px; padding-right: 13px; }
+      .direction-brief { padding-left: 13px; padding-right: 13px; }
+      .qmdp-pick-button { width: calc(100% - 26px); margin-left: 13px; margin-right: 13px; }
+      .dir-a .a-nav { display: none; }
+      .dir-b .b-columns { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="preview-page">
+    <header class="preview-intro">
+      <div>
+        <p class="preview-kicker">CARPOOL / R12 · 设计方向样机</p>
+        <h1>让“还能不能用”<br>先于所有解释出现。</h1>
+        <p>四种完全不同的拼车额度工作台方向。样机使用虚构数据，只比较视觉与交互气质；确认方向后才进入正式实现。</p>
+      </div>
+      <aside class="preview-legend" aria-label="样机功能契约">
+        <strong>每个方向都必须让你快速确认</strong>
+        <span><b>01</b> 本期剩余金额与重置时间</span>
+        <span><b>02</b> 同车成员是否被限额阻止</span>
+        <span><b>03</b> CPA 窗口与费用数据是否完整</span>
+      </aside>
+    </header>
+
+    <section class="preview-controls" data-qmdp-dials aria-label="设计拨盘">
+      <label>
+        <span class="dial-head"><span>视觉冒险度</span><output data-qmdp-output="variance">7</output></span>
+        <input data-qmdp-dial="variance" type="range" min="1" max="10" value="7">
+      </label>
+      <label>
+        <span class="dial-head"><span>动效强度</span><output data-qmdp-output="motion">3</output></span>
+        <input data-qmdp-dial="motion" type="range" min="1" max="10" value="3">
+      </label>
+      <label>
+        <span class="dial-head"><span>信息密度</span><output data-qmdp-output="density">7</output></span>
+        <input data-qmdp-dial="density" type="range" min="1" max="10" value="7">
+      </label>
+    </section>
+
+    <section class="directions-grid" aria-label="四个设计方向">
+      <article class="direction-card" data-direction="A" data-name="日光调度台">
+        <header class="direction-head">
+          <div><h2>A · 日光调度台</h2><small>浅色协作 / 连续预算轨道</small></div>
+          <span class="recommend">推荐起点</span>
+        </header>
+        <div class="mockup">
+          <div class="dir-a">
+            <div class="a-top"><div class="a-brand"><span class="a-brand-mark">07</span><span>研发一车 · 额度台</span></div><div class="a-nav"><b>总览</b><span>成员</span><span>记录</span></div></div>
+            <div class="a-budget"><div><div class="a-budget-label">林舟 · 本期可用</div><div class="a-budget-amount">$31.60 <span>/ $50.00</span></div></div><div class="a-budget-label">36.8% 已用</div><div class="a-rail"><i class="a-rail-used"></i><i class="a-rail-rest"></i></div><div class="a-rail-notes"><span>已确认 $18.40</span><span>9 月 12 日重置</span></div></div>
+            <div class="a-section"><h3>同车成员</h3><span>3 人 · 金额公开</span></div>
+            <div class="a-members"><div class="a-member"><div><div class="a-member-name">林舟</div><div class="a-member-state">可请求</div></div><div class="a-mini-rail"><i style="width:36.8%"></i></div><div class="a-member-cost">$18.40<br><small>$50.00</small></div></div><div class="a-member over"><div><div class="a-member-name">陈予</div><div class="a-member-state">已阻止 · 超额</div></div><div class="a-mini-rail"><i style="width:100%"></i></div><div class="a-member-cost">$31.20<br><small>$30.00</small></div></div><div class="a-member"><div><div class="a-member-name">许宁</div><div class="a-member-state">统计不完整 · 2 条未知</div></div><div class="a-mini-rail"><i style="width:31.5%"></i></div><div class="a-member-cost">$12.60<br><small>$40.00</small></div></div></div>
+            <div class="a-account-row"><b>Codex</b><span>5 小时 42%</span><span>7 天 68%</span><span>Claude 上游未提供</span></div>
+          </div>
+        </div>
+        <p class="direction-brief"><strong>像共享办公室的值班白板。</strong> 一条预算轨道把可用金额、重置日和成员状态串成同一条阅读路径。</p>
+        <button class="qmdp-pick-button" type="button">选择 A · 日光调度台</button>
+      </article>
+
+      <article class="direction-card" data-direction="B" data-name="暗色仪表台">
+        <header class="direction-head">
+          <div><h2>B · 暗色仪表台</h2><small>夜间监测 / 分段刻度</small></div>
+        </header>
+        <div class="mockup">
+          <div class="dir-b">
+            <div class="b-status"><span class="b-live">CPA LINK / LIVE</span><span>CAR 07 · SHANGHAI · 14:20:08</span></div>
+            <div class="b-readout"><div><small>PERSONAL BALANCE / 林舟</small><strong>$31.60 <em>REMAINING</em></strong></div><div class="b-window">RESET IN<br><b>06D 18H</b></div><div class="b-segments"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="warn"></i><i></i><i></i><i></i><i></i><i></i></div><div class="b-scale"><span>$0</span><span>$18.40 USED</span><span>$50 LIMIT</span></div></div>
+            <div class="b-columns"><section class="b-panel"><h3>MEMBER SIGNALS / 03</h3><div class="b-member"><b>LIN Z · ready</b><span>36.8%</span></div><div class="b-member over"><b>CHEN Y · blocked</b><span>104.0%</span></div><div class="b-member"><b>XU N · partial</b><span>31.5%</span></div></section><section class="b-panel"><h3>UPSTREAM WINDOWS</h3><div class="b-event"><span>CODEX</span><strong>primary / 5h</strong><em>42%</em></div><div class="b-event"><span>CODEX</span><strong>secondary / 7d</strong><em>68%</em></div><div class="b-event"><span>CLAUDE</span><strong>quota signal</strong><em>n/a</em></div></section></div>
+            <div class="b-foot"><span>LAST BILLING EVENT · 14:18:33</span><span>2 UNKNOWN COST</span></div>
+          </div>
+        </div>
+        <p class="direction-brief"><strong>像夜班运维席位。</strong> 等宽数字、分段槽和短状态句把“阻止、未知、上游未提供”做成可扫描的信号。</p>
+        <button class="qmdp-pick-button" type="button">选择 B · 暗色仪表台</button>
+      </article>
+
+      <article class="direction-card" data-direction="C" data-name="精密账页">
+        <header class="direction-head">
+          <div><h2>C · 精密账页</h2><small>纸张校核 / 可展开事件</small></div>
+        </header>
+        <div class="mockup">
+          <div class="dir-c">
+            <div class="c-masthead"><h3>研发一车 · 月度用量簿</h3><span>账页 07 / 2026.09</span></div><div class="c-index"><span>成员：林舟</span><span>周期：08.12 — 09.12 · Asia/Shanghai</span></div>
+            <div class="c-total"><div><small>本期已确认费用 / 上限</small><strong>$18.40 <small>/ $50.00</small></strong></div><div><small>可用</small><strong>$31.60</strong><em>36.8% · 完整</em></div></div><div class="c-rule"></div>
+            <div class="c-ledger"><div class="c-row head"><span>时间</span><span>请求 / 实际模型</span><span>费用</span></div><div class="c-row"><span>14:18:33</span><span class="c-model"><b>POST</b> /v1/chat · gpt-4.1</span><span class="c-amount">$0.84</span></div><div class="c-row"><span>13:52:07</span><span class="c-model"><b>POST</b> /v1/messages · claude-3.7</span><span class="c-amount">$1.22</span></div><div class="c-row alert"><span>13:44:19</span><span class="c-model"><b>POST</b> /v1/chat · gpt-4.1-mini</span><span class="c-amount">未知</span></div><div class="c-detail"><b>展开的 CPA 事件</b>　输入 2,041 · 输出 884 · cache read 未提供 · 价格版本 8d21… · 费用未知</div></div>
+            <div class="c-bottom"><span>已载入 25 条逻辑请求 · 按时间倒序</span><strong>数据不完整：1 条</strong></div>
+          </div>
+        </div>
+        <p class="direction-brief"><strong>像财务人员的连续账页。</strong> 细线、衬线数字和事件展开让每一笔费用都能回到 CPA 的来源事实。</p>
+        <button class="qmdp-pick-button" type="button">选择 C · 精密账页</button>
+      </article>
+
+      <article class="direction-card" data-direction="D" data-name="交通导视">
+        <header class="direction-head">
+          <div><h2>D · 交通导视</h2><small>车次带 / 座位比较</small></div>
+        </header>
+        <div class="mockup">
+          <div class="dir-d">
+            <div class="d-route"><span class="d-route-no">07</span><div><strong>研发一车　/　额度站</strong><small>SHARED CARPOOL · CURRENT PERIOD</small></div><time>09.05<br>14:20</time></div>
+            <div class="d-callout"><b>$31.60 可用</b><span>林舟本期额度 $50.00<br><strong>9 月 12 日重置</strong></span></div>
+            <div class="d-seat-list"><div class="d-seat"><span class="d-seat-no">01</span><div class="d-seat-name">林舟<span class="d-seat-meta">可请求 · 36.8% 已用</span></div><div class="d-seat-amount">$18.40<small>/ $50.00</small></div></div><div class="d-seat over"><span class="d-seat-no">02</span><div class="d-seat-name">陈予<span class="d-seat-meta">停止发车 · 超额 $1.20</span></div><div class="d-seat-amount">$31.20<small>/ $30.00</small></div></div><div class="d-seat"><span class="d-seat-no">03</span><div class="d-seat-name">许宁<span class="d-seat-meta">2 条费用未知 · 统计不完整</span></div><div class="d-seat-amount">$12.60<small>/ $40.00</small></div></div><div class="d-seat pending"><span class="d-seat-no">04</span><div class="d-seat-name">周可<span class="d-seat-meta">待管理员设置限额</span></div><div class="d-seat-amount">—<small>未上限</small></div></div></div>
+            <div class="d-account-band"><b>上游窗口</b><p>Codex 5 小时 42% · 7 天 68%　/　Claude：上游未提供</p></div>
+          </div>
+        </div>
+        <p class="direction-brief"><strong>像站台上的下一班车牌。</strong> 黄色只承担身份和主操作，成员按座位顺序排列，超额的人一眼就能被找到。</p>
+        <button class="qmdp-pick-button" type="button">选择 D · 交通导视</button>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

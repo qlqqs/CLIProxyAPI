@@ -50,3 +50,18 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 简化拼车同步记账与失败门禁
+
+**Date**: 2026-09-14
+**Task**: `09-05-passenger-billing`（继续进行）
+**Branch**: `main`（未提交）
+
+用户否决复杂兜底后，完成固定容量 pending 背压、运行中故障 503、非计费查询隔离、
+插件 usage/完成顺序和未完成记录清理保护；撤销历史启动封锁。崩溃仅保留不完整提示，
+不保证精确恢复。未新增迁移或租约体系。
+
+独立检查与最终全量 test/vet、扩大 race、两种服务构建通过。过程中一次 WebSocket
+测试 EOF，后续定向及全量 race 重跑通过，未跳过测试。价格冻结、缺价前置与浏览器仍
+待完成。不提交或归档；详细证据见任务 research/2026-09-14-simplified-accounting.md。

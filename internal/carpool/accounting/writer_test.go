@@ -11,6 +11,20 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
+type billedWriterRepository struct {
+	writerRepository
+	muBilled sync.Mutex
+	billed   []domain.UsageEvent
+}
+
+func (r *billedWriterRepository) RecordUsageEventBilled(_ context.Context, event domain.UsageEvent, _ string, _ *int64, status, reason string) (domain.UsageEvent, error) {
+	event.PricingStatus, event.PricingReason = status, reason
+	r.muBilled.Lock()
+	r.billed = append(r.billed, event)
+	r.muBilled.Unlock()
+	return event, nil
+}
+
 type writerRepository struct {
 	mu          sync.Mutex
 	usage       []domain.UsageEvent
@@ -110,5 +124,26 @@ func TestWriterQueueSaturationDoesNotBlock(t *testing.T) {
 	close(repository.block)
 	if errClose := writer.Close(context.Background()); errClose != nil {
 		t.Fatalf("Close() error = %v", errClose)
+	}
+}
+
+func TestWriterPersistsBillingSynchronouslyOutsideQueue(t *testing.T) {
+	repository := &billedWriterRepository{}
+	writer, errWriter := NewWriter(repository, Config{QueueSize: 1})
+	if errWriter != nil {
+		t.Fatalf("NewWriter() error = %v", errWriter)
+	}
+	for index := 0; index < 3; index++ {
+		writer.HandleUsage(context.Background(), usage.Record{
+			EventID: "billed-event-" + string(rune('a'+index)), RequestID: "request-billed", AuthID: "auth-billed", UsageKnown: false,
+		})
+	}
+	if got := writer.Snapshot().DroppedUsage; got != 0 {
+		t.Fatalf("dropped billed usage = %d, want zero", got)
+	}
+	repository.muBilled.Lock()
+	defer repository.muBilled.Unlock()
+	if len(repository.billed) != 3 {
+		t.Fatalf("billed usage count = %d, want 3", len(repository.billed))
 	}
 }

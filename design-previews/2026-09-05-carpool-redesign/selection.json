@@ -1,0 +1,14 @@
+{
+  "id": "B",
+  "label": "B: 暗色仪表台",
+  "name": "暗色仪表台",
+  "notes": "",
+  "dials": {
+    "variance": 7,
+    "motion": 3,
+    "density": 7
+  },
+  "adjustments": "可以更加圆润一点，风格可以再偏向openai的设计一点",
+  "source": "click",
+  "receivedAt": "2026-09-05T09:15:43.521Z"
+}

@@ -162,11 +162,11 @@ func TestCarpoolHTTPAdministratorAndPassengerFlow(t *testing.T) {
 	carRef := stringField(t, decodeResponseObject(t, carCreate), "car_ref")
 
 	memberCreate := fixture.request(t, http.MethodPost, "/carpool/api/v1/admin/cars/"+carRef+"/members", map[string]any{
-		"user_ref": passengerRef, "display_name": "一号乘客",
+		"user_ref": passengerRef, "display_name": "一号乘客", "monthly_limit_usd": "25.00",
 	}, adminCookie, adminCSRF, true)
 	assertHTTPStatus(t, memberCreate, http.StatusCreated)
 	overCapacity := fixture.request(t, http.MethodPost, "/carpool/api/v1/admin/cars/"+carRef+"/members", map[string]any{
-		"user_ref": stringField(t, secondBody, "user_ref"), "display_name": "二号乘客",
+		"user_ref": stringField(t, secondBody, "user_ref"), "display_name": "二号乘客", "monthly_limit_usd": "25.00",
 	}, adminCookie, adminCSRF, true)
 	assertHTTPStatus(t, overCapacity, http.StatusConflict)
 

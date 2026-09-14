@@ -473,7 +473,8 @@ func (s *Store) ListCurrentMembershipsByCar(ctx context.Context, carID string) (
 	}
 	rows, errQuery := s.db.QueryContext(ctx, `
 		SELECT id, member_ref, user_id, car_id, display_name, display_name_key,
-		       started_at, ended_at, ended_reason, created_by_user_id
+		       started_at, ended_at, ended_reason, created_by_user_id,
+		       monthly_limit_nano_usd, billing_timezone, billing_anchor_at
 		FROM memberships WHERE car_id = ? AND ended_at IS NULL ORDER BY display_name_key, id
 	`, carID)
 	if errQuery != nil {
@@ -685,14 +686,21 @@ func populateCarTimes(car *domain.Car, seatLimit, disabledAt, retiredAt sql.Null
 func scanMembershipRows(rows *sql.Rows) (domain.Membership, error) {
 	var membership domain.Membership
 	var startedAt int64
-	var endedAt sql.NullInt64
+	var endedAt, limit, anchor sql.NullInt64
+	var timezone string
 	if errScan := rows.Scan(&membership.ID, &membership.MemberRef, &membership.UserID,
 		&membership.CarID, &membership.DisplayName, &membership.DisplayNameKey,
-		&startedAt, &endedAt, &membership.EndedReason, &membership.CreatedByUserID); errScan != nil {
+		&startedAt, &endedAt, &membership.EndedReason, &membership.CreatedByUserID,
+		&limit, &timezone, &anchor); errScan != nil {
 		return domain.Membership{}, fmt.Errorf("sqlite store: scan membership: %w", errScan)
 	}
 	membership.StartedAt = fromDatabaseTime(startedAt)
 	membership.EndedAt = fromNullableDatabaseTime(endedAt)
+	membership.MonthlyLimitNanoUSD = fromNullableInt64(limit)
+	membership.BillingTimezone = timezone
+	if anchor.Valid {
+		membership.BillingAnchorAt = fromDatabaseTime(anchor.Int64)
+	}
 	return membership, nil
 }
 

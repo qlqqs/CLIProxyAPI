@@ -23,12 +23,24 @@ type migration struct {
 }
 
 const migration001Checksum = "4b670ee5af0ce8f92992a23c2d3d78a888c2aff34a7431e5208428c3f5ec766b"
+const migration002Checksum = "60df97c5bb326f4e2216e54f47910e5654dd56bdd83cac0cfd0802efe1a77423"
+const migration003Checksum = "eb1af0994dc20b154360ccbe69b9365c50a9f3c7a9a71ac5a2382882015fb8d5"
 
 var embeddedMigrationDefinitions = []migration{
 	{
 		version:  1,
 		name:     "initial",
 		checksum: migration001Checksum,
+	},
+	{
+		version:  2,
+		name:     "billing",
+		checksum: migration002Checksum,
+	},
+	{
+		version:  3,
+		name:     "retention",
+		checksum: migration003Checksum,
 	},
 }
 
