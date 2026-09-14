@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	coresession "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/session"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"golang.org/x/net/context"
 )
@@ -201,5 +202,42 @@ func TestSetGenerateMetadataHonorsExplicitFalse(t *testing.T) {
 
 	if got := meta[coreexecutor.GenerateMetadataKey]; got != false {
 		t.Fatalf("GenerateMetadataKey = %v, want false", got)
+	}
+}
+
+func TestScopedContextPreservesServerValuesWithoutReplacingCancellation(t *testing.T) {
+	type key struct{}
+	requestCtx := context.WithValue(context.Background(), key{}, "frozen-snapshot")
+	requestCtx = coreexecutor.WithCredentialScope(requestCtx, coreexecutor.NewCredentialScope("allowed"))
+	calls := 0
+	requestCtx = coreexecutor.WithRequestValidator(requestCtx, func(context.Context, string, coreexecutor.Request) error { calls++; return nil })
+	observations := 0
+	requestCtx = usage.WithSynchronousObserver(requestCtx, func(observedCtx context.Context, _ usage.Record) {
+		observations++
+		if observedCtx.Value(key{}) != "frozen-snapshot" {
+			t.Error("observer lost frozen snapshot")
+		}
+	})
+	parent, parentCancel := context.WithCancel(context.Background())
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(requestCtx)
+	handler := &BaseAPIHandler{Cfg: &config.SDKConfig{}}
+	ctx, cancel := handler.GetContextWithCancel(nil, ginCtx, parent)
+	defer cancel()
+	if ctx.Value(key{}) != "frozen-snapshot" {
+		t.Fatal("server snapshot lost")
+	}
+	if err := coreexecutor.ValidateRequest(ctx, "openai", coreexecutor.Request{Model: "model"}); err != nil || calls != 1 {
+		t.Fatal("validator lost")
+	}
+	parentCancel()
+	if ctx.Err() != context.Canceled {
+		t.Fatal("caller cancellation lost")
+	}
+	manager := usage.NewManager(1)
+	manager.Stop()
+	manager.Publish(ctx, usage.Record{Model: "model"})
+	if observations != 1 {
+		t.Fatal("cancelled request lost synchronous observer")
 	}
 }

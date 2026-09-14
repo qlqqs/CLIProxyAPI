@@ -11,6 +11,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -327,6 +329,7 @@ func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.
 }
 
 type claudeErrorDetail struct {
+	Code    string `json:"code,omitempty"`
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
@@ -337,6 +340,14 @@ type claudeErrorResponse struct {
 }
 
 func (h *ClaudeCodeAPIHandler) toClaudeError(msg *interfaces.ErrorMessage) claudeErrorResponse {
+	// Only trusted local validation errors carry machine-readable codes through
+	// this adapter. Do not copy codes or wrapper text from arbitrary upstream errors.
+	var validation *coreexecutor.RequestValidationError
+	if msg != nil && errors.As(msg.Error, &validation) && validation != nil {
+		return claudeErrorResponse{Type: "error", Error: claudeErrorDetail{
+			Type: "invalid_request_error", Message: validation.Message, Code: validation.Code,
+		}}
+	}
 	status := http.StatusInternalServerError
 	errText := http.StatusText(status)
 	if msg != nil {

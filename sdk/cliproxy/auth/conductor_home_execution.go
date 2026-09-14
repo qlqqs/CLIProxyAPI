@@ -44,7 +44,7 @@ func (m *Manager) executeHome(ctx context.Context, providers []string, req clipr
 		}
 		retryRoundPending = false
 		retryRoundWaited = false
-		if isRequestTerminatedError(errExecute) || isRequestStopError(errExecute) {
+		if cliproxyexecutor.IsRequestValidationError(errExecute) || isRequestTerminatedError(errExecute) || isRequestStopError(errExecute) {
 			return cliproxyexecutor.Response{}, unwrapExecutionBoundaryError(errExecute)
 		}
 		wait, shouldRetry := m.shouldRetryAfterErrorWithHomeRetryLimit(ctx, opts, errExecute, attempt, providers, retryModel, maxWait, homeRetryLimit, defaultRequestRetry)
@@ -222,10 +222,18 @@ func (m *Manager) executeHomeOnce(ctx context.Context, providers []string, req c
 				if countTokens {
 					return selection.Executor.CountTokens(executorCtx, preparedAuth, execReq, execOpts)
 				}
+				if errValidate := cliproxyexecutor.ValidateRequest(execCtx, selection.Provider, execReq); errValidate != nil {
+					return cliproxyexecutor.Response{}, errValidate
+				}
 				return selection.Executor.Execute(execCtx, preparedAuth, execReq, execOpts)
 			}
 			startHomeExec := time.Now()
 			response, errExecute = execute()
+			if cliproxyexecutor.IsRequestValidationError(errExecute) {
+				releaseAttempt()
+				selection.End("request_validation_failed")
+				return cliproxyexecutor.Response{}, errExecute
+			}
 			errExecute = markUpstreamExecutionAttemptFromContext(execCtx, errExecute)
 			durationHomeExec := time.Since(startHomeExec)
 			if countTokens {

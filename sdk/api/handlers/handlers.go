@@ -415,6 +415,11 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		requestCtx = c.Request.Context()
 	}
 	if requestCtx != nil {
+		// Scoped requests carry server-owned billing/validation values as well
+		// as scope. Preserve them when a protocol handler supplies Background.
+		if coreexecutor.CredentialScopeFromContext(requestCtx) != nil {
+			parentCtx = requestValuesContext{Context: parentCtx, request: requestCtx}
+		}
 		if requestLifecycleIDFromContext(parentCtx) == "" {
 			if requestID := requestLifecycleIDFromContext(requestCtx); requestID != "" {
 				parentCtx = WithRequestLifecycleID(parentCtx, requestID)

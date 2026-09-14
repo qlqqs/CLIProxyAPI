@@ -4,6 +4,10 @@ import (
 	"context"
 	"sort"
 	"strings"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 type authorizationContextKey struct{}
@@ -26,10 +30,11 @@ type AuthorizationSnapshot struct {
 	membershipID string
 	callerScope  string
 	accounts     map[string]AccountSnapshot
+	prices       *pricing.Snapshot
 }
 
 // NewAuthorizationSnapshot copies all values so later assignment changes cannot expand a request.
-func NewAuthorizationSnapshot(requestID, userID, apiKeyID, carID, membershipID, callerScope string, accounts map[string]AccountSnapshot) *AuthorizationSnapshot {
+func NewAuthorizationSnapshot(requestID, userID, apiKeyID, carID, membershipID, callerScope string, accounts map[string]AccountSnapshot, prices ...*pricing.Snapshot) *AuthorizationSnapshot {
 	copied := make(map[string]AccountSnapshot, len(accounts))
 	for authID, account := range accounts {
 		authID = strings.TrimSpace(authID)
@@ -39,7 +44,12 @@ func NewAuthorizationSnapshot(requestID, userID, apiKeyID, carID, membershipID, 
 		account.AuthID = authID
 		copied[authID] = account
 	}
+	var frozen *pricing.Snapshot
+	if len(prices) > 0 {
+		frozen = prices[0]
+	}
 	return &AuthorizationSnapshot{
+		prices:       frozen,
 		requestID:    strings.TrimSpace(requestID),
 		userID:       strings.TrimSpace(userID),
 		apiKeyID:     strings.TrimSpace(apiKeyID),
@@ -122,7 +132,20 @@ func WithAuthorization(ctx context.Context, snapshot *AuthorizationSnapshot) con
 	if snapshot == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, authorizationContextKey{}, snapshot)
+	if _, exists := AuthorizationFromContext(ctx); exists {
+		return ctx
+	}
+	ctx = context.WithValue(ctx, authorizationContextKey{}, snapshot)
+	if snapshot.prices != nil {
+		ctx = executor.WithRequestValidator(ctx, func(_ context.Context, provider string, req executor.Request) error {
+			model := thinking.ParseSuffix(req.Model).ModelName
+			if _, ok := snapshot.prices.Lookup(model); !ok {
+				return &executor.RequestValidationError{Code: "model_price_not_configured", Message: "Model price is not configured", HTTPStatus: 422}
+			}
+			return nil
+		})
+	}
+	return ctx
 }
 
 // AuthorizationFromContext returns the request's carpool authorization snapshot.
@@ -132,4 +155,12 @@ func AuthorizationFromContext(ctx context.Context) (*AuthorizationSnapshot, bool
 	}
 	snapshot, ok := ctx.Value(authorizationContextKey{}).(*AuthorizationSnapshot)
 	return snapshot, ok && snapshot != nil
+}
+
+// Prices returns the read-only catalog captured at authorization.
+func (s *AuthorizationSnapshot) Prices() *pricing.Snapshot {
+	if s == nil {
+		return nil
+	}
+	return s.prices
 }

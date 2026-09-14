@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	carpoolaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
 	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
 	carpoolservice "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/service"
 	carpoolsqlite "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/store/sqlite"
@@ -173,7 +174,10 @@ func newProxyAuthorizationFixture(t *testing.T) proxyAuthorizationFixture {
 		},
 		Rand: bytes.NewReader(bytes.Repeat([]byte{7}, 16)),
 	}
+	catalog, _ := pricing.ParseCatalog([]byte(`{"`+model+`":{"input_cost_per_token":0,"output_cost_per_token":0}}`), "test")
+	prices, _ := pricing.NewManager(ctx, pricing.ManagerConfig{Initial: catalog})
 	control, errControl := carpoolservice.NewControl(store, upstream, carpoolservice.ControlConfig{
+		PricingProvider:    prices,
 		SessionAbsoluteTTL: 24 * time.Hour,
 		SessionIdleTTL:     2 * time.Hour,
 		ReportLocation:     time.UTC,

@@ -139,7 +139,7 @@ func (m *Manager) Current() *Catalog {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.current
+	return cloneCatalog(m.current)
 }
 
 // Status returns a copy of the current refresh state.
@@ -320,4 +320,14 @@ func cloneCatalog(catalog *Catalog) *Catalog {
 		copyCatalog.Models[name] = model.clone()
 	}
 	return &copyCatalog
+}
+
+// Snapshot shares the manager-owned immutable catalog without copying it per request.
+func (m *Manager) Snapshot() *Snapshot {
+	if m == nil {
+		return Freeze(nil)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return &Snapshot{catalog: m.current}
 }

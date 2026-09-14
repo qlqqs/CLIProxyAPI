@@ -2,8 +2,10 @@ package claude
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 )
 
@@ -117,5 +120,37 @@ func TestPendingClaudeStreamErrorUsesBufferedError(t *testing.T) {
 	}
 	if gotErr != wantErr {
 		t.Fatalf("pending error = %p, want %p", gotErr, wantErr)
+	}
+}
+
+func TestClaudeErrorCodeOnlyForTypedLocalValidation(t *testing.T) {
+	local := &coreexecutor.RequestValidationError{Code: "model_price_not_configured", Message: "Model price is not configured", HTTPStatus: http.StatusUnprocessableEntity}
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{name: "local", err: local, wantCode: local.Code},
+		{name: "wrapped local", err: fmt.Errorf("private-wrapper-details: %w", local), wantCode: local.Code},
+		{name: "identical upstream JSON", err: errors.New(local.Error())},
+		{name: "unrelated upstream code", err: errors.New(`{"error":{"type":"invalid_request_error","message":"Model price is not configured","code":"upstream-private-code"}}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			handler := &ClaudeCodeAPIHandler{}
+			handler.WriteErrorResponse(c, &interfaces.ErrorMessage{StatusCode: http.StatusUnprocessableEntity, Error: tc.err})
+			body := recorder.Body.Bytes()
+			if recorder.Code != http.StatusUnprocessableEntity || gjson.GetBytes(body, "type").String() != "error" || gjson.GetBytes(body, "error.type").String() != "invalid_request_error" {
+				t.Fatalf("Claude envelope/status changed: %d %s", recorder.Code, body)
+			}
+			code := gjson.GetBytes(body, "error.code")
+			if code.String() != tc.wantCode || (tc.wantCode == "" && code.Exists()) {
+				t.Fatalf("error.code=%s, want %q: %s", code.Raw, tc.wantCode, body)
+			}
+			if gjson.GetBytes(body, "error.message").String() != local.Message || strings.Contains(string(body), "private") {
+				t.Fatalf("unsafe or changed message: %s", body)
+			}
+		})
 	}
 }

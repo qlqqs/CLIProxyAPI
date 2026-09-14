@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
+	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
@@ -135,7 +136,7 @@ func (w *Writer) HandleUsage(ctx context.Context, record usage.Record) {
 
 // ObserveUsage persists billing synchronously, independent of client cancellation.
 // Only the sanitized event and prepared prices are retained on failure.
-func (w *Writer) ObserveUsage(_ context.Context, record usage.Record) {
+func (w *Writer) ObserveUsage(ctx context.Context, record usage.Record) {
 	if w == nil || record.RequestID == "" || record.AuthID == "" {
 		return
 	}
@@ -152,7 +153,7 @@ func (w *Writer) ObserveUsage(_ context.Context, record usage.Record) {
 				return
 			}
 		}
-		w.retainLocked(w.prepareUsage(event))
+		w.retainLocked(w.prepareUsage(ctx, event))
 		if !w.closed {
 			_ = w.retryLocked(context.Background())
 		}
@@ -431,14 +432,21 @@ func (w *Writer) writeUsage(ctx context.Context, event domain.UsageEvent) error 
 	return err
 }
 
-func (w *Writer) prepareUsage(event domain.UsageEvent) preparedRecord {
+func (w *Writer) prepareUsage(ctx context.Context, event domain.UsageEvent) preparedRecord {
 	var cost *int64
 	pricingStatus, pricingReason := "unknown", "usage_unknown"
 	if event.UsageKnown {
 		pricingStatus, pricingReason = "unpriced", "catalog_unavailable"
-		catalog := w.catalog
-		if w.provider != nil {
-			catalog = w.provider.Current()
+		var catalog interface {
+			Lookup(string) (pricing.ModelPrice, bool)
+		}
+		if snapshot, ok := carpoolruntime.AuthorizationFromContext(ctx); ok && snapshot.Prices() != nil {
+			catalog = snapshot.Prices()
+		} else {
+			catalog = w.catalog
+			if w.provider != nil {
+				catalog = w.provider.Current()
+			}
 		}
 		if catalog != nil {
 			if modelPrice, found := catalog.Lookup(event.Model); found {

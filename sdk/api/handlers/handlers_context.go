@@ -228,3 +228,17 @@ func disallowFreeAuthFromContext(ctx context.Context) bool {
 	raw, ok := ctx.Value(disallowFreeAuthContextKey{}).(bool)
 	return ok && raw
 }
+
+// requestValuesContext preserves the caller's cancellation while inheriting
+// server-owned scoped request values absent from the caller context.
+type requestValuesContext struct {
+	context.Context
+	request context.Context
+}
+
+func (c requestValuesContext) Value(key any) any {
+	if value := c.Context.Value(key); value != nil {
+		return value
+	}
+	return c.request.Value(key)
+}

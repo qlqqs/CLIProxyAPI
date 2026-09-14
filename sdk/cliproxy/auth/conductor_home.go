@@ -1398,6 +1398,9 @@ func (m *Manager) tryAntigravityCreditsExecute(ctx context.Context, req cliproxy
 			resultModel := m.stateModelForExecution(c.auth, routeModel, upstreamModel, pooled)
 			execReq := req
 			execReq.Model = upstreamModel
+			if errValidate := cliproxyexecutor.ValidateRequest(creditsCtx, c.provider, execReq); errValidate != nil {
+				return cliproxyexecutor.Response{}, false, errValidate
+			}
 			resp, errExec := c.executor.Execute(creditsCtx, c.auth, execReq, creditsOpts)
 			result := Result{AuthID: c.auth.ID, Provider: c.provider, Model: resultModel, RouteModel: routeModel, Success: errExec == nil, Options: creditsOpts}
 			if errExec != nil {
@@ -1457,6 +1460,9 @@ func (m *Manager) tryAntigravityCreditsExecuteStream(ctx context.Context, req cl
 		}
 		result, errStream := m.executeStreamWithModelPool(creditsCtx, c.executor, c.auth, c.provider, req, creditsOpts, routeModel, "", models, pooled, aliasResult, routing, true, false)
 		if errStream != nil {
+			if cliproxyexecutor.IsRequestValidationError(errStream) {
+				return nil, false, errStream
+			}
 			continue
 		}
 		return result, true, nil

@@ -1432,11 +1432,14 @@ func (c *Control) PreviewRetention(ctx context.Context, actor domain.User, opera
 		return 0, 0, err
 	}
 	now := c.currentTime()
-	cutoff := now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
-	if settings.EffectiveDays == 0 {
-		// A permanent automatic policy disables expiry, but an explicit admin
-		// cleanup must still target completed records up to the current instant.
-		cutoff = now.Add(time.Nanosecond)
+	cutoff := now
+	if operation == "usage_details" {
+		cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+		if settings.EffectiveDays == 0 {
+			// A permanent automatic policy disables expiry, but an explicit admin
+			// cleanup must still target completed records up to the current instant.
+			cutoff = now.Add(time.Nanosecond)
+		}
 	}
 	return c.repository.PreviewRetention(ctx, operation, cutoff)
 }
@@ -1453,11 +1456,14 @@ func (c *Control) RunRetention(ctx context.Context, actor domain.User, operation
 		return domain.RetentionJob{}, err
 	}
 	now := c.currentTime()
-	cutoff := now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
-	if settings.EffectiveDays == 0 {
-		// A permanent automatic policy disables expiry, but an explicit admin
-		// cleanup must still target completed records up to the current instant.
-		cutoff = now.Add(time.Nanosecond)
+	cutoff := now
+	if operation == "usage_details" {
+		cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+		if settings.EffectiveDays == 0 {
+			// A permanent automatic policy disables expiry, but an explicit admin
+			// cleanup must still target completed records up to the current instant.
+			cutoff = now.Add(time.Nanosecond)
+		}
 	}
 	expected, inFlight, err := c.repository.PreviewRetention(ctx, operation, cutoff)
 	if err != nil {
@@ -1570,9 +1576,10 @@ func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 	requestID := uuid.NewString()
 	var catalogHash string
 	var coverageFrom *time.Time
-	if catalog := c.PricingCatalog(); catalog != nil {
-		catalogHash = catalog.Hash
-		if loadedAt, errLoaded := time.Parse(time.RFC3339, catalog.LoadedAt); errLoaded == nil {
+	catalog := c.capturePricing()
+	if catalog != nil {
+		catalogHash = catalog.Hash()
+		if loadedAt, errLoaded := time.Parse(time.RFC3339, catalog.LoadedAt()); errLoaded == nil {
 			loadedAt = loadedAt.UTC()
 			coverageFrom = &loadedAt
 		}
@@ -1586,7 +1593,7 @@ func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 		accounts[scope.AuthID] = carpoolruntime.AccountSnapshot{AuthID: scope.AuthID, AssignmentID: scope.AssignmentID, AccountRef: scope.AccountRefSnapshot, SafeLabel: scope.SafeLabelSnapshot, Provider: scope.ProviderSnapshot}
 	}
 	_, _ = c.repository.TouchAPIKeyLastUsed(ctx, apiKeyID, c.currentTime(), lastSeenTouchPeriod)
-	return carpoolruntime.NewAuthorizationSnapshot(snapshot.Request.RequestID, snapshot.User.ID, snapshot.APIKey.KeyID, snapshot.Car.ID, snapshot.Membership.ID, callerScope, accounts), nil
+	return carpoolruntime.NewAuthorizationSnapshot(snapshot.Request.RequestID, snapshot.User.ID, snapshot.APIKey.KeyID, snapshot.Car.ID, snapshot.Membership.ID, callerScope, accounts, catalog), nil
 }
 
 func (c *Control) ReportLocationName() string { return c.reportLocation.String() }
@@ -1696,4 +1703,11 @@ func normalizePageLimit(limit int) int {
 		return maximumListLimit
 	}
 	return limit
+}
+
+func (c *Control) capturePricing() *pricing.Snapshot {
+	if provider, ok := c.pricingProvider.(interface{ Snapshot() *pricing.Snapshot }); ok {
+		return provider.Snapshot()
+	}
+	return pricing.Freeze(c.PricingCatalog())
 }

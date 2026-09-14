@@ -50,8 +50,9 @@ func (p ModelPrice) clone() ModelPrice {
 	p.LongContextCacheRead = cloneRat(p.LongContextCacheRead)
 	p.LongContextCacheWrite = cloneRat(p.LongContextCacheWrite)
 	if p.Tiers != nil {
-		p.Tiers = map[string]TierPrices{}
-		for k, tier := range p.Tiers {
+		tiers := p.Tiers
+		p.Tiers = make(map[string]TierPrices, len(tiers))
+		for k, tier := range tiers {
 			tier.InputPerToken = cloneRat(tier.InputPerToken)
 			tier.OutputPerToken = cloneRat(tier.OutputPerToken)
 			tier.CacheReadPerToken = cloneRat(tier.CacheReadPerToken)
@@ -255,4 +256,29 @@ func parseDecimal(s string) (*big.Rat, error) {
 		n.Neg(n)
 	}
 	return new(big.Rat).SetFrac(n, d), nil
+}
+
+// Snapshot exposes only read operations over an owned catalog copy.
+// One snapshot may be shared by every event and attempt of a request.
+type Snapshot struct{ catalog *Catalog }
+
+// Freeze takes ownership of a deep copy, never of caller-owned maps or rationals.
+func Freeze(catalog *Catalog) *Snapshot { return &Snapshot{catalog: cloneCatalog(catalog)} }
+func (s *Snapshot) Lookup(model string) (ModelPrice, bool) {
+	if s == nil {
+		return ModelPrice{}, false
+	}
+	return s.catalog.Lookup(model)
+}
+func (s *Snapshot) Hash() string {
+	if s == nil || s.catalog == nil {
+		return ""
+	}
+	return s.catalog.Hash
+}
+func (s *Snapshot) LoadedAt() string {
+	if s == nil || s.catalog == nil {
+		return ""
+	}
+	return s.catalog.LoadedAt
 }

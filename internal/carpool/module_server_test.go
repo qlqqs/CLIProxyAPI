@@ -2,6 +2,7 @@ package carpool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,12 +11,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	carpoolaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
 	carpoolservice "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/service"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
@@ -174,6 +177,7 @@ type serverRouteFixture struct {
 	apiKeyID     string
 	databasePath string
 	configPath   string
+	setPrices    func([]byte) error
 }
 
 func newServerRouteFixture(t *testing.T, homeEnabled bool, expectedWriteFailures ...bool) *serverRouteFixture {
@@ -194,9 +198,26 @@ func newServerRouteFixture(t *testing.T, homeEnabled bool, expectedWriteFailures
 		manager.RegisterExecutor(&serverRouteExecutor{provider: provider, recorder: recorder})
 	}
 
+	catalog, _ := pricing.DefaultCatalog()
+	var prices map[string]json.RawMessage
+	if errJSON := json.Unmarshal(catalog.Raw, &prices); errJSON != nil {
+		t.Fatal(errJSON)
+	}
+	for _, model := range []string{serverRouteOpenAIModel, serverRouteClaudeModel, serverRouteGeminiModel, serverRouteCodexModel} {
+		prices[model] = prices["gpt-4o"]
+	}
+	rawPrices, _ := json.Marshal(prices)
+	var priceJSON atomic.Value
+	priceJSON.Store(rawPrices)
+	priceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(priceJSON.Load().([]byte)) }))
+	t.Cleanup(priceServer.Close)
+	cfg.Carpool.Pricing.CatalogURL = priceServer.URL
 	module, errOpen := Open(ctx, cfg, configPath, manager)
 	if errOpen != nil {
 		t.Fatalf("Open() error = %v", errOpen)
+	}
+	if errRefresh := module.pricing.Refresh(ctx); errRefresh != nil {
+		t.Fatal(errRefresh)
 	}
 	t.Cleanup(func() {
 		if errClose := module.Close(context.Background()); errClose != nil {
@@ -306,6 +327,10 @@ func newServerRouteFixture(t *testing.T, homeEnabled bool, expectedWriteFailures
 		module: module, server: server, engine: engine, recorder: recorder,
 		accessToken: secret.Token, passenger: passenger, apiKeyID: apiKey.KeyID,
 		databasePath: databasePath, configPath: configPath,
+		setPrices: func(raw []byte) error {
+			priceJSON.Store(append([]byte(nil), raw...))
+			return module.pricing.Refresh(context.Background())
+		},
 	}
 }
 
