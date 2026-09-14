@@ -428,6 +428,9 @@ type RetentionSettings struct {
 	Source        string
 }
 
+const RetentionBatchLimit = 1000
+const RetentionPreviewTTL = 15 * time.Minute
+
 type RetentionJob struct {
 	ID            string
 	Operation     string

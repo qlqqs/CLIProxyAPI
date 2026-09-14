@@ -134,22 +134,27 @@ func (c *retentionCleaner) run(ctx context.Context, ticks <-chan time.Time) {
 
 func (c *retentionCleaner) cleanupPass(ctx context.Context) {
 	now := c.now().UTC()
-	usageRetention := c.usageRetention
-	if configured, ok := c.store.(retentionSettingsStore); ok {
-		if settings, errSettings := configured.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour))); errSettings == nil {
-			if settings.EffectiveDays == 0 {
-				usageRetention = now.Sub(time.Unix(0, 1))
-			} else {
-				usageRetention = time.Duration(settings.EffectiveDays) * 24 * time.Hour
-			}
-		}
-	}
 	cleanup := carpoolsqlite.RetentionCleanup{
-		UsageCutoff: now.Add(-usageRetention),
 		AuditCutoff: now.Add(-c.auditRetention),
 		BatchSize:   c.batchSize,
 	}
 	for batch := 0; batch < maxRetentionBatchesPerPass; batch++ {
+		cleanup.UsageCutoff = now.Add(-c.usageRetention)
+		if configured, ok := c.store.(retentionSettingsStore); ok {
+			settings, errSettings := configured.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour)))
+			if errSettings != nil {
+				if ctx.Err() == nil {
+					log.WithField("reason_code", "retention_settings_unavailable").Warn("carpool retention cleanup skipped")
+				}
+				return
+			}
+			if settings.EffectiveDays == 0 {
+				// SQLite stores signed int64 microseconds; no timestamp is below this cutoff.
+				cleanup.UsageCutoff = time.UnixMicro(-1 << 63).UTC()
+			} else {
+				cleanup.UsageCutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+			}
+		}
 		result, errCleanup := c.store.CleanupRetention(ctx, cleanup)
 		if errCleanup != nil {
 			if ctx.Err() == nil {

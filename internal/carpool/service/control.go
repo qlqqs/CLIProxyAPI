@@ -102,11 +102,9 @@ type Repository interface {
 	ListBillingPeriods(context.Context, string, string, time.Time, time.Time, int) ([]domain.BillingPeriod, error)
 	GetRetentionSettings(context.Context, int64) (domain.RetentionSettings, error)
 	SetRetentionOverride(context.Context, *int64, *domain.AuditEvent) (domain.RetentionSettings, error)
-	PreviewRetention(context.Context, string, time.Time) (int64, int64, error)
-	ExecuteRetention(context.Context, string, time.Time, int) (int64, int64, error)
-	CreateRetentionJob(context.Context, string, string, int64) (domain.RetentionJob, error)
+	PreviewRetentionJob(context.Context, string, string, time.Time) (domain.RetentionJob, error)
+	ConfirmRetentionJob(context.Context, string, string, string) (domain.RetentionJob, error)
 	GetRetentionJob(context.Context, string) (domain.RetentionJob, error)
-	FinishRetentionJob(context.Context, string, string, int64, int64, string) error
 	InsertAuditEvent(context.Context, domain.AuditEvent) (domain.AuditEvent, error)
 	ListAuditEvents(context.Context, time.Time, string, int) ([]domain.AuditEvent, error)
 }
@@ -1297,39 +1295,82 @@ func (c *Control) AdminUsage(ctx context.Context, actor domain.User, query Admin
 	return AdminUsageReport{Period: period, RetentionCutoff: retentionCutoff, GroupBy: groupBy, Items: items}, nil
 }
 
+// UsageRequestPage includes the actual frozen range without changing other pages.
+type UsageRequestPage struct {
+	Page[domain.UsageRequestDetail]
+	Period ReportPeriod
+}
+
 // AdminUsageRequests returns a stable, fixed-size page of logical requests.
-func (c *Control) AdminUsageRequests(ctx context.Context, actor domain.User, query UsageRequestQuery) (Page[domain.UsageRequestDetail], error) {
+func (c *Control) AdminUsageRequests(ctx context.Context, actor domain.User, query UsageRequestQuery) (UsageRequestPage, error) {
 	if actor.Role != domain.UserRoleAdmin {
-		return Page[domain.UsageRequestDetail]{}, ErrForbidden
+		return UsageRequestPage{}, ErrForbidden
 	}
 	now := c.currentTime()
 	cutoff := now.Add(-c.usageRetention)
-	if settings, settingsErr := c.repository.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour))); settingsErr == nil {
-		if settings.EffectiveDays == 0 {
-			cutoff = time.Unix(0, 0)
-		} else {
-			cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
-		}
+	settings, errSettings := c.repository.GetRetentionSettings(ctx, int64(c.usageRetention/(24*time.Hour)))
+	if errSettings != nil {
+		return UsageRequestPage{}, errSettings
+	}
+	if settings.EffectiveDays == 0 {
+		cutoff = time.Unix(0, 0)
+	} else {
+		cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
+	}
+	cursor, errCursor := decodeUsageCursor(query.Cursor)
+	if errCursor != nil {
+		return UsageRequestPage{}, errCursor
+	}
+	fingerprint := usageQueryFingerprint(query)
+	hasCursor := strings.TrimSpace(query.Cursor) != ""
+	if hasCursor && cursor.FilterHash != fingerprint {
+		return UsageRequestPage{}, domain.ErrInvalid
 	}
 	var period ReportPeriod
 	var err error
 	if query.From != nil || query.To != nil {
-		if query.From == nil || query.To == nil || query.Period != "" {
-			return Page[domain.UsageRequestDetail]{}, domain.ErrInvalid
+		if query.From == nil || query.To == nil || strings.TrimSpace(query.Period) != "" {
+			return UsageRequestPage{}, domain.ErrInvalid
 		}
 		period, err = ValidateCustomReportPeriod(*query.From, *query.To, cutoff)
+		if hasCursor && (!cursor.From.Equal(*query.From) || cursor.To.After(*query.To)) {
+			return UsageRequestPage{}, domain.ErrInvalid
+		}
 	} else {
 		name := strings.TrimSpace(query.Period)
 		if name == "" {
 			name = "today"
 		}
-		period, err = ResolveReportPeriod(name, now, c.reportLocation)
+		anchor := now
+		if hasCursor {
+			anchor = cursor.To
+		}
+		period, err = ResolveReportPeriod(name, anchor, c.reportLocation)
 		if err == nil && period.From.Before(cutoff) {
 			period.From = cutoff
 		}
+		if hasCursor && cursor.From.Before(period.From) {
+			return UsageRequestPage{}, domain.ErrInvalid
+		}
 	}
 	if err != nil {
-		return Page[domain.UsageRequestDetail]{}, err
+		return UsageRequestPage{}, err
+	}
+	if hasCursor {
+		// Revalidate the decoded range against live retention and the original query;
+		// a plain cursor is not an authorization or a retention override.
+		if cursor.To.After(now) {
+			return UsageRequestPage{}, domain.ErrInvalid
+		}
+		if _, errRange := ValidateCustomReportPeriod(cursor.From, cursor.To, cutoff); errRange != nil {
+			return UsageRequestPage{}, errRange
+		}
+		period.From, period.To = cursor.From, cursor.To
+	} else if period.To.After(now) {
+		period.To = now
+	}
+	if !period.From.Before(period.To) {
+		return UsageRequestPage{}, domain.ErrInvalid
 	}
 	f := domain.UsageRequestFilter{From: period.From, To: period.To, RequestedModel: strings.TrimSpace(query.Model), Outcome: strings.TrimSpace(query.Outcome), BillingStatus: strings.TrimSpace(query.BillingStatus), RequestID: strings.TrimSpace(query.RequestID)}
 	for _, item := range []struct {
@@ -1341,49 +1382,45 @@ func (c *Control) AdminUsageRequests(ctx context.Context, actor domain.User, que
 		}
 		if item.kind != "key" {
 			if errRef := validatePublicRef(item.ref, item.kind); errRef != nil {
-				return Page[domain.UsageRequestDetail]{}, errRef
+				return UsageRequestPage{}, errRef
 			}
 		}
 		switch item.kind {
 		case "car":
 			v, e := c.repository.GetCarByRef(ctx, item.ref)
 			if e != nil {
-				return Page[domain.UsageRequestDetail]{}, e
+				return UsageRequestPage{}, e
 			}
 			*item.dst = v.ID
 		case "usr":
 			v, e := c.repository.GetUserByRef(ctx, item.ref)
 			if e != nil {
-				return Page[domain.UsageRequestDetail]{}, e
+				return UsageRequestPage{}, e
 			}
 			*item.dst = v.ID
 		case "acct":
 			v, e := c.repository.GetAuthAssignmentByRef(ctx, item.ref)
 			if e != nil {
-				return Page[domain.UsageRequestDetail]{}, e
+				return UsageRequestPage{}, e
 			}
 			*item.dst = v.ID
 		case "key":
 			*item.dst = item.ref
 		}
 	}
-	before, beforeID, errCursor := decodeUsageCursor(query.Cursor)
-	if errCursor != nil {
-		return Page[domain.UsageRequestDetail]{}, errCursor
-	}
-	items, errList := c.repository.ListUsageRequests(ctx, f, before, beforeID, 26)
+	items, errList := c.repository.ListUsageRequests(ctx, f, cursor.Started, cursor.RequestID, 26)
 	if errList != nil {
-		return Page[domain.UsageRequestDetail]{}, errList
+		return UsageRequestPage{}, errList
 	}
-	page := Page[domain.UsageRequestDetail]{Items: items}
+	page := UsageRequestPage{Page: Page[domain.UsageRequestDetail]{Items: items}, Period: period}
 	if len(items) > 25 {
 		page.Items = items[:25]
 		last := page.Items[len(page.Items)-1]
-		page.NextCursor = encodeUsageCursor(last.Request.StartedAt, last.Request.RequestID)
+		page.NextCursor = encodeUsageCursor(usageCursor{Started: last.Request.StartedAt, RequestID: last.Request.RequestID, From: period.From, To: period.To, FilterHash: fingerprint})
 	}
 	page.Total, err = c.repository.CountUsageRequests(ctx, f)
 	if err != nil {
-		return Page[domain.UsageRequestDetail]{}, err
+		return UsageRequestPage{}, err
 	}
 	return page, nil
 }
@@ -1417,90 +1454,10 @@ func (c *Control) UpdateRetentionSettings(ctx context.Context, actor domain.User
 		return domain.RetentionSettings{}, domain.ErrInvalid
 	}
 	audit := c.audit(sessionAuditActorType, actor.UserRef, "update_retention", "settings", "retention", "succeeded", "")
-	return c.repository.SetRetentionOverride(ctx, days, &audit)
-}
-
-func (c *Control) PreviewRetention(ctx context.Context, actor domain.User, operation string) (int64, int64, error) {
-	if actor.Role != domain.UserRoleAdmin {
-		return 0, 0, ErrForbidden
+	if _, errUpdate := c.repository.SetRetentionOverride(ctx, days, &audit); errUpdate != nil {
+		return domain.RetentionSettings{}, errUpdate
 	}
-	if !validRetentionOperation(operation) {
-		return 0, 0, domain.ErrInvalid
-	}
-	settings, err := c.RetentionSettings(ctx, actor)
-	if err != nil {
-		return 0, 0, err
-	}
-	now := c.currentTime()
-	cutoff := now
-	if operation == "usage_details" {
-		cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
-		if settings.EffectiveDays == 0 {
-			// A permanent automatic policy disables expiry, but an explicit admin
-			// cleanup must still target completed records up to the current instant.
-			cutoff = now.Add(time.Nanosecond)
-		}
-	}
-	return c.repository.PreviewRetention(ctx, operation, cutoff)
-}
-
-func (c *Control) RunRetention(ctx context.Context, actor domain.User, operation string) (domain.RetentionJob, error) {
-	if actor.Role != domain.UserRoleAdmin {
-		return domain.RetentionJob{}, ErrForbidden
-	}
-	if !validRetentionOperation(operation) {
-		return domain.RetentionJob{}, domain.ErrInvalid
-	}
-	settings, err := c.RetentionSettings(ctx, actor)
-	if err != nil {
-		return domain.RetentionJob{}, err
-	}
-	now := c.currentTime()
-	cutoff := now
-	if operation == "usage_details" {
-		cutoff = now.Add(-time.Duration(settings.EffectiveDays) * 24 * time.Hour)
-		if settings.EffectiveDays == 0 {
-			// A permanent automatic policy disables expiry, but an explicit admin
-			// cleanup must still target completed records up to the current instant.
-			cutoff = now.Add(time.Nanosecond)
-		}
-	}
-	expected, inFlight, err := c.repository.PreviewRetention(ctx, operation, cutoff)
-	if err != nil {
-		return domain.RetentionJob{}, err
-	}
-	job, err := c.repository.CreateRetentionJob(ctx, operation, actor.UserRef, expected)
-	if err != nil {
-		return domain.RetentionJob{}, err
-	}
-	job.InFlightCount = inFlight
-	deleted, inflight, err := c.repository.ExecuteRetention(ctx, operation, cutoff, 1000)
-	job.DeletedCount = deleted
-	job.InFlightCount = inflight
-	completedAt := c.currentTime()
-	job.CompletedAt = &completedAt
-	if err != nil {
-		job.Status = "failed"
-		job.FailureReason = "执行失败"
-	} else {
-		job.Status = "completed"
-	}
-	_ = c.repository.FinishRetentionJob(ctx, job.ID, job.Status, job.DeletedCount, job.InFlightCount, job.FailureReason)
-	return job, err
-}
-
-func (c *Control) RetentionJob(ctx context.Context, actor domain.User, jobID string) (domain.RetentionJob, error) {
-	if actor.Role != domain.UserRoleAdmin {
-		return domain.RetentionJob{}, ErrForbidden
-	}
-	if strings.TrimSpace(jobID) == "" {
-		return domain.RetentionJob{}, domain.ErrInvalid
-	}
-	return c.repository.GetRetentionJob(ctx, jobID)
-}
-
-func validRetentionOperation(op string) bool {
-	return op == "usage_details" || op == "closed_periods" || op == "reset_current_period"
+	return c.RetentionSettings(ctx, actor)
 }
 
 func copyInt64(value *int64) *int64 {

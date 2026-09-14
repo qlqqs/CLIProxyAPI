@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -26,11 +27,16 @@ type pageCursor struct {
 	Time    string `json:"time,omitempty"`
 }
 
+const usageCursorVersion = 2
+
 type usageCursor struct {
-	Version   int    `json:"v"`
-	Kind      string `json:"kind"`
-	Started   string `json:"started"`
-	RequestID string `json:"request_id"`
+	Version    int       `json:"v"`
+	Kind       string    `json:"kind"`
+	Started    time.Time `json:"started"`
+	RequestID  string    `json:"request_id"`
+	From       time.Time `json:"from"`
+	To         time.Time `json:"to"`
+	FilterHash string    `json:"filter_hash"`
 }
 
 // ReportPeriod is a server-computed UTC half-open reporting interval.
@@ -126,28 +132,57 @@ func decodePageCursor(encoded, kind string) (string, error) {
 	return cursor.Value, nil
 }
 
-func encodeUsageCursor(started time.Time, requestID string) string {
-	payload, _ := json.Marshal(usageCursor{Version: pageCursorVersion, Kind: "usage_requests", Started: started.UTC().Format(time.RFC3339Nano), RequestID: requestID})
+// usageQueryFingerprint binds the normalized input, not the clock-dependent
+// resolved period. Cursor values never grant access to otherwise hidden data.
+func usageQueryFingerprint(query UsageRequestQuery) string {
+	query.Cursor, query.Limit = "", 0
+	query.Period = strings.TrimSpace(query.Period)
+	if query.Period == "" && query.From == nil && query.To == nil {
+		query.Period = "today"
+	}
+	query.CarRef, query.UserRef = strings.TrimSpace(query.CarRef), strings.TrimSpace(query.UserRef)
+	query.AccountRef, query.APIKeyRef = strings.TrimSpace(query.AccountRef), strings.TrimSpace(query.APIKeyRef)
+	query.Model, query.Outcome = strings.TrimSpace(query.Model), strings.TrimSpace(query.Outcome)
+	query.BillingStatus, query.RequestID = strings.TrimSpace(query.BillingStatus), strings.TrimSpace(query.RequestID)
+	if query.From != nil {
+		from := query.From.UTC()
+		query.From = &from
+	}
+	if query.To != nil {
+		to := query.To.UTC()
+		query.To = &to
+	}
+	payload, _ := json.Marshal(query)
+	return fmt.Sprintf("%x", sha256.Sum256(payload))
+}
+
+func encodeUsageCursor(cursor usageCursor) string {
+	cursor.Version, cursor.Kind = usageCursorVersion, "usage_requests"
+	payload, _ := json.Marshal(cursor)
 	return base64.RawURLEncoding.EncodeToString(payload)
 }
 
-func decodeUsageCursor(encoded string) (time.Time, string, error) {
+func decodeUsageCursor(encoded string) (usageCursor, error) {
+	var cursor usageCursor
 	if strings.TrimSpace(encoded) == "" {
-		return time.Time{}, "", nil
+		return cursor, nil
 	}
-	payload, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if err != nil || len(payload) == 0 || len(payload) > maximumPageCursorBytes {
-		return time.Time{}, "", fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	invalid := fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	if len(encoded) > base64.RawURLEncoding.EncodedLen(maximumPageCursorBytes) {
+		return cursor, invalid
 	}
-	var c usageCursor
-	if json.Unmarshal(payload, &c) != nil || c.Version != pageCursorVersion || c.Kind != "usage_requests" || c.RequestID == "" {
-		return time.Time{}, "", fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	payload, errDecode := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	if errDecode != nil || len(payload) == 0 || len(payload) > maximumPageCursorBytes {
+		return cursor, invalid
 	}
-	t, err := time.Parse(time.RFC3339Nano, c.Started)
-	if err != nil {
-		return time.Time{}, "", fmt.Errorf("carpool: invalid usage cursor: %w", domain.ErrInvalid)
+	if errJSON := json.Unmarshal(payload, &cursor); errJSON != nil || cursor.Version != usageCursorVersion || cursor.Kind != "usage_requests" || !validCursorValue(cursor.RequestID) || len(cursor.FilterHash) != 64 {
+		return usageCursor{}, invalid
 	}
-	return t.UTC(), c.RequestID, nil
+	if cursor.From.IsZero() || cursor.To.IsZero() || cursor.Started.IsZero() || !cursor.From.Before(cursor.To) || cursor.Started.Before(cursor.From) || !cursor.Started.Before(cursor.To) {
+		return usageCursor{}, invalid
+	}
+	cursor.From, cursor.To, cursor.Started = cursor.From.UTC(), cursor.To.UTC(), cursor.Started.UTC()
+	return cursor, nil
 }
 
 func encodeAuditCursor(before time.Time, beforeID string) string {

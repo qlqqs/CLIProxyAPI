@@ -4,10 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 )
 
@@ -172,53 +170,4 @@ func (s *Store) ExecuteRetention(ctx context.Context, operation string, cutoff t
 
 func validRetentionOperation(op string) bool {
 	return op == "usage_details" || op == "closed_periods" || op == "reset_current_period"
-}
-
-func (s *Store) CreateRetentionJob(ctx context.Context, operation, actorRef string, expected int64) (domain.RetentionJob, error) {
-	if !validRetentionOperation(operation) || strings.TrimSpace(actorRef) == "" {
-		return domain.RetentionJob{}, fmt.Errorf("sqlite store: invalid retention job: %w", domain.ErrInvalid)
-	}
-	now := s.currentTime()
-	job := domain.RetentionJob{ID: uuid.NewString(), Operation: operation, Status: "queued", RequestedAt: now, ActorRef: actorRef, ExpectedCount: expected}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO retention_jobs(id, operation, status, requested_at, actor_ref, expected_count, deleted_count, in_flight_count, failure_reason) VALUES(?,?,?,?,?,?,?,?,?)`, job.ID, job.Operation, job.Status, toDatabaseTime(now), job.ActorRef, expected, 0, 0, "")
-	if err != nil {
-		return domain.RetentionJob{}, fmt.Errorf("sqlite store: create retention job: %w", classifyError(err))
-	}
-	return job, nil
-}
-
-func (s *Store) GetRetentionJob(ctx context.Context, id string) (domain.RetentionJob, error) {
-	if errReady := s.ready(); errReady != nil {
-		return domain.RetentionJob{}, errReady
-	}
-	if strings.TrimSpace(id) == "" {
-		return domain.RetentionJob{}, fmt.Errorf("sqlite store: retention job ID is required: %w", domain.ErrInvalid)
-	}
-	var j domain.RetentionJob
-	var requested, completed sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT id,operation,status,requested_at,completed_at,actor_ref,confirmation,expected_count,deleted_count,in_flight_count,failure_reason FROM retention_jobs WHERE id=?`, id).Scan(&j.ID, &j.Operation, &j.Status, &requested, &completed, &j.ActorRef, &j.Confirmation, &j.ExpectedCount, &j.DeletedCount, &j.InFlightCount, &j.FailureReason)
-	if err != nil {
-		return j, scanError("get retention job", err)
-	}
-	j.RequestedAt = fromDatabaseTime(requested.Int64)
-	j.CompletedAt = fromNullableDatabaseTime(completed)
-	return j, nil
-}
-
-func (s *Store) FinishRetentionJob(ctx context.Context, id, status string, deleted, inFlight int64, reason string) error {
-	if id == "" || (status != "completed" && status != "failed") || deleted < 0 || inFlight < 0 {
-		return fmt.Errorf("sqlite store: invalid retention job result: %w", domain.ErrInvalid)
-	}
-	result, err := s.db.ExecContext(ctx, `UPDATE retention_jobs SET status=?, completed_at=?, deleted_count=?, in_flight_count=?, failure_reason=? WHERE id=?`, status, toDatabaseTime(s.currentTime()), deleted, inFlight, reason, id)
-	if err != nil {
-		return fmt.Errorf("sqlite store: finish retention job: %w", classifyError(err))
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return domain.ErrNotFound
-	}
-	return nil
 }

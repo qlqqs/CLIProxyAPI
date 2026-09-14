@@ -841,7 +841,7 @@ func (a *API) adminUsageRequests(c *gin.Context) {
 	for _, item := range page.Items {
 		items = append(items, usageRequestResponse(item, false))
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "total": page.Total, "next_cursor": optionalString(page.NextCursor), "period": gin.H{"from": query.From, "to": query.To}})
+	c.JSON(http.StatusOK, gin.H{"items": items, "total": page.Total, "next_cursor": optionalString(page.NextCursor), "period": gin.H{"from": page.Period.From, "to": page.Period.To}})
 }
 
 func (a *API) adminUsageRequest(c *gin.Context) {
@@ -875,7 +875,7 @@ func pointerTimeFrom(value *time.Time) time.Time {
 }
 
 func usageEventResponse(e domain.UsageEvent) gin.H {
-	return gin.H{"event_id": e.EventID, "account_ref": optionalString(e.AccountRefSnapshot), "safe_label": optionalString(e.SafeLabelSnapshot), "provider": optionalString(e.Provider), "model": optionalString(e.Model), "event_seq": optionalInt(e.EventSeq), "attempt_no": optionalInt(e.AttemptNo), "usage_known": e.UsageKnown, "input_tokens": optionalInt(e.InputTokens), "output_tokens": optionalInt(e.OutputTokens), "cached_tokens": optionalInt(e.CachedTokens), "reasoning_tokens": optionalInt(e.ReasoningTokens), "total_tokens": optionalInt(e.TotalTokens), "failed": e.Failed, "status_class": e.StatusClass, "requested_at": e.RequestedAt, "recorded_at": e.RecordedAt, "pricing_status": e.PricingStatus, "pricing_reason": e.PricingReason, "cost_usd": formatNanoUSD(e.CostNanoUSD)}
+	return gin.H{"event_id": e.EventID, "account_ref": optionalString(e.AccountRefSnapshot), "safe_label": optionalString(e.SafeLabelSnapshot), "provider": optionalString(e.Provider), "model": optionalString(e.Model), "event_seq": optionalInt(e.EventSeq), "attempt_no": optionalInt(e.AttemptNo), "usage_known": e.UsageKnown, "input_tokens": optionalInt(e.InputTokens), "output_tokens": optionalInt(e.OutputTokens), "cached_tokens": optionalInt(e.CachedTokens), "cache_read_tokens": optionalInt(e.CacheReadTokens), "cache_write_tokens": optionalInt(e.CacheWriteTokens), "reasoning_tokens": optionalInt(e.ReasoningTokens), "total_tokens": optionalInt(e.TotalTokens), "failed": e.Failed, "status_class": e.StatusClass, "requested_at": e.RequestedAt, "recorded_at": e.RecordedAt, "pricing_status": e.PricingStatus, "pricing_reason": e.PricingReason, "cost_usd": formatNanoUSD(e.CostNanoUSD)}
 }
 
 func formatNanoUSD(value *int64) any {
@@ -889,7 +889,7 @@ func usageRequestQuery(c *gin.Context) (carpoolservice.UsageRequestQuery, bool) 
 	q := carpoolservice.UsageRequestQuery{Period: strings.TrimSpace(c.Query("period")), CarRef: strings.TrimSpace(c.Query("car_ref")), UserRef: strings.TrimSpace(c.Query("user_ref")), AccountRef: strings.TrimSpace(c.Query("account_ref")), APIKeyRef: strings.TrimSpace(c.Query("api_key_ref")), Model: strings.TrimSpace(c.Query("model")), Outcome: strings.TrimSpace(c.Query("outcome")), BillingStatus: strings.TrimSpace(c.Query("billing_status")), RequestID: strings.TrimSpace(c.Query("request_id")), Cursor: strings.TrimSpace(c.Query("cursor")), Limit: 25}
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
 		n, e := strconv.Atoi(raw)
-		if e != nil || n < 1 || n > 25 {
+		if e != nil || n != 25 {
 			writeAPIError(c, http.StatusUnprocessableEntity, "invalid_pagination", "分页参数无效")
 			return q, false
 		}
@@ -995,29 +995,36 @@ func (a *API) previewRetention(c *gin.Context) {
 		return
 	}
 	identity, _ := currentIdentity(c)
-	expected, inflight, err := a.control.PreviewRetention(c.Request.Context(), identity.User, strings.TrimSpace(req.Operation))
+	job, err := a.control.PreviewRetention(c.Request.Context(), identity.User, strings.TrimSpace(req.Operation))
 	if err != nil {
 		writeMappedError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"operation": req.Operation, "expected_count": expected, "in_flight_count": inflight, "confirmation_required": true})
+	response := retentionJobResponse(job)
+	response["confirmation_required"] = true
+	c.JSON(http.StatusOK, response)
 }
 func (a *API) runRetention(c *gin.Context) {
 	var req struct {
 		Operation string `json:"operation"`
 		Confirm   bool   `json:"confirm"`
+		JobID     string `json:"job_id"`
 	}
 	if !decodeJSON(c, &req) {
 		return
 	}
-	if !req.Confirm {
+	if !req.Confirm || strings.TrimSpace(req.JobID) == "" {
 		writeAPIError(c, http.StatusUnprocessableEntity, "confirmation_required", "清理操作需要明确确认")
 		return
 	}
 	identity, _ := currentIdentity(c)
-	job, err := a.control.RunRetention(c.Request.Context(), identity.User, strings.TrimSpace(req.Operation))
+	job, err := a.control.RunRetention(c.Request.Context(), identity.User, strings.TrimSpace(req.Operation), strings.TrimSpace(req.JobID))
 	if err != nil {
-		writeMappedError(c, err)
+		if errors.Is(err, domain.ErrRetentionPreviewInvalid) {
+			writeAPIError(c, http.StatusConflict, "retention_preview_invalid", "预览已失效或不匹配，请重新预览")
+		} else {
+			writeMappedError(c, err)
+		}
 		return
 	}
 	c.JSON(http.StatusAccepted, retentionJobResponse(job))
@@ -1036,7 +1043,7 @@ func (a *API) retentionJob(c *gin.Context) {
 	c.JSON(http.StatusOK, retentionJobResponse(job))
 }
 func retentionJobResponse(j domain.RetentionJob) gin.H {
-	return gin.H{"job_id": j.ID, "operation": j.Operation, "status": j.Status, "requested_at": j.RequestedAt, "completed_at": optionalTime(pointerTimeFrom(j.CompletedAt)), "actor_ref": j.ActorRef, "expected_count": j.ExpectedCount, "deleted_count": j.DeletedCount, "in_flight_count": j.InFlightCount, "failure_reason": optionalString(j.FailureReason)}
+	return gin.H{"job_id": j.ID, "expires_at": j.RequestedAt.Add(domain.RetentionPreviewTTL), "batch_limit": domain.RetentionBatchLimit, "operation": j.Operation, "status": j.Status, "requested_at": j.RequestedAt, "completed_at": optionalTime(pointerTimeFrom(j.CompletedAt)), "actor_ref": j.ActorRef, "expected_count": j.ExpectedCount, "deleted_count": j.DeletedCount, "in_flight_count": j.InFlightCount, "failure_reason": optionalString(j.FailureReason)}
 }
 
 func (a *API) auditEvents(c *gin.Context) {

@@ -28,15 +28,14 @@ func TestManualRetentionWithPermanentPolicyUsesCurrentCutoff(t *testing.T) {
 	}
 	admin := domain.User{Role: domain.UserRoleAdmin, UserRef: "usr_admin"}
 
-	if _, _, errPreview := control.PreviewRetention(context.Background(), admin, "usage_details"); errPreview != nil {
+	if _, errPreview := control.PreviewRetention(context.Background(), admin, "usage_details"); errPreview != nil {
 		t.Fatalf("PreviewRetention() error = %v", errPreview)
 	}
 	if !repository.cutoff.After(now) {
 		t.Fatalf("preview cutoff = %s, want just after %s", repository.cutoff, now)
 	}
 
-	repository.cutoff = time.Time{}
-	if _, errRun := control.RunRetention(context.Background(), admin, "usage_details"); errRun != nil {
+	if _, errRun := control.RunRetention(context.Background(), admin, "usage_details", "job_1"); errRun != nil {
 		t.Fatalf("RunRetention() error = %v", errRun)
 	}
 	if !repository.cutoff.After(now) {
@@ -54,22 +53,13 @@ func (r *manualRetentionRepository) GetRetentionSettings(context.Context, int64)
 	return r.settings, nil
 }
 
-func (r *manualRetentionRepository) PreviewRetention(_ context.Context, _ string, cutoff time.Time) (int64, int64, error) {
+func (r *manualRetentionRepository) PreviewRetentionJob(_ context.Context, operation, actorRef string, cutoff time.Time) (domain.RetentionJob, error) {
 	r.cutoff = cutoff
-	return 1, 0, nil
+	return domain.RetentionJob{ID: "job_1", Operation: operation, ActorRef: actorRef, ExpectedCount: 1}, nil
 }
 
-func (r *manualRetentionRepository) CreateRetentionJob(_ context.Context, operation, actorRef string, expected int64) (domain.RetentionJob, error) {
-	return domain.RetentionJob{ID: "job_1", Operation: operation, ActorRef: actorRef, ExpectedCount: expected}, nil
-}
-
-func (r *manualRetentionRepository) ExecuteRetention(_ context.Context, _ string, cutoff time.Time, _ int) (int64, int64, error) {
-	r.cutoff = cutoff
-	return 1, 0, nil
-}
-
-func (r *manualRetentionRepository) FinishRetentionJob(context.Context, string, string, int64, int64, string) error {
-	return nil
+func (r *manualRetentionRepository) ConfirmRetentionJob(_ context.Context, id, operation, actorRef string) (domain.RetentionJob, error) {
+	return domain.RetentionJob{ID: id, Operation: operation, ActorRef: actorRef, ExpectedCount: 1, DeletedCount: 1, Status: "completed"}, nil
 }
 
 func TestBillingRetentionUsesCurrentInstantRegardlessOfRetentionDays(t *testing.T) {
@@ -117,12 +107,12 @@ func TestBillingRetentionUsesCurrentInstantRegardlessOfRetentionDays(t *testing.
 					t.Fatal(err)
 				}
 			}
-			preview, _, err := control.PreviewRetention(ctx, admin, "reset_current_period")
-			if err != nil || preview != 1 {
-				t.Fatalf("reset preview=%d err=%v", preview, err)
+			preview, err := control.PreviewRetention(ctx, admin, "reset_current_period")
+			if err != nil || preview.ExpectedCount != 1 {
+				t.Fatalf("reset preview=%+v err=%v", preview, err)
 			}
-			job, err := control.RunRetention(ctx, admin, "reset_current_period")
-			if err != nil || job.Status != "completed" || job.ExpectedCount != preview || job.DeletedCount != preview {
+			job, err := control.RunRetention(ctx, admin, "reset_current_period", preview.ID)
+			if err != nil || job.Status != "completed" || job.ExpectedCount != preview.ExpectedCount || job.DeletedCount != preview.ExpectedCount {
 				t.Fatalf("reset job=%+v err=%v", job, err)
 			}
 			current, err := store.GetBillingPeriod(ctx, member.ID, now)
@@ -145,12 +135,12 @@ func TestBillingRetentionUsesCurrentInstantRegardlessOfRetentionDays(t *testing.
 					t.Fatalf("reset touched non-current period: %+v err=%v", period, err)
 				}
 			}
-			preview, _, err = control.PreviewRetention(ctx, admin, "closed_periods")
-			if err != nil || preview != 1 {
-				t.Fatalf("closed-period preview=%d err=%v", preview, err)
+			preview, err = control.PreviewRetention(ctx, admin, "closed_periods")
+			if err != nil || preview.ExpectedCount != 1 {
+				t.Fatalf("closed-period preview=%+v err=%v", preview, err)
 			}
-			job, err = control.RunRetention(ctx, admin, "closed_periods")
-			if err != nil || job.ExpectedCount != preview || job.DeletedCount != preview {
+			job, err = control.RunRetention(ctx, admin, "closed_periods", preview.ID)
+			if err != nil || job.ExpectedCount != preview.ExpectedCount || job.DeletedCount != preview.ExpectedCount {
 				t.Fatalf("closed-period job=%+v err=%v", job, err)
 			}
 			if _, err = store.GetBillingPeriod(ctx, member.ID, now.AddDate(0, -1, 0)); !errors.Is(err, domain.ErrNotFound) {
@@ -176,10 +166,10 @@ func TestUsageDetailsRetainsConfiguredAgeCutoff(t *testing.T) {
 			}
 			admin := domain.User{Role: domain.UserRoleAdmin, UserRef: "admin"}
 			want := now.Add(-time.Duration(days) * 24 * time.Hour)
-			if _, _, err = control.PreviewRetention(context.Background(), admin, "usage_details"); err != nil || !repository.cutoff.Equal(want) {
+			if _, err = control.PreviewRetention(context.Background(), admin, "usage_details"); err != nil || !repository.cutoff.Equal(want) {
 				t.Fatalf("preview cutoff=%s err=%v", repository.cutoff, err)
 			}
-			if _, err = control.RunRetention(context.Background(), admin, "usage_details"); err != nil || !repository.cutoff.Equal(want) {
+			if _, err = control.RunRetention(context.Background(), admin, "usage_details", "job_1"); err != nil || !repository.cutoff.Equal(want) {
 				t.Fatalf("execute cutoff=%s err=%v", repository.cutoff, err)
 			}
 		})
