@@ -65,3 +65,26 @@
 独立检查与最终全量 test/vet、扩大 race、两种服务构建通过。过程中一次 WebSocket
 测试 EOF，后续定向及全量 race 重跑通过，未跳过测试。价格冻结、缺价前置与浏览器仍
 待完成。不提交或归档；详细证据见任务 research/2026-09-14-simplified-accounting.md。
+
+
+## Session 4: 拼车计费最终交付与浏览器验收
+<!-- trellis-session: v=2 fp=91403fdc227a7c87 -->
+
+**Date**: 2026-09-14
+**Task**: 拼车计费最终交付与浏览器验收
+**Branch**: `feature/carpool-final-delivery`
+
+### Summary
+
+完成请求价格冻结、14路由执行前缺价422及零上游调用、上下文观察器继承、Claude安全错误码、账期重置截止时间修复。真实Chromium桌面/390/360移动流程通过，保留截图和发布说明；全量test/vet、双构建及独立检查通过。race首轮WebSocket间歇EOF，定向三次和整包重跑通过，根因未证实。用户确认两批本地提交并归档passenger-billing；父任务及另两个子任务保留，历史未验证条目不自动完成。未推送、未部署。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08d75418` | Fix request pricing snapshots, preflight validation, and period reset |
+| `848fca9e` | Complete carpool browser acceptance and delivery documentation |
+
+### Status
+
+[OK] **Completed**

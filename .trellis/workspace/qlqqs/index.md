@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-09-04
+- **Total Sessions**: 4
+- **Last Active**: 2026-09-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~52 | Active |
+| `journal-1.md` | ~90 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-09-14 | 拼车计费最终交付与浏览器验收 | `08d75418`, `848fca9e` | `feature/carpool-final-delivery` |
 | 2 | 2026-09-04 | 完成 Trellis 项目规范初始化 | `f4db15f4` | `main` |
 | 1 | 2026-09-04 | 完成拼车用户管理第一阶段 | `fa16075b`, `513d9568` | `feature/carpool-user-management` |
 <!-- @@@/auto:session-history -->
