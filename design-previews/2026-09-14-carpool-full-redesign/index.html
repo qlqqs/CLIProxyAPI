@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>拼车全端重设计 · 四方向预览</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;color:#242625;background:#f2f3f0;font-synthesis:none;color-scheme:light}*{box-sizing:border-box}body{margin:0}button,input,textarea{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #426956;outline-offset:3px}[hidden]{display:none!important}.skip{position:fixed;top:10px;left:15px;z-index:50;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}.skip:focus{clip-path:none;width:auto;height:auto;background:white;padding:14px}.preview-bar{position:sticky;top:0;z-index:20;background:#fafbf8;border-bottom:1px solid #d3d7d0;display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px 28px}.preview-bar strong{font-size:16px;font-weight:600}.preview-bar span{font-size:13px;color:#555d56}.preview-intro{padding:25px 28px 0;max-width:1600px;margin:auto}.preview-intro h1{font-size:26px;line-height:1.4;font-weight:600;margin:0 0 8px}.preview-intro p{margin:0;color:#545b55;font-size:14px;line-height:1.65}.preview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;padding:24px 28px;max-width:1600px;margin:auto}.direction{background:white;border:1px solid #d0d5ce;border-radius:14px;min-width:0;overflow:hidden;display:flex;flex-direction:column}.direction.is-selected{outline:3px solid #35624a;outline-offset:3px}.direction-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 18px;flex-wrap:wrap}.direction-title{display:flex;align-items:center;gap:10px}.direction-title h2{font-size:16px;margin:0;font-weight:600}.letter{width:28px;height:28px;border:1px solid #d7dcd4;border-radius:6px;display:grid;place-items:center;font:500 15px ui-monospace,monospace}.recommend{font-size:12px;background:#e9f0e8;color:#2d573f;border-radius:5px;padding:3px 7px}.role-switch{display:flex;border:1px solid #ccd2cb;border-radius:7px;padding:3px;gap:3px}.role-switch button{border:0;border-radius:4px;padding:6px 10px;background:transparent;color:#535b54;font-size:13px;min-height:32px}.role-switch button[aria-pressed=true]{background:#e9ece6;color:#252d27;font-weight:600}.mock{container-type:inline-size;height:450px;overflow:auto;overscroll-behavior:contain;position:relative;border-top:1px solid #dce0d8;border-bottom:1px solid #dce0d8}.mock>div{min-height:100%}.mock [data-view]{min-height:450px}.direction-footer{padding:14px 18px 18px;display:grid;gap:10px}.direction-footer p{font-size:13px;color:#535c54;margin:0;line-height:1.5}.qmdp-pick-button{width:100%;min-height:44px;border:1px solid #252b26;border-radius:7px;background:#252b26;color:#fff;font-size:14px;font-weight:500;transition:background 150ms cubic-bezier(.2,.7,.3,1)}.qmdp-pick-button:active{background:#4b554d}.controls,.explanations{max-width:1544px;margin:0 auto 24px;border:1px solid #d0d5ce;background:#fafbf8;border-radius:12px;padding:22px}.controls h2,.explanations h2{font-size:18px;font-weight:600;margin:0 0 16px}.dial-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px}.dial{display:grid;gap:8px;font-size:14px}.dial b{font-weight:500;display:flex;justify-content:space-between}.dial small{color:#5b625c;font-size:13px}.dial input{width:100%;accent-color:#354c3d}.explain-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 32px}.explain-grid h3{font-size:15px;font-weight:600;margin:0 0 6px}.explain-grid p,.explanations>p{font-size:14px;line-height:1.7;color:#535c54;margin:0}.explanations>p{margin-top:18px}.scope{margin-top:18px;border-top:1px solid #d7dcd5;padding-top:14px;font-size:14px;line-height:1.8;color:#535c54}.scope summary{cursor:pointer;color:#28352d}.scope p{margin:8px 0}.preview-dialog{width:min(520px,calc(100vw - 32px));border:1px solid #c9d0c6;border-radius:14px;padding:25px;max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;color:#252c27;background:#fafbf8}.preview-dialog::backdrop{background:rgb(17 25 19 / 45%)}.preview-dialog h2{margin:0 0 10px;font-size:21px;font-weight:600}.preview-dialog p{font-size:14px;line-height:1.6;color:#535c54}.preview-dialog label{display:block;font-size:14px;margin:18px 0 8px}.preview-dialog textarea{width:100%;min-height:100px;border:1px solid #b6c0b2;border-radius:7px;padding:12px;resize:vertical;font-size:14px;color:inherit;background:white}.dialog-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}.dialog-actions button{min-height:44px;border:1px solid #bbc3b7;padding:9px 16px;border-radius:7px;background:white;color:inherit}.dialog-actions .confirm-send{background:#28392d;color:white;border-color:#28392d}.dialog-actions button:disabled{opacity:.6;cursor:wait}.error-message{color:#a33123!important}.preview-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);background:#263e2e;color:white;border-radius:9px;padding:14px 20px;font-size:14px;z-index:40;box-shadow:0 4px 20px #19241b26}.preview-footer{font-size:13px;color:#626a63;max-width:1600px;margin:0 auto;padding:0 28px 30px}.mock button:disabled{cursor:default}.mock button{touch-action:manipulation}@media(hover:hover)and(pointer:fine){.qmdp-pick-button:hover{background:#415047}.role-switch button:hover{background:#f0f2ec}}@media(max-width:1600px){.controls,.explanations{margin-left:28px;margin-right:28px}}@media(max-width:760px){.preview-grid{grid-template-columns:1fr;padding:18px 14px;gap:18px}.preview-bar{padding:13px 16px;gap:10px;flex-wrap:wrap}.preview-bar span{font-size:12px}.preview-intro{padding:22px 16px 0}.preview-intro h1{font-size:23px}.controls,.explanations{margin:0 14px 18px;padding:18px}.dial-grid,.explain-grid{grid-template-columns:1fr;gap:22px}.direction-head{padding:13px 14px}.direction-footer{padding:14px}.mock{height:auto;max-height:none;overflow:visible}.mock [data-view]{min-height:450px}.preview-footer{padding:0 16px 26px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+<style>
+.dir-a{container:dir-a / inline-size;width:100%;height:450px;background:#fff;color:#202c3e;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:12px;line-height:1.5;font-style:normal;font-variant-numeric:tabular-nums;text-align:left;overflow:hidden;color-scheme:light}
+.dir-a *{box-sizing:border-box}
+.dir-a [hidden]{display:none!important}
+.dir-a section[data-view]{display:grid;grid-template-columns:135px minmax(0,1fr);height:100%;overflow:auto;overscroll-behavior:contain}
+.dir-a h2,.dir-a h3,.dir-a p{margin:0}
+.dir-a button{font:inherit;font-style:normal;appearance:none;opacity:1;cursor:default}
+.dir-a .a-sidebar{background:#f4f6f9;padding:20px 12px 12px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.dir-a .a-brand{font-size:17px;font-weight:600;letter-spacing:0;padding:0 7px}
+.dir-a .a-brand-mark{display:inline-block;width:12px;height:12px;background:#2454d6;border-radius:3px;margin-right:7px}
+.dir-a .a-nav{display:grid;gap:13px}
+.dir-a .a-nav-group{display:grid;gap:2px}
+.dir-a .a-nav-label{color:#596579;font-size:12px;padding:0 8px 3px}
+.dir-a .a-nav button{display:flex;align-items:center;justify-content:space-between;width:100%;border:1px solid transparent;background:transparent;color:#455267;text-align:left;padding:5px 8px;border-radius:8px;min-height:29px}
+.dir-a .a-nav button[aria-current="page"]{background:#e5edff;color:#1945bd;font-weight:600;border-color:#d4e0ff}
+.dir-a .a-sidebar-foot{margin-top:auto;padding:8px 7px 0;color:#596579;border-top:1px solid #dce2ea}
+.dir-a .a-workspace{padding:21px 22px 14px;min-width:0;overflow:auto;overscroll-behavior:contain}
+.dir-a .a-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:17px}
+.dir-a .a-eyebrow{color:#596579;font-size:12px;margin-bottom:3px}
+.dir-a h2{font-size:23px;line-height:1.25;font-weight:600;letter-spacing:0}
+.dir-a h3{font-size:14px;line-height:1.4;font-weight:600}
+.dir-a .a-button{border:1px solid #d8dfe9;border-radius:8px;background:#fff;color:#37465d;padding:6px 10px;white-space:nowrap;min-height:32px}
+.dir-a .a-primary{background:#2454d6;border-color:#2454d6;color:#fff}
+.dir-a .a-counts{display:flex;align-items:baseline;gap:25px;padding-bottom:13px;border-bottom:1px solid #dce2ea;margin-bottom:12px}
+.dir-a .a-counts strong{font-size:29px;line-height:1.1;font-weight:650;letter-spacing:-1px;margin-right:6px}
+.dir-a .a-muted{color:#596579}
+.dir-a .a-notice{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;background:#fff8e9;border:1px solid #ead7a8;border-radius:8px;color:#785010;margin-bottom:14px}
+.dir-a .a-notice button{border:0;background:transparent;padding:0;color:#785010;white-space:nowrap;text-decoration:underline;text-underline-offset:3px}
+.dir-a .a-toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.dir-a .a-table-scroll{overflow-x:auto}
+.dir-a table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+.dir-a th{font-weight:500;color:#596579;background:#f5f7fa;text-align:left;padding:6px 8px;border-bottom:1px solid #dce2ea}
+.dir-a td{padding:9px 8px;border-bottom:1px solid #e6eaf0}
+.dir-a td:first-child{font-weight:650}
+.dir-a .a-number{text-align:right}
+.dir-a .a-status{color:#226047;white-space:nowrap}
+.dir-a .a-status::before{content:"";display:inline-block;width:6px;height:6px;background:#33855f;border-radius:50%;margin-right:5px;vertical-align:middle}
+.dir-a .a-table-foot{display:flex;justify-content:space-between;gap:8px;margin-top:10px;color:#596579}
+.dir-a .a-sample{font-size:12px;color:#596579;margin-top:13px}
+.dir-a .a-balance{padding:0 0 15px;border-bottom:1px solid #dce2ea;margin-bottom:13px}
+.dir-a .a-balance-line{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:2px 0 8px}
+.dir-a .a-money{font-size:41px;font-weight:650;line-height:1.15;letter-spacing:-1.8px}
+.dir-a .a-meter{height:7px;border-radius:8px;background:#e7ecf5;overflow:hidden;margin:10px 0 7px}
+.dir-a .a-meter-fill{display:block;width:24.8%;height:100%;background:#2454d6}
+.dir-a .a-budget-meta{display:flex;justify-content:space-between;gap:8px;color:#596579}
+.dir-a .a-reset{color:#596579;margin-top:6px}
+.dir-a .a-key{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;background:#f4f7fc;border:1px solid #dce3ee;border-radius:8px;margin-bottom:15px}
+.dir-a .a-key p{margin-top:2px;color:#596579}
+.dir-a .a-member-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #e6eaf0}
+.dir-a .a-person{display:flex;align-items:center;gap:8px}
+.dir-a .a-avatar{display:grid;place-items:center;width:27px;height:27px;background:#edf1f7;border-radius:8px;font-weight:650;color:#465771}
+.dir-a .a-passenger-nav{gap:5px}
+@container dir-a (max-width:420px){
+ .dir-a section[data-view]{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;font-size:14px}
+ .dir-a .a-sidebar{padding:12px 14px;gap:10px}
+ .dir-a .a-brand{padding:0;font-size:18px}
+ .dir-a .a-nav{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+ .dir-a .a-nav-group{align-content:start}
+ .dir-a .a-nav-label{font-size:14px;padding:0 5px 2px}
+ .dir-a .a-nav button{font-size:14px;padding:5px;min-height:32px}
+ .dir-a .a-sidebar-foot{display:none}
+ .dir-a .a-workspace{padding:16px 14px;overflow:visible}
+ .dir-a .a-header{margin-bottom:16px}
+ .dir-a .a-eyebrow,.dir-a .a-sample{font-size:14px}
+ .dir-a h2{font-size:24px}
+ .dir-a h3{font-size:16px}
+ .dir-a .a-counts{gap:24px}
+ .dir-a .a-counts strong{font-size:30px}
+ .dir-a .a-notice{align-items:flex-start;flex-wrap:wrap}
+ .dir-a table{font-size:14px;min-width:320px}
+ .dir-a th,.dir-a td{padding:8px 6px}
+ .dir-a .a-button{font-size:14px;min-height:38px;padding:6px 9px}
+ .dir-a .a-key{gap:8px;padding:10px}
+ .dir-a .a-budget-meta,.dir-a .a-table-foot{flex-wrap:wrap}
+ .dir-a .a-passenger-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+
+.dir-b{--b-bg:#151617;--b-panel:#1b1d1e;--b-rule:#484b4d;--b-muted:#b2b6b8;--b-text:#e1e3e3;--b-cyan:#80d9df;--b-amber:#f3bd62;container:signal-b / inline-size;width:100%;height:450px;background:var(--b-bg);color:var(--b-text);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;text-align:left;overflow:auto;color-scheme:dark}
+.dir-b,.dir-b *{box-sizing:border-box}
+.dir-b [hidden]{display:none!important}
+.dir-b h2,.dir-b h3,.dir-b p{margin:0}
+.dir-b h2{font-size:17px;font-weight:600;letter-spacing:.04em}
+.dir-b h3{font-size:12px;font-weight:600}
+.dir-b .b-num{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.dir-b .b-muted{color:var(--b-muted)}
+.dir-b .b-ok{color:var(--b-cyan)}
+.dir-b .b-warn{color:var(--b-amber)}
+.dir-b .b-screen{display:grid;grid-template-columns:66px minmax(0,1fr);min-height:450px}
+.dir-b .b-rail{border-right:1px solid var(--b-rule);display:flex;flex-direction:column;align-items:stretch;background:#191a1b}
+.dir-b .b-mark{height:48px;display:grid;place-items:center;border-bottom:1px solid var(--b-rule);font-size:22px;font-weight:600;color:var(--b-cyan)}
+.dir-b .b-nav{display:flex;flex-direction:column;gap:0;padding-top:12px}
+.dir-b button{font:inherit;color:inherit;border:1px solid var(--b-rule);border-radius:2px;background:#242627;min-height:28px;padding:3px 9px;box-shadow:none;cursor:default}
+.dir-b button:focus-visible{outline:2px solid var(--b-cyan);outline-offset:2px}
+.dir-b button:hover{background:#303335}
+.dir-b .b-nav button{border:0;border-radius:0;min-height:65px;padding:8px 2px;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--b-muted)}
+.dir-b .b-nav button[aria-current="page"]{background:#303334;color:var(--b-cyan);box-shadow:inset 0 1px var(--b-rule),inset 0 -1px var(--b-rule)}
+.dir-b .b-icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:square;stroke-linejoin:miter}
+.dir-b .b-rail-foot{margin-top:auto;padding:12px 0;text-align:center;color:var(--b-muted)}
+.dir-b .b-console{display:flex;flex-direction:column;min-width:0}
+.dir-b .b-top{height:48px;border-bottom:1px solid var(--b-rule);padding:0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dir-b .b-top-status{display:flex;gap:6px;align-items:center;white-space:nowrap}
+.dir-b .b-dot{display:inline-block;width:6px;height:6px;background:var(--b-cyan)}
+.dir-b .b-summary{display:grid;grid-template-columns:1fr 1fr 1.4fr;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-stat{padding:7px 12px;border-right:1px solid var(--b-rule);display:flex;gap:10px;align-items:baseline}
+.dir-b .b-stat:last-child{border-right:0}
+.dir-b .b-stat strong{font-size:25px;font-weight:500}
+.dir-b .b-work{display:grid;grid-template-columns:39% minmax(0,1fr);flex:1;min-height:0}
+.dir-b .b-queue{border-right:1px solid var(--b-rule);background:#191b1c;min-width:0}
+.dir-b .b-panel-head{min-height:36px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px;border-bottom:1px solid var(--b-rule)}
+.dir-b table{color:var(--b-text);width:100%;border-collapse:collapse;font-size:12px;line-height:1.5}
+.dir-b th{font-weight:400;color:var(--b-muted);text-align:left;background:#1b1d1e}
+.dir-b th,.dir-b td{padding:7px 9px;border-bottom:1px solid #36393a;white-space:nowrap}
+.dir-b .b-right{text-align:right}
+.dir-b .b-selected{background:#303637}
+.dir-b .b-selected td:first-child{color:var(--b-cyan)}
+.dir-b .b-table-note{padding:10px;color:var(--b-muted)}
+.dir-b .b-detail{min-width:0}
+.dir-b .b-detail .b-panel-head{background:#242728}
+.dir-b .b-focus{font-size:14px;font-weight:600}
+.dir-b .b-quota{padding:10px;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-split{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.dir-b .b-meter{height:6px;background:#3c4042;margin:7px 0 5px;overflow:hidden}
+.dir-b .b-meter-fill{display:block;height:100%;background:var(--b-cyan)}
+.dir-b .b-meter-68{width:68%}
+.dir-b .b-meter-75{width:75.2%}
+.dir-b .b-member-head{padding:6px 10px 0;color:var(--b-muted)}
+.dir-b .b-alert{border-top:1px solid var(--b-rule);background:#2c261c;padding:7px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dir-b .b-alert button{border-color:#a17d43;color:var(--b-amber);background:transparent;white-space:nowrap}
+.dir-b .b-strip{border-top:1px solid var(--b-rule);min-height:28px;display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 10px;color:var(--b-muted);font-size:12px}
+.dir-b .b-pass-work{display:grid;grid-template-columns:145px minmax(0,1fr);flex:1}
+.dir-b .b-pass-side{border-right:1px solid var(--b-rule);padding:12px 10px;background:#191b1c}
+.dir-b .b-pass-side h3{font-size:16px;margin:3px 0 8px}
+.dir-b .b-identity-row{border-top:1px solid var(--b-rule);padding:10px 0;margin-top:12px}
+.dir-b .b-identity-row p+p{margin-top:4px}
+.dir-b .b-budget{padding:13px 14px 10px;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-balance{font-size:40px;font-weight:500;line-height:1.2;margin:4px 0 8px;display:block;color:var(--b-cyan)}
+.dir-b .b-budget-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.dir-b .b-budget-facts strong{font-size:17px;font-weight:500;display:block}
+.dir-b .b-reset{margin-top:8px;color:var(--b-muted)}
+.dir-b .b-key{padding:9px 14px;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-key-value{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:5px}
+.dir-b .b-key code{font-size:13px;overflow-wrap:anywhere}
+.dir-b .b-upstream{padding:9px 14px}
+.dir-b .b-upstream .b-missing{margin-top:5px;color:var(--b-muted)}
+@container signal-b (max-width:420px){
+.dir-b .b-screen{font-size:14px}
+.dir-b h3,.dir-b table,.dir-b .b-strip,.dir-b .b-key code{font-size:14px}
+.dir-b .b-top{height:auto;min-height:52px;padding:8px 10px;flex-wrap:wrap;gap:3px}
+.dir-b h2{font-size:16px}
+.dir-b .b-secondary{display:none}
+.dir-b .b-summary{grid-template-columns:1fr 1fr}
+.dir-b .b-stat{padding:7px 10px;gap:7px}
+.dir-b .b-stat:nth-child(2){border-right:0}
+.dir-b .b-stat strong{font-size:24px}
+.dir-b .b-work{grid-template-columns:minmax(0,1fr)}
+.dir-b .b-queue{border-right:0;border-bottom:1px solid var(--b-rule)}
+.dir-b th,.dir-b td{padding:7px 10px}
+.dir-b .b-panel-head{min-height:39px}
+.dir-b .b-top{order:0}
+.dir-b .b-summary{order:1}
+.dir-b .b-alert{order:2;align-items:flex-start;flex-direction:column;padding:10px}
+.dir-b .b-work{order:3}
+.dir-b .b-strip{order:4}
+.dir-b button{min-height:40px}
+.dir-b .b-strip{flex-wrap:wrap;padding:8px 10px}
+.dir-b .b-pass-work{grid-template-columns:minmax(0,1fr)}
+.dir-b .b-pass-side{border-right:0;border-bottom:1px solid var(--b-rule);padding:9px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.dir-b .b-pass-side h3{font-size:14px;margin:0}
+.dir-b .b-pass-side .b-identity-row{display:none}
+.dir-b .b-budget,.dir-b .b-key,.dir-b .b-upstream{padding:11px 10px}
+.dir-b .b-balance{font-size:36px}
+.dir-b .b-reset .b-num{display:block}
+.dir-b .b-key-value{flex-wrap:wrap}
+}
+
+
+.dir-c {
+  --c-paper: #f5f0e5;
+  --c-ink: #302d27;
+  --c-rust: #96462f;
+  --c-rule: #b9afa0;
+  container: ledger-c / inline-size;
+  width: 100%;
+  min-height: 450px;
+  background: var(--c-paper);
+  color: var(--c-ink);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-style: normal;
+  text-align: left;
+}
+.dir-c *, .dir-c *::before, .dir-c *::after { box-sizing: border-box; }
+.dir-c [hidden] { display: none !important; }
+.dir-c section[data-view] { padding: 14px 28px 10px; }
+.dir-c h2, .dir-c h3, .dir-c p { margin: 0; }
+.dir-c h2 { font-size: 25px; font-weight: 600; letter-spacing: .06em; line-height: 1.4; }
+.dir-c h3 { font-size: 14px; font-weight: 600; }
+.dir-c .c-masthead { display: flex; justify-content: space-between; align-items: end; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--c-ink); }
+.dir-c .c-edition { font-size: 12px; text-align: right; }
+.dir-c .c-kicker { font-size: 12px; color: var(--c-rust); letter-spacing: .08em; margin-bottom: 3px; }
+.dir-c .c-nav { display: flex; flex-wrap: wrap; gap: 5px 20px; padding: 9px 0; border-bottom: 1px solid var(--c-rule); font-size: 12px; }
+.dir-c .c-nav a { color: inherit; text-decoration: none; cursor: default; }
+.dir-c .c-nav [aria-current] { color: var(--c-rust); font-weight: 600; }
+.dir-c .c-number { font-family: Georgia, "Times New Roman", "DejaVu Serif", serif; font-style: normal; font-weight: 400; font-variant-numeric: lining-nums tabular-nums; white-space: nowrap; }
+.dir-c .c-spread { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(150px, 1fr); gap: 28px; padding: 10px 0 8px; }
+.dir-c .c-big { display: block; font-size: 65px; line-height: 1.05; margin: 3px 0 7px; }
+.dir-c .c-small { font-size: 12px; }
+.dir-c .c-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 12px; }
+.dir-c .c-summary .c-number { font-size: 23px; }
+.dir-c .c-note { padding-top: 3px; }
+.dir-c .c-note h3 { border-top: 1px solid var(--c-ink); padding-top: 8px; margin-bottom: 6px; }
+.dir-c .c-note p { font-size: 12px; margin-bottom: 8px; }
+.dir-c .c-alert { color: var(--c-rust); }
+.dir-c .c-entry { display: inline-block; color: var(--c-rust); font-size: 12px; text-decoration: underline; text-underline-offset: 4px; cursor: default; }
+.dir-c .c-ledger-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; border-top: 1px solid var(--c-ink); }
+.dir-c table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dir-c th { font-weight: 400; text-align: left; }
+.dir-c th, .dir-c td { padding: 4px 0; border-bottom: 1px solid var(--c-rule); }
+.dir-c th:last-child, .dir-c td:last-child { text-align: right; }
+.dir-c td.c-number { font-size: 17px; }
+.dir-c .c-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; font-size: 12px; margin-top: 8px; }
+.dir-c .c-balance { color: var(--c-rust); }
+.dir-c .c-reset { border-top: 1px solid var(--c-rule); padding-top: 9px; margin-top: 8px; }
+.dir-c .c-access { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+@container ledger-c (max-width: 420px) {
+  .dir-c section[data-view] { padding: 18px; }
+  .dir-c .c-masthead { align-items: start; gap: 10px; }
+  .dir-c h2 { font-size: 23px; }
+  .dir-c .c-edition { max-width: 120px; }
+  .dir-c .c-edition, .dir-c .c-kicker, .dir-c .c-nav, .dir-c .c-small,
+  .dir-c .c-note p, .dir-c .c-entry, .dir-c table, .dir-c .c-footer { font-size: 14px; }
+  .dir-c .c-nav { gap: 8px 16px; padding: 12px 0; }
+  .dir-c .c-spread { grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px 0; }
+  .dir-c .c-big { font-size: 62px; }
+  .dir-c .c-note h3 { padding-top: 12px; }
+  .dir-c .c-note p { margin-bottom: 10px; }
+  .dir-c th, .dir-c td { padding: 9px 0; }
+  .dir-c .c-ledger-heading { flex-wrap: wrap; gap: 4px; }
+  .dir-c .c-footer { margin-top: 14px; }
+}
+
+
+.dir-d { container: carpool-d / inline-size; width: 100%; height: 100%; min-height: 450px; overflow: hidden; overscroll-behavior: contain; background: #eaf0e7; color: #243f33; font: 14px/1.5 "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-variant-numeric: tabular-nums; }
+.dir-d *, .dir-d *::before, .dir-d *::after { box-sizing: border-box; }
+.dir-d [hidden] { display: none !important; }
+.dir-d section[data-view] { height: 100%; min-height: 450px; padding: 18px 22px 12px; display: flex; flex-direction: column; gap: 14px; }
+.dir-d .d-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 14px; }
+.dir-d h2, .dir-d h3, .dir-d p { margin: 0; }
+.dir-d h2 { font-size: 20px; font-weight: 600; line-height: 1.5; }
+.dir-d h3 { font-size: 16px; font-weight: 600; }
+.dir-d strong { font-weight: 600; }
+.dir-d button { font: inherit; color: inherit; border: 0; cursor: default; opacity: 1; -webkit-text-fill-color: currentColor; }
+.dir-d button:focus-visible { outline: 2px solid #264d3c; outline-offset: 3px; }
+.dir-d .d-head, .dir-d .d-greeting, .dir-d .d-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dir-d .d-brand { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; }
+.dir-d .d-mark { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid #93ac99; border-radius: 50% 50% 50% 9px; font-size: 16px; }
+.dir-d .d-role { font-size: 12px; color: #526959; }
+.dir-d .d-muted { color: #526959; font-size: 12px; }
+.dir-d .d-greeting { align-items: end; }
+.dir-d .d-primary { padding: 9px 15px; border-radius: 22px; background: #294f3d; color: #fffdf7; white-space: nowrap; font-weight: 600; }
+.dir-d .d-lanes { display: grid; grid-template-columns: 1.12fr 1fr; gap: 14px; }
+.dir-d .d-lane { padding: 18px; border-radius: 24px; background: #fafcf6; min-width: 0; }
+.dir-d .d-attention { background: #f7e6d9; }
+.dir-d .d-count { display: inline-grid; place-items: center; min-width: 25px; height: 25px; border-radius: 50%; background: #e8cbb6; color: #62412c; font-size: 13px; }
+.dir-d .d-fleet { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; padding: 4px; margin: 13px 0; border-radius: 20px; background: #e6eee2; }
+.dir-d .d-fleet button { padding: 7px 1px; background: transparent; border-radius: 16px; font-size: 12px; white-space: nowrap; }
+.dir-d .d-fleet .d-selected { background: #31543f; color: #fffdf7; font-weight: 600; }
+.dir-d .d-car-name { font-size: 15px; }
+.dir-d .d-status { color: #365a42; font-size: 12px; white-space: nowrap; }
+.dir-d .d-members-line { margin-top: 4px; color: #526959; font-size: 12px; }
+.dir-d .d-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 17px; }
+.dir-d .d-secondary { padding: 7px 12px; border: 1px solid #b7c8b5; background: transparent; border-radius: 18px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.dir-d .d-request { padding: 12px 0; }
+.dir-d .d-request + .d-request { border-top: 1px solid #ddc7b7; }
+.dir-d .d-request p { color: #785642; font-size: 12px; margin-top: 3px; }
+.dir-d .d-review { padding: 4px 0 4px 8px; background: transparent; color: #694831; font-size: 12px; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.dir-d .d-note { font-size: 12px; color: #785642; }
+.dir-d .d-bottom { position: sticky; bottom: 0; align-self: center; display: flex; gap: 4px; padding: 5px; margin-top: auto; background: #fcfdf8; border: 1px solid #d2ddce; border-radius: 28px; max-width: 100%; box-shadow: 0 4px 10px #243f3310; }
+.dir-d .d-bottom button { border-radius: 22px; background: transparent; padding: 8px 17px; font-size: 12px; white-space: nowrap; }
+.dir-d .d-bottom .d-current { background: #dce8d7; color: #294f3d; font-weight: 600; }
+.dir-d .d-amount { font: 600 29px/1.5 ui-rounded, "SF Pro Rounded", "Segoe UI", "PingFang SC", sans-serif; font-variant-numeric: tabular-nums; }
+.dir-d .d-quota { margin: 8px 0 6px; }
+.dir-d .d-meter { height: 7px; border-radius: 8px; background: #dbe6d5; margin: 9px 0; overflow: hidden; }
+.dir-d .d-meter-fill { width: 24.8%; height: 100%; background: #507555; border-radius: 8px; }
+.dir-d .d-key { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 14px; padding: 9px 13px; border-radius: 18px; background: #294f3d; color: #fffdf7; font-size: 13px; }
+.dir-d .d-companions { display: flex; gap: 7px; align-items: center; margin: 15px 0 9px; }
+.dir-d .d-avatar { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 50%; background: #dce7d5; font-size: 12px; }
+.dir-d .d-avatar:nth-child(2) { background: #f1decf; }
+.dir-d .d-avatar:nth-child(3) { background: #e4e7db; }
+.dir-d .d-text-button { padding: 0; background: transparent; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.dir-d .d-account { border-top: 1px solid #dce4d6; margin-top: 14px; padding-top: 12px; }
+.dir-d .d-account p { margin-top: 4px; }
+@container carpool-d (max-width: 420px) {
+  .dir-d section[data-view] { padding: 16px 14px 12px; gap: 16px; }
+  .dir-d .d-lanes { grid-template-columns: 1fr; }
+  .dir-d .d-lane { padding: 20px; }
+  .dir-d .d-role, .dir-d .d-muted, .dir-d .d-fleet button, .dir-d .d-status, .dir-d .d-members-line, .dir-d .d-secondary, .dir-d .d-request p, .dir-d .d-review, .dir-d .d-note, .dir-d .d-bottom button, .dir-d .d-key, .dir-d .d-text-button, .dir-d .d-avatar, .dir-d .d-count { font-size: 14px; }
+  .dir-d .d-greeting { align-items: start; flex-wrap: wrap; }
+  .dir-d .d-primary { min-height: 44px; }
+  .dir-d .d-fleet button, .dir-d .d-secondary, .dir-d .d-key, .dir-d .d-review, .dir-d .d-text-button { min-height: 44px; }
+  .dir-d .d-bottom { margin-top: 4px; bottom: 4px; }
+  .dir-d .d-bottom button { min-height: 44px; padding: 8px 13px; }
+}
+
+.mock{height:490px}.mock>.dir-a,.mock>.dir-b{height:490px}.dir-b .b-screen{min-height:490px}.dir-d section[data-view]{min-height:490px}
+@media(max-width:760px){.mock{height:auto}.mock>.dir-a,.mock>.dir-b,.mock>.dir-d{height:auto;overflow:visible}.mock .dir-a section[data-view]{height:auto;overflow:visible}.mock .dir-a .a-workspace{overflow:visible}.mock .dir-b .b-screen{min-height:490px}.mock .dir-d .d-scroll{overflow:visible}}
+</style></head><body><a class="skip" href="#directions">跳到设计方向</a><header class="preview-bar"><strong>拼车 · 全端重设计</strong><span id="bridge-status" role="status">等待选择 · 快捷键 1–4</span></header><div class="preview-intro"><h1>同一套功能，四种全新布局。</h1><p>这是设计方向样机，不是最终页面；数据仅作示例。每套可切换管理端与用户端查看。</p></div><main><div class="preview-grid" id="directions"><article class="direction" data-design-option="A" data-name="晴昼工作台"><header class="direction-head"><div class="direction-title"><span class="letter">A</span><h2>晴昼工作台</h2><span class="recommend">推荐</span></div><div class="role-switch" role="group" aria-label="A 样机角色"><button type="button" data-role="admin" aria-pressed="true">管理端</button><button type="button" data-role="passenger" aria-pressed="false">用户端</button></div></header><div class="mock">
+<div class="dir-a" lang="zh-CN">
+  <section data-view="admin" aria-label="晴昼工作台 · 管理员方向样机">
+    <aside class="a-sidebar">
+      <div class="a-brand"><span class="a-brand-mark" aria-hidden="true"></span>拼车</div>
+      <nav class="a-nav" aria-label="管理员导航（静态样机）">
+        <div class="a-nav-group"><p class="a-nav-label">车队</p><button type="button" disabled>成员 <span>24</span></button><button type="button" disabled aria-current="page">车辆 <span>4</span></button></div>
+        <div class="a-nav-group"><p class="a-nav-label">分析</p><button type="button" disabled>用量</button><button type="button" disabled>请求记录</button></div>
+        <div class="a-nav-group"><p class="a-nav-label">系统</p><button type="button" disabled>模型定价</button><button type="button" disabled>数据保留</button><button type="button" disabled>审计日志</button></div>
+      </nav>
+      <div class="a-sidebar-foot">管理工作区</div>
+    </aside>
+    <div class="a-workspace">
+      <header class="a-header"><div><p class="a-eyebrow">车队 / 车辆</p><h2>车队总览</h2></div><button class="a-button a-primary" type="button" disabled>添加车辆</button></header>
+      <div class="a-counts"><div><strong>24</strong><span class="a-muted">成员</span></div><div><strong>4</strong><span class="a-muted">车辆</span></div></div>
+      <div class="a-notice"><span><strong>2 条请求费用未知</strong> · 待核对定价</span><button type="button" disabled>查看请求</button></div>
+      <div class="a-toolbar"><h3>全部车辆</h3><span class="a-muted">本月 · USD</span></div>
+      <div class="a-table-scroll" tabindex="0" role="region" aria-label="车辆列表，可横向滚动">
+        <table aria-label="示例车队车辆与本月已知费用"><thead><tr><th scope="col">车辆</th><th scope="col">状态</th><th scope="col" class="a-number">成员</th><th scope="col" class="a-number">已知费用</th></tr></thead><tbody>
+          <tr><td>研发一车</td><td><span class="a-status">可用</span></td><td class="a-number">8</td><td class="a-number">$86.20</td></tr>
+          <tr><td>产品二车</td><td><span class="a-status">可用</span></td><td class="a-number">6</td><td class="a-number">$42.80</td></tr>
+          <tr><td>设计三车</td><td><span class="a-status">可用</span></td><td class="a-number">5</td><td class="a-number">$31.50</td></tr>
+          <tr><td>协作四车</td><td><span class="a-status">可用</span></td><td class="a-number">5</td><td class="a-number">$19.10</td></tr>
+        </tbody></table>
+      </div>
+      <div class="a-table-foot"><span>共 4 辆 · 已全部显示</span><span>不含未知费用</span></div>
+      <p class="a-sample">方向样机 · 示例数据 · 控件仅展示</p>
+    </div>
+  </section>
+  <section data-view="passenger" hidden aria-label="晴昼工作台 · 乘客方向样机">
+    <aside class="a-sidebar">
+      <div class="a-brand"><span class="a-brand-mark" aria-hidden="true"></span>拼车</div>
+      <nav class="a-nav a-passenger-nav" aria-label="乘客导航（静态样机）">
+        <div class="a-nav-group"><p class="a-nav-label">我的车队</p><button type="button" disabled aria-current="page">我的概览</button><button type="button" disabled>成员列表</button></div>
+        <div class="a-nav-group"><p class="a-nav-label">个人</p><button type="button" disabled>API Key</button><button type="button" disabled>我的账户</button></div>
+      </nav>
+      <div class="a-sidebar-foot">林晓 · 乘客</div>
+    </aside>
+    <div class="a-workspace">
+      <header class="a-header"><div><p class="a-eyebrow">研发一车 / 我的概览</p><h2>你好，林晓</h2></div><span class="a-status">可用</span></header>
+      <div class="a-balance">
+        <p class="a-muted">我的本月剩余额度</p>
+        <div class="a-balance-line"><strong class="a-money">$37.60</strong><span class="a-muted">USD</span></div>
+        <div class="a-meter" role="meter" aria-label="本月额度已用" aria-valuemin="0" aria-valuemax="50" aria-valuenow="12.4" aria-valuetext="已用 12.40 美元，总额度 50 美元"><span class="a-meter-fill"></span></div>
+        <div class="a-budget-meta"><span>已用 <strong>$12.40</strong></span><span>额度上限 <strong>$50.00</strong></span></div>
+        <p class="a-reset">重置日期：2026-10-01 UTC</p>
+      </div>
+      <div class="a-key"><div><h3>API Key</h3><p>用于接入你的 API 客户端</p></div><button class="a-button a-primary" type="button" disabled>管理密钥</button></div>
+      <div class="a-toolbar"><h3>同车成员 <span class="a-muted">8</span></h3><button class="a-button" type="button" disabled>成员列表 →</button></div>
+      <div class="a-member-row"><div class="a-person"><span class="a-avatar" aria-hidden="true">林</span><span>林晓 <span class="a-muted">· 我</span></span></div><button class="a-button" type="button" disabled>我的账户 →</button></div>
+      <p class="a-sample">方向样机 · 示例数据 · 控件仅展示</p>
+    </div>
+  </section>
+</div>
+</div><footer class="direction-footer"><p>方向样机 · 分区侧栏 · 浅色运营工作区</p><button class="qmdp-pick-button" data-qmdp-native-handler="true" type="button">选择 A · 晴昼工作台</button></footer></article><article class="direction" data-design-option="B" data-name="信号控制室"><header class="direction-head"><div class="direction-title"><span class="letter">B</span><h2>信号控制室</h2></div><div class="role-switch" role="group" aria-label="B 样机角色"><button type="button" data-role="admin" aria-pressed="true">管理端</button><button type="button" data-role="passenger" aria-pressed="false">用户端</button></div></header><div class="mock">
+<div class="dir-b">
+  <section class="b-screen" data-view="admin" aria-label="管理员信号控制室">
+    <aside class="b-rail" aria-label="管理导航（样机）">
+      <div class="b-mark" aria-label="拼车控制室">⊞</div>
+      <nav class="b-nav">
+        <button type="button" aria-current="page" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h7v6H3zM14 5h7v6h-7zM3 15h7v5H3zM14 15h7v5h-7z"/></svg>车队</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="3"/><path d="M5 21v-5l4-3h6l4 3v5"/></svg>成员</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg>账单</button>
+      </nav>
+      <div class="b-rail-foot">管理端</div>
+    </aside>
+    <div class="b-console">
+      <header class="b-top"><h2>信号控制室</h2><span class="b-top-status"><i class="b-dot" aria-hidden="true"></i>调度正常<span class="b-secondary b-num"> / 04</span></span></header>
+      <div class="b-summary" aria-label="车队概况">
+        <div class="b-stat"><strong class="b-num">24</strong><span class="b-muted">用户</span></div>
+        <div class="b-stat"><strong class="b-num">4</strong><span class="b-muted">车辆</span></div>
+        <div class="b-stat b-secondary"><strong class="b-num b-warn">02</strong><span class="b-muted">费用待核</span></div>
+      </div>
+      <div class="b-work">
+        <div class="b-queue">
+          <div class="b-panel-head"><h3>车队状态队列</h3><span class="b-num b-muted">4</span></div>
+          <table aria-label="车队状态"><thead><tr><th scope="col">车辆</th><th scope="col" class="b-right">成员</th><th scope="col">状态</th></tr></thead><tbody>
+            <tr class="b-selected" aria-current="true"><td><span class="b-num">01</span> 星河</td><td class="b-num b-right">6</td><td class="b-ok">运行</td></tr>
+            <tr><td><span class="b-num">02</span> 山海</td><td class="b-num b-right">8</td><td class="b-ok">运行</td></tr>
+            <tr><td><span class="b-num">03</span> 极光</td><td class="b-num b-right">6</td><td class="b-warn">近限</td></tr>
+            <tr><td><span class="b-num">04</span> 原野</td><td class="b-num b-right">4</td><td class="b-muted">暂停</td></tr>
+          </tbody></table>
+          <p class="b-table-note b-secondary">当前聚焦：星河<br>极光剩余额度 <span class="b-num b-warn">9%</span></p>
+        </div>
+        <div class="b-detail">
+          <div class="b-panel-head"><span class="b-focus">星河 <span class="b-num b-muted">/ 01</span></span><span class="b-ok">运行中</span></div>
+          <div class="b-quota"><div class="b-split"><span>上游 <span class="b-num">5h</span> 窗口</span><span class="b-ok">剩余 <strong class="b-num">68%</strong></span></div><div class="b-meter" role="meter" aria-label="上游 5 小时剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68"><span class="b-meter-fill b-meter-68"></span></div><p class="b-muted">周窗口：上游未提供</p></div>
+          <div class="b-member-head">成员额度 <span class="b-num">3 / 6</span><span class="b-secondary"> · 本月美元</span></div>
+          <table aria-label="星河成员额度，展示 6 人中的 3 人"><thead><tr><th scope="col">成员</th><th scope="col" class="b-right">已用 / 上限</th></tr></thead><tbody>
+            <tr><td>林小满</td><td class="b-num b-right">$12.40 / $50</td></tr>
+            <tr><td>周知远</td><td class="b-num b-right">$28.15 / $50</td></tr>
+            <tr><td>陈一诺</td><td class="b-num b-right">$8.60 / $50</td></tr>
+          </tbody></table>
+        </div>
+      </div>
+      <div class="b-alert"><div><span class="b-warn">△ <span class="b-num">2</span> 笔请求费用未知</span><p class="b-muted"><span class="b-num">#1048 / #1051</span> · 不代表零费用</p></div><button type="button" aria-disabled="true" title="样机，不执行操作">核对请求 ↗</button></div>
+      <footer class="b-strip"><span>方向样机 · 非实时数据</span><span class="b-secondary">操作仅示意</span><span class="b-num">UTC</span></footer>
+    </div>
+  </section>
+  <section class="b-screen" data-view="passenger" hidden aria-label="乘客个人额度控制台">
+    <aside class="b-rail" aria-label="乘客导航（样机）">
+      <div class="b-mark" aria-label="拼车控制室">⊞</div>
+      <nav class="b-nav">
+        <button type="button" aria-current="page" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v15H3zM3 10h18M7 15h5"/></svg>额度</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="4"/><path d="m11 12 9 9m-5-5 3-3m0 6 3-3"/></svg>密钥</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></svg>用量</button>
+      </nav>
+      <div class="b-rail-foot">乘客端</div>
+    </aside>
+    <div class="b-console">
+      <header class="b-top"><h2>我的用量站</h2><span class="b-top-status b-ok"><i class="b-dot" aria-hidden="true"></i>可用</span></header>
+      <div class="b-pass-work">
+        <aside class="b-pass-side"><div><p class="b-muted b-secondary">当前乘客</p><h3>林小满</h3></div><span class="b-ok">星河 <span class="b-num">/ 01</span></span><div class="b-identity-row"><p class="b-muted">我的席位</p><p>标准成员</p><p class="b-num">06 / 06</p></div><div class="b-identity-row"><p class="b-muted">额度口径</p><p>个人月度预算</p><p class="b-muted">与上游窗口<br>分别计算</p></div></aside>
+        <div class="b-detail">
+          <div class="b-budget"><h3>本月剩余额度</h3><strong class="b-balance b-num">$37.60</strong><div class="b-budget-facts"><div><span class="b-muted">本月已用</span><strong class="b-num">$12.40</strong></div><div><span class="b-muted">月度上限</span><strong class="b-num">$50.00</strong></div></div><div class="b-meter" role="meter" aria-label="个人月度剩余额度，美元" aria-valuemin="0" aria-valuemax="50" aria-valuenow="37.6"><span class="b-meter-fill b-meter-75"></span></div><p class="b-reset">下次重置 <span class="b-num">2026-10-01 UTC</span></p></div>
+          <div class="b-key"><div class="b-split"><h3>API Key</h3><span class="b-ok">已启用</span></div><div class="b-key-value"><code class="b-num">sk-demo-****-8f2a</code><button type="button" aria-disabled="true" title="样机密钥，不复制或显示真实凭据">管理密钥 ↗</button></div></div>
+          <div class="b-upstream"><div class="b-split"><h3>上游额度 · <span class="b-num">5h</span></h3><span class="b-ok">剩余 <strong class="b-num">68%</strong></span></div><div class="b-meter" role="meter" aria-label="上游 5 小时剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68"><span class="b-meter-fill b-meter-68"></span></div><p class="b-missing">周窗口：上游未提供</p><p class="b-missing">窗口重置：上游未提供</p></div>
+        </div>
+      </div>
+      <footer class="b-strip"><span>方向样机 · 非实时数据</span><span class="b-secondary">操作仅示意</span><span class="b-num">UTC</span></footer>
+    </div>
+  </section>
+</div>
+</div><footer class="direction-footer"><p>方向样机 · 窄轨导航 · 深色主从监控</p><button class="qmdp-pick-button" data-qmdp-native-handler="true" type="button">选择 B · 信号控制室</button></footer></article><article class="direction" data-design-option="C" data-name="纸上账本"><header class="direction-head"><div class="direction-title"><span class="letter">C</span><h2>纸上账本</h2></div><div class="role-switch" role="group" aria-label="C 样机角色"><button type="button" data-role="admin" aria-pressed="true">管理端</button><button type="button" data-role="passenger" aria-pressed="false">用户端</button></div></header><div class="mock">
+<div class="dir-c">
+  <section data-view="admin" aria-label="管理员运营账本">
+    <header class="c-masthead">
+      <div><p class="c-kicker">拼车 / 运营月刊</p><h2>九月，运营账本</h2></div>
+      <p class="c-edition">2026.09.14<br>管理员 · 样例数据</p>
+    </header>
+    <nav class="c-nav" aria-label="管理章节（只读样机）">
+      <a role="link" aria-disabled="true" aria-current="page">总览</a>
+      <a role="link" aria-disabled="true" data-section="users">一 · 用户</a>
+      <a role="link" aria-disabled="true" data-section="cars">二 · 车辆</a>
+      <a role="link" aria-disabled="true" data-section="reports">三 · 报表</a>
+      <a role="link" aria-disabled="true" data-section="requests">四 · 请求</a>
+      <a role="link" aria-disabled="true" data-section="system">五 · 系统</a>
+    </nav>
+    <div class="c-spread">
+      <div>
+        <p class="c-small">本月已知费用 / USD</p>
+        <span class="c-number c-big">$186.42</span>
+        <p class="c-summary"><span><span class="c-number">24</span> 位用户</span><span>分属 <span class="c-number">4</span> 辆车</span></p>
+      </div>
+      <aside class="c-note" aria-label="费用核对提示">
+        <h3>本期待核对</h3>
+        <p class="c-alert">2 笔请求费用未知</p>
+        <p>未计入左侧金额，不按 $0 处理。</p>
+        <a class="c-entry" role="link" aria-disabled="true" data-section="requests">查看请求明细 →</a>
+      </aside>
+    </div>
+    <div class="c-ledger-heading"><h3>成员用量摘录</h3><span class="c-small">本月 · 已知费用 / USD</span></div>
+    <table aria-label="管理员成员用量样例，展示 24 位用户中的 3 位">
+      <thead><tr><th scope="col">成员</th><th scope="col">所属车辆</th><th scope="col">请求</th><th scope="col">费用</th></tr></thead>
+      <tbody>
+        <tr><td>林舟</td><td>青禾一号</td><td>148</td><td class="c-number">$12.40</td></tr>
+        <tr><td>陈遥</td><td>青禾一号</td><td>96</td><td class="c-number">$8.15</td></tr>
+        <tr><td>周宁</td><td>白露二号</td><td>211</td><td class="c-number">$19.62</td></tr>
+      </tbody>
+    </table>
+    <footer class="c-footer"><span>账期 09.01—09.30 · UTC</span><a class="c-entry" role="link" aria-disabled="true" data-section="users">全部 24 位成员 →</a></footer>
+  </section>
+  <section data-view="passenger" hidden aria-label="乘客个人额度账本">
+    <header class="c-masthead">
+      <div><p class="c-kicker">拼车 / 青禾一号</p><h2>林舟的九月账页</h2></div>
+      <p class="c-edition">2026.09.14<br>乘客 · 样例数据</p>
+    </header>
+    <nav class="c-nav" aria-label="乘客章节（只读样机）">
+      <a role="link" aria-disabled="true" aria-current="page">我的额度</a>
+      <a role="link" aria-disabled="true" data-section="members">一 · 同车成员</a>
+      <a role="link" aria-disabled="true" data-section="api-key">二 · API Key</a>
+      <a role="link" aria-disabled="true" data-section="account">三 · 账户</a>
+    </nav>
+    <div class="c-spread">
+      <div>
+        <p class="c-small">本月剩余额度 / USD</p>
+        <span class="c-number c-big c-balance">$37.60</span>
+        <p class="c-small">限额 <span class="c-number">$50.00</span> / 已用 <span class="c-number">$12.40</span></p>
+      </div>
+      <aside class="c-note" aria-label="可用状态与额度重置">
+        <h3>当前可用</h3>
+        <p>账户正常 · 车辆可用</p>
+        <div class="c-reset"><p>下次额度重置<br><time datetime="2026-10-01T00:00:00Z">2026-10-01 00:00 UTC</time></p></div>
+      </aside>
+    </div>
+    <div class="c-ledger-heading"><h3>同车成员账页</h3><span class="c-small">本月用量 / USD</span></div>
+    <table aria-label="同车成员用量样例摘录">
+      <thead><tr><th scope="col">成员</th><th scope="col">状态</th><th scope="col">已用 / 限额</th></tr></thead>
+      <tbody>
+        <tr><td>林舟 · 我</td><td>可用</td><td class="c-number">$12.40 / $50</td></tr>
+        <tr><td>陈遥</td><td>可用</td><td class="c-number">$8.15 / $50</td></tr>
+      </tbody>
+    </table>
+    <div class="c-access"><a class="c-entry" role="link" aria-disabled="true" data-section="api-key">API Key · 查看与管理 →</a><a class="c-entry" role="link" aria-disabled="true" data-section="account">账户状态 · 正常 →</a></div>
+    <footer class="c-footer"><span>账期 09.01—09.30 · UTC</span><span>个人额度，不是车队余额</span></footer>
+  </section>
+</div>
+</div><footer class="direction-footer"><p>方向样机 · 章节导航 · 开放式用量账本</p><button class="qmdp-pick-button" data-qmdp-native-handler="true" type="button">选择 C · 纸上账本</button></footer></article><article class="direction" data-design-option="D" data-name="随行空间"><header class="direction-head"><div class="direction-title"><span class="letter">D</span><h2>随行空间</h2></div><div class="role-switch" role="group" aria-label="D 样机角色"><button type="button" data-role="admin" aria-pressed="true">管理端</button><button type="button" data-role="passenger" aria-pressed="false">用户端</button></div></header><div class="mock">
+<div class="dir-d">
+  <section data-view="admin" aria-label="管理员工作台方向样机">
+    <div class="d-scroll">
+    <header class="d-head">
+      <div class="d-brand"><span class="d-mark" aria-hidden="true">行</span>随行空间</div>
+      <span class="d-role">管理端 · 只读样机</span>
+    </header>
+    <div class="d-greeting">
+      <div><h2>今天，先安排哪辆车？</h2><p class="d-muted">24 位用户，4 辆车，在这里照看。</p></div>
+      <button type="button" disabled class="d-primary">＋ 创建用户</button>
+    </div>
+    <div class="d-lanes">
+      <article class="d-lane" aria-label="车队管理">
+        <div class="d-line"><h3>安排车队</h3><span class="d-muted">4 辆车</span></div>
+        <div class="d-fleet" aria-label="车辆选择样机">
+          <button type="button" disabled class="d-selected" aria-pressed="true">青山</button>
+          <button type="button" disabled aria-pressed="false">白露</button>
+          <button type="button" disabled aria-pressed="false">松林</button>
+          <button type="button" disabled aria-pressed="false">晚风</button>
+        </div>
+        <div class="d-line"><strong class="d-car-name">青山号</strong><span class="d-status">● 启用中</span></div>
+        <p class="d-members-line">6 位成员 · 2 个上游账号</p>
+        <div class="d-actions">
+          <button type="button" disabled class="d-secondary">分配车辆</button>
+          <button type="button" disabled class="d-secondary">管理这辆车</button>
+        </div>
+      </article>
+      <article class="d-lane d-attention" aria-label="需要留意的请求">
+        <div class="d-line"><h3>这两笔，留意一下</h3><span class="d-count">2</span></div>
+        <div class="d-request">
+          <div class="d-line"><strong>青山号 · 林悦</strong><button type="button" disabled class="d-review" aria-label="查看林悦的费用未知请求">查看</button></div>
+          <p>费用未知 · 请求 #1048</p>
+        </div>
+        <div class="d-request">
+          <div class="d-line"><strong>白露号 · 许知</strong><button type="button" disabled class="d-review" aria-label="查看许知的费用未知请求">查看</button></div>
+          <p>费用未知 · 请求 #1042</p>
+        </div>
+        <p class="d-note">先看请求明细，未知不代表免费。</p>
+      </article>
+    </div>
+    </div>
+    <nav class="d-bottom" aria-label="管理员底部导航样机">
+      <button type="button" disabled class="d-current" aria-current="page">工作台</button>
+      <button type="button" disabled>用户</button>
+      <button type="button" disabled>车辆</button>
+      <button type="button" disabled>请求</button>
+    </nav>
+  </section>
+  <section data-view="passenger" hidden aria-label="乘客工作台方向样机">
+    <div class="d-scroll">
+    <header class="d-head">
+      <div class="d-brand"><span class="d-mark" aria-hidden="true">行</span>随行空间</div>
+      <span class="d-role">乘客端 · 只读样机</span>
+    </header>
+    <div class="d-greeting">
+      <div><h2>林悦，今天可以继续用</h2><p class="d-muted">你在青山号 · 个人状态正常</p></div>
+      <span class="d-status">● 可用</span>
+    </div>
+    <div class="d-lanes">
+      <article class="d-lane" aria-label="个人额度与 API Key">
+        <div class="d-line"><h3>本期还可用</h3><span class="d-muted">USD</span></div>
+        <div class="d-quota"><strong class="d-amount">$37.60</strong></div>
+        <div class="d-line d-muted"><span>已用 $12.40</span><span>额度 $50.00</span></div>
+        <div class="d-meter" role="meter" aria-label="本期已用额度（美元）" aria-valuemin="0" aria-valuemax="50" aria-valuenow="12.4"><div class="d-meter-fill"></div></div>
+        <p class="d-muted">重置：2026-10-01 00:00 UTC</p>
+        <button type="button" disabled class="d-key"><span>管理我的 API Key</span><span aria-hidden="true">↗</span></button>
+      </article>
+      <article class="d-lane" aria-label="同车成员与账号状态">
+        <div class="d-line"><h3>同车，一起用</h3><span class="d-muted">青山号</span></div>
+        <div class="d-companions" aria-hidden="true"><span class="d-avatar">林</span><span class="d-avatar">陈</span><span class="d-avatar">周</span><span class="d-avatar">+3</span></div>
+        <div class="d-line"><span class="d-muted">你和另外 5 位成员</span><button type="button" disabled class="d-text-button">看成员</button></div>
+        <div class="d-account">
+          <div class="d-line"><strong>上游账号</strong><button type="button" disabled class="d-text-button">看状态</button></div>
+          <p class="d-muted">Codex · 青山 01 <span class="d-status">正常</span></p>
+          <p class="d-muted">Claude · 青山 02 <span class="d-status">正常</span></p>
+        </div>
+      </article>
+    </div>
+    </div>
+    <nav class="d-bottom" aria-label="乘客底部导航样机">
+      <button type="button" disabled class="d-current" aria-current="page">我的车</button>
+      <button type="button" disabled>API Key</button>
+      <button type="button" disabled>成员</button>
+      <button type="button" disabled>账号</button>
+    </nav>
+  </section>
+</div>
+</div><footer class="direction-footer"><p>方向样机 · 底部导航 · 任务优先工作区</p><button class="qmdp-pick-button" data-qmdp-native-handler="true" type="button">选择 D · 随行空间</button></footer></article></div><section class="controls" aria-labelledby="dials-title" data-qmdp-dials><h2 id="dials-title">把方向调成你想要的样子</h2><div class="dial-grid"><label class="dial"><b>视觉冒险度<output data-qmdp-output="variance">6</output></b><input type="range" data-qmdp-dial="variance" min="1" max="10" value="6"><small>1 稳妥克制 → 10 大胆鲜明</small></label><label class="dial"><b>动效强度<output data-qmdp-output="motion">3</output></b><input type="range" data-qmdp-dial="motion" min="1" max="10" value="3"><small>1 近乎静态 → 10 强烈动效</small></label><label class="dial"><b>信息密度<output data-qmdp-output="density">6</output></b><input type="range" data-qmdp-dial="density" min="1" max="10" value="6"><small>1 宽松留白 → 10 紧凑高密</small></label></div></section><section class="explanations"><h2>四个方向，区别不止颜色</h2><div class="explain-grid"><div><h3>A · 晴昼工作台</h3><p>当代工具感。冷白、石墨与克制蓝色；无衬线字体配合分组侧栏，将车队运营与低频设置分开。推荐：能承载管理端多页面，也能为用户端自然精简导航。</p></div><div><h3>B · 信号控制室</h3><p>工业监控感。炭黑、琥珀与等宽读数；窄轨导航搭配主从分区，把异常、车辆队列和详情并排呈现。适合高频排查与密集操作。</p></div><div><h3>C · 纸上账本</h3><p>印刷账本感。暖纸白、墨黑与陶土色；衬线金额配系统中文，章节式导航与开放列排版。适合安静查看额度、对账与长时间阅读。</p></div><div><h3>D · 随行空间</h3><p>掌上工具感。浅鼠尾草色与柔和圆角；人文无衬线、任务分区与底部导航。优先呈现当前要做的事，用户端更轻松，移动布局更直接。</p></div></div><p>拨盘作为正式实现的设计参数回传，不会即时改写样机。也可以在确认时写混搭建议，例如“要 A 的布局，D 的圆角”。</p><details class="scope"><summary>查看本次完整改版范围</summary><p>管理端：概览、用户管理及用户详情、车辆管理及车辆详情、用量报表、请求明细及事件展开、价格目录、数据保留与清理确认、审计记录、修改密码。</p><p>用户端：概览、成员用量、账号状态及配额窗口、API Key 创建与撤销、修改密码。公共：登录、强制改密、加载、空态、错误和窄屏导航。</p><p>这轮用两端代表页面选择视觉与布局。选定后再分步落实全部页面；保留现有权限、API、安全门禁与记账含义，不新增充值或支付功能。</p></details></section></main><footer class="preview-footer">方向阶段样机 · 最终采用 B 布局 + Claude 风格，正式实现见 DESIGN.md</footer><dialog class="preview-dialog" id="selection-dialog" aria-labelledby="selection-title"><h2 id="selection-title">确认设计方向</h2><p id="selection-description"></p><label for="adjustments">调整建议（可选）</label><textarea id="adjustments" placeholder="例如：采用 A 的布局，圆角更柔和一些…"></textarea><p class="error-message" id="selection-error" role="alert" hidden></p><div class="dialog-actions"><button id="cancel-selection" type="button">取消</button><button id="confirm-selection" class="confirm-send" type="button">确认并回传</button></div></dialog><div class="preview-toast" id="selection-toast" role="status" hidden></div>
+<!-- QIAOMU_DESIGN_PREVIEW_BRIDGE: This page owns the complete selection bridge. -->
+<script>
+const cards=[...document.querySelectorAll('.direction')];
+const dialog=document.querySelector('#selection-dialog');
+let pending=null, trigger=null, sending=false;
+const values=()=>Object.fromEntries([...document.querySelectorAll('[data-qmdp-dial]')].map(x=>[x.dataset.qmdpDial,Number(x.value)]));
+const summary=v=>`视觉冒险度 ${v.variance} / 动效强度 ${v.motion} / 信息密度 ${v.density}`;
+function setRole(card,role){card.querySelectorAll('[data-view]').forEach(x=>x.hidden=x.dataset.view!==role);card.querySelectorAll('[data-role]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.role===role)));}
+function loadRoles(){const q=new URL(location.href).searchParams;cards.forEach(c=>setRole(c,q.get(c.dataset.designOption.toLowerCase())==='passenger'?'passenger':'admin'));}
+cards.forEach(card=>{card.querySelectorAll('[data-role]').forEach(b=>b.addEventListener('click',()=>{setRole(card,b.dataset.role);const url=new URL(location.href);url.searchParams.set(card.dataset.designOption.toLowerCase(),b.dataset.role);history.pushState({},'',url);}));card.querySelector('.qmdp-pick-button').addEventListener('click',e=>openChoice(card,e.currentTarget));});
+loadRoles();addEventListener('popstate',loadRoles);
+document.querySelectorAll('[data-qmdp-dial]').forEach(input=>input.addEventListener('input',()=>{document.querySelector(`[data-qmdp-output="${input.dataset.qmdpDial}"]`).value=input.value;}));
+function openChoice(card,button){if(sending||dialog.open)return;trigger=button;pending={id:card.dataset.designOption,name:card.dataset.name,label:`选 ${card.dataset.designOption}：${card.dataset.name}`,notes:'管理端与用户端全部页面重设计',dials:values()};document.querySelector('#selection-title').textContent=pending.label;document.querySelector('#selection-description').textContent=summary(pending.dials);document.querySelector('#selection-error').hidden=true;dialog.showModal();document.querySelector('#adjustments').focus();}
+document.querySelector('#cancel-selection').addEventListener('click',()=>dialog.close());
+dialog.addEventListener('cancel',e=>{if(sending)e.preventDefault();});
+dialog.addEventListener('close',()=>trigger?.focus());
+addEventListener('keydown',e=>{if(e.ctrlKey||e.metaKey||e.altKey||dialog.open||e.target.closest('input,textarea,select,[contenteditable]'))return;const i='1234'.indexOf(e.key);if(i>=0){e.preventDefault();openChoice(cards[i],cards[i].querySelector('.qmdp-pick-button'));}});
+document.querySelector('#confirm-selection').addEventListener('click',async()=>{if(!pending||sending)return;const payload={...pending,adjustments:document.querySelector('#adjustments').value.trim()};const error=document.querySelector('#selection-error');const confirm=document.querySelector('#confirm-selection');const cancel=document.querySelector('#cancel-selection');error.hidden=true;
+if(location.protocol==='file:'){error.hidden=false;error.textContent=`当前为静态预览，不会自动回传。请在对话中发送：${payload.label}；${summary(payload.dials)}；建议：${payload.adjustments||'无'}`;try{await navigator.clipboard.writeText(error.textContent);}catch{}return;}
+sending=true;confirm.disabled=true;cancel.disabled=true;confirm.textContent='回传中…';try{const res=await fetch('/api/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)throw Error('选择未能回传，请检查预览服务后重试。');const data=await res.json();if(!data.ok)throw Error('选择未能回传，请重试。');cards.forEach(c=>c.classList.toggle('is-selected',c.dataset.designOption===payload.id));document.querySelector('#bridge-status').textContent=`已选择 ${payload.id} · 已回传`;const toast=document.querySelector('#selection-toast');toast.textContent=`已选择 ${payload.name}，已回传`;toast.hidden=false;dialog.close();}catch(e){error.textContent=e.message||'网络不可用，请检查预览服务后重试。';error.hidden=false;}finally{sending=false;confirm.disabled=false;cancel.disabled=false;confirm.textContent='确认并回传';}});
+</script></body></html>

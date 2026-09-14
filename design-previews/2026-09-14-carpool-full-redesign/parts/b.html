@@ -1,0 +1,167 @@
+<style>
+.dir-b{--b-bg:#151617;--b-panel:#1b1d1e;--b-rule:#484b4d;--b-muted:#b2b6b8;--b-text:#e1e3e3;--b-cyan:#80d9df;--b-amber:#f3bd62;container:signal-b / inline-size;width:100%;height:450px;background:var(--b-bg);color:var(--b-text);font:12px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;text-align:left;overflow:auto;color-scheme:dark}
+.dir-b,.dir-b *{box-sizing:border-box}
+.dir-b [hidden]{display:none!important}
+.dir-b h2,.dir-b h3,.dir-b p{margin:0}
+.dir-b h2{font-size:17px;font-weight:600;letter-spacing:.04em}
+.dir-b h3{font-size:12px;font-weight:600}
+.dir-b .b-num{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.dir-b .b-muted{color:var(--b-muted)}
+.dir-b .b-ok{color:var(--b-cyan)}
+.dir-b .b-warn{color:var(--b-amber)}
+.dir-b .b-screen{display:grid;grid-template-columns:66px minmax(0,1fr);min-height:450px}
+.dir-b .b-rail{border-right:1px solid var(--b-rule);display:flex;flex-direction:column;align-items:stretch;background:#191a1b}
+.dir-b .b-mark{height:48px;display:grid;place-items:center;border-bottom:1px solid var(--b-rule);font-size:22px;font-weight:600;color:var(--b-cyan)}
+.dir-b .b-nav{display:flex;flex-direction:column;gap:0;padding-top:12px}
+.dir-b button{font:inherit;color:inherit;border:1px solid var(--b-rule);border-radius:2px;background:#242627;min-height:28px;padding:3px 9px;box-shadow:none;cursor:default}
+.dir-b button:focus-visible{outline:2px solid var(--b-cyan);outline-offset:2px}
+.dir-b button:hover{background:#303335}
+.dir-b .b-nav button{border:0;border-radius:0;min-height:65px;padding:8px 2px;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--b-muted)}
+.dir-b .b-nav button[aria-current="page"]{background:#303334;color:var(--b-cyan);box-shadow:inset 0 1px var(--b-rule),inset 0 -1px var(--b-rule)}
+.dir-b .b-icon{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:square;stroke-linejoin:miter}
+.dir-b .b-rail-foot{margin-top:auto;padding:12px 0;text-align:center;color:var(--b-muted)}
+.dir-b .b-console{display:flex;flex-direction:column;min-width:0}
+.dir-b .b-top{height:48px;border-bottom:1px solid var(--b-rule);padding:0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dir-b .b-top-status{display:flex;gap:6px;align-items:center;white-space:nowrap}
+.dir-b .b-dot{display:inline-block;width:6px;height:6px;background:var(--b-cyan)}
+.dir-b .b-summary{display:grid;grid-template-columns:1fr 1fr 1.4fr;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-stat{padding:7px 12px;border-right:1px solid var(--b-rule);display:flex;gap:10px;align-items:baseline}
+.dir-b .b-stat:last-child{border-right:0}
+.dir-b .b-stat strong{font-size:25px;font-weight:500}
+.dir-b .b-work{display:grid;grid-template-columns:39% minmax(0,1fr);flex:1;min-height:0}
+.dir-b .b-queue{border-right:1px solid var(--b-rule);background:#191b1c;min-width:0}
+.dir-b .b-panel-head{min-height:36px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px;border-bottom:1px solid var(--b-rule)}
+.dir-b table{color:var(--b-text);width:100%;border-collapse:collapse;font-size:12px;line-height:1.5}
+.dir-b th{font-weight:400;color:var(--b-muted);text-align:left;background:#1b1d1e}
+.dir-b th,.dir-b td{padding:7px 9px;border-bottom:1px solid #36393a;white-space:nowrap}
+.dir-b .b-right{text-align:right}
+.dir-b .b-selected{background:#303637}
+.dir-b .b-selected td:first-child{color:var(--b-cyan)}
+.dir-b .b-table-note{padding:10px;color:var(--b-muted)}
+.dir-b .b-detail{min-width:0}
+.dir-b .b-detail .b-panel-head{background:#242728}
+.dir-b .b-focus{font-size:14px;font-weight:600}
+.dir-b .b-quota{padding:10px;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-split{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.dir-b .b-meter{height:6px;background:#3c4042;margin:7px 0 5px;overflow:hidden}
+.dir-b .b-meter-fill{display:block;height:100%;background:var(--b-cyan)}
+.dir-b .b-meter-68{width:68%}
+.dir-b .b-meter-75{width:75.2%}
+.dir-b .b-member-head{padding:6px 10px 0;color:var(--b-muted)}
+.dir-b .b-alert{border-top:1px solid var(--b-rule);background:#2c261c;padding:7px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dir-b .b-alert button{border-color:#a17d43;color:var(--b-amber);background:transparent;white-space:nowrap}
+.dir-b .b-strip{border-top:1px solid var(--b-rule);min-height:28px;display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 10px;color:var(--b-muted);font-size:12px}
+.dir-b .b-pass-work{display:grid;grid-template-columns:145px minmax(0,1fr);flex:1}
+.dir-b .b-pass-side{border-right:1px solid var(--b-rule);padding:12px 10px;background:#191b1c}
+.dir-b .b-pass-side h3{font-size:16px;margin:3px 0 8px}
+.dir-b .b-identity-row{border-top:1px solid var(--b-rule);padding:10px 0;margin-top:12px}
+.dir-b .b-identity-row p+p{margin-top:4px}
+.dir-b .b-budget{padding:13px 14px 10px;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-balance{font-size:40px;font-weight:500;line-height:1.2;margin:4px 0 8px;display:block;color:var(--b-cyan)}
+.dir-b .b-budget-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.dir-b .b-budget-facts strong{font-size:17px;font-weight:500;display:block}
+.dir-b .b-reset{margin-top:8px;color:var(--b-muted)}
+.dir-b .b-key{padding:9px 14px;border-bottom:1px solid var(--b-rule)}
+.dir-b .b-key-value{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:5px}
+.dir-b .b-key code{font-size:13px;overflow-wrap:anywhere}
+.dir-b .b-upstream{padding:9px 14px}
+.dir-b .b-upstream .b-missing{margin-top:5px;color:var(--b-muted)}
+@container signal-b (max-width:420px){
+.dir-b .b-screen{font-size:14px}
+.dir-b h3,.dir-b table,.dir-b .b-strip,.dir-b .b-key code{font-size:14px}
+.dir-b .b-top{height:auto;min-height:52px;padding:8px 10px;flex-wrap:wrap;gap:3px}
+.dir-b h2{font-size:16px}
+.dir-b .b-secondary{display:none}
+.dir-b .b-summary{grid-template-columns:1fr 1fr}
+.dir-b .b-stat{padding:7px 10px;gap:7px}
+.dir-b .b-stat:nth-child(2){border-right:0}
+.dir-b .b-stat strong{font-size:24px}
+.dir-b .b-work{grid-template-columns:minmax(0,1fr)}
+.dir-b .b-queue{border-right:0;border-bottom:1px solid var(--b-rule)}
+.dir-b th,.dir-b td{padding:7px 10px}
+.dir-b .b-panel-head{min-height:39px}
+.dir-b .b-top{order:0}
+.dir-b .b-summary{order:1}
+.dir-b .b-alert{order:2;align-items:flex-start;flex-direction:column;padding:10px}
+.dir-b .b-work{order:3}
+.dir-b .b-strip{order:4}
+.dir-b button{min-height:40px}
+.dir-b .b-strip{flex-wrap:wrap;padding:8px 10px}
+.dir-b .b-pass-work{grid-template-columns:minmax(0,1fr)}
+.dir-b .b-pass-side{border-right:0;border-bottom:1px solid var(--b-rule);padding:9px 10px;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.dir-b .b-pass-side h3{font-size:14px;margin:0}
+.dir-b .b-pass-side .b-identity-row{display:none}
+.dir-b .b-budget,.dir-b .b-key,.dir-b .b-upstream{padding:11px 10px}
+.dir-b .b-balance{font-size:36px}
+.dir-b .b-reset .b-num{display:block}
+.dir-b .b-key-value{flex-wrap:wrap}
+}
+</style>
+<div class="dir-b">
+  <section class="b-screen" data-view="admin" aria-label="管理员信号控制室">
+    <aside class="b-rail" aria-label="管理导航（样机）">
+      <div class="b-mark" aria-label="拼车控制室">⊞</div>
+      <nav class="b-nav">
+        <button type="button" aria-current="page" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h7v6H3zM14 5h7v6h-7zM3 15h7v5H3zM14 15h7v5h-7z"/></svg>车队</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="3"/><path d="M5 21v-5l4-3h6l4 3v5"/></svg>成员</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/></svg>账单</button>
+      </nav>
+      <div class="b-rail-foot">管理端</div>
+    </aside>
+    <div class="b-console">
+      <header class="b-top"><h2>信号控制室</h2><span class="b-top-status"><i class="b-dot" aria-hidden="true"></i>调度正常<span class="b-secondary b-num"> / 04</span></span></header>
+      <div class="b-summary" aria-label="车队概况">
+        <div class="b-stat"><strong class="b-num">24</strong><span class="b-muted">用户</span></div>
+        <div class="b-stat"><strong class="b-num">4</strong><span class="b-muted">车辆</span></div>
+        <div class="b-stat b-secondary"><strong class="b-num b-warn">02</strong><span class="b-muted">费用待核</span></div>
+      </div>
+      <div class="b-work">
+        <div class="b-queue">
+          <div class="b-panel-head"><h3>车队状态队列</h3><span class="b-num b-muted">4</span></div>
+          <table aria-label="车队状态"><thead><tr><th scope="col">车辆</th><th scope="col" class="b-right">成员</th><th scope="col">状态</th></tr></thead><tbody>
+            <tr class="b-selected" aria-current="true"><td><span class="b-num">01</span> 星河</td><td class="b-num b-right">6</td><td class="b-ok">运行</td></tr>
+            <tr><td><span class="b-num">02</span> 山海</td><td class="b-num b-right">8</td><td class="b-ok">运行</td></tr>
+            <tr><td><span class="b-num">03</span> 极光</td><td class="b-num b-right">6</td><td class="b-warn">近限</td></tr>
+            <tr><td><span class="b-num">04</span> 原野</td><td class="b-num b-right">4</td><td class="b-muted">暂停</td></tr>
+          </tbody></table>
+          <p class="b-table-note b-secondary">当前聚焦：星河<br>极光剩余额度 <span class="b-num b-warn">9%</span></p>
+        </div>
+        <div class="b-detail">
+          <div class="b-panel-head"><span class="b-focus">星河 <span class="b-num b-muted">/ 01</span></span><span class="b-ok">运行中</span></div>
+          <div class="b-quota"><div class="b-split"><span>上游 <span class="b-num">5h</span> 窗口</span><span class="b-ok">剩余 <strong class="b-num">68%</strong></span></div><div class="b-meter" role="meter" aria-label="上游 5 小时剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68"><span class="b-meter-fill b-meter-68"></span></div><p class="b-muted">周窗口：上游未提供</p></div>
+          <div class="b-member-head">成员额度 <span class="b-num">3 / 6</span><span class="b-secondary"> · 本月美元</span></div>
+          <table aria-label="星河成员额度，展示 6 人中的 3 人"><thead><tr><th scope="col">成员</th><th scope="col" class="b-right">已用 / 上限</th></tr></thead><tbody>
+            <tr><td>林小满</td><td class="b-num b-right">$12.40 / $50</td></tr>
+            <tr><td>周知远</td><td class="b-num b-right">$28.15 / $50</td></tr>
+            <tr><td>陈一诺</td><td class="b-num b-right">$8.60 / $50</td></tr>
+          </tbody></table>
+        </div>
+      </div>
+      <div class="b-alert"><div><span class="b-warn">△ <span class="b-num">2</span> 笔请求费用未知</span><p class="b-muted"><span class="b-num">#1048 / #1051</span> · 不代表零费用</p></div><button type="button" aria-disabled="true" title="样机，不执行操作">核对请求 ↗</button></div>
+      <footer class="b-strip"><span>方向样机 · 非实时数据</span><span class="b-secondary">操作仅示意</span><span class="b-num">UTC</span></footer>
+    </div>
+  </section>
+  <section class="b-screen" data-view="passenger" hidden aria-label="乘客个人额度控制台">
+    <aside class="b-rail" aria-label="乘客导航（样机）">
+      <div class="b-mark" aria-label="拼车控制室">⊞</div>
+      <nav class="b-nav">
+        <button type="button" aria-current="page" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v15H3zM3 10h18M7 15h5"/></svg>额度</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="4"/><path d="m11 12 9 9m-5-5 3-3m0 6 3-3"/></svg>密钥</button>
+        <button type="button" aria-disabled="true" title="样机，不执行操作"><svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></svg>用量</button>
+      </nav>
+      <div class="b-rail-foot">乘客端</div>
+    </aside>
+    <div class="b-console">
+      <header class="b-top"><h2>我的用量站</h2><span class="b-top-status b-ok"><i class="b-dot" aria-hidden="true"></i>可用</span></header>
+      <div class="b-pass-work">
+        <aside class="b-pass-side"><div><p class="b-muted b-secondary">当前乘客</p><h3>林小满</h3></div><span class="b-ok">星河 <span class="b-num">/ 01</span></span><div class="b-identity-row"><p class="b-muted">我的席位</p><p>标准成员</p><p class="b-num">06 / 06</p></div><div class="b-identity-row"><p class="b-muted">额度口径</p><p>个人月度预算</p><p class="b-muted">与上游窗口<br>分别计算</p></div></aside>
+        <div class="b-detail">
+          <div class="b-budget"><h3>本月剩余额度</h3><strong class="b-balance b-num">$37.60</strong><div class="b-budget-facts"><div><span class="b-muted">本月已用</span><strong class="b-num">$12.40</strong></div><div><span class="b-muted">月度上限</span><strong class="b-num">$50.00</strong></div></div><div class="b-meter" role="meter" aria-label="个人月度剩余额度，美元" aria-valuemin="0" aria-valuemax="50" aria-valuenow="37.6"><span class="b-meter-fill b-meter-75"></span></div><p class="b-reset">下次重置 <span class="b-num">2026-10-01 UTC</span></p></div>
+          <div class="b-key"><div class="b-split"><h3>API Key</h3><span class="b-ok">已启用</span></div><div class="b-key-value"><code class="b-num">sk-demo-****-8f2a</code><button type="button" aria-disabled="true" title="样机密钥，不复制或显示真实凭据">管理密钥 ↗</button></div></div>
+          <div class="b-upstream"><div class="b-split"><h3>上游额度 · <span class="b-num">5h</span></h3><span class="b-ok">剩余 <strong class="b-num">68%</strong></span></div><div class="b-meter" role="meter" aria-label="上游 5 小时剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68"><span class="b-meter-fill b-meter-68"></span></div><p class="b-missing">周窗口：上游未提供</p><p class="b-missing">窗口重置：上游未提供</p></div>
+        </div>
+      </div>
+      <footer class="b-strip"><span>方向样机 · 非实时数据</span><span class="b-secondary">操作仅示意</span><span class="b-num">UTC</span></footer>
+    </div>
+  </section>
+</div>

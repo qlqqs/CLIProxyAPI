@@ -1,0 +1,14 @@
+{
+  "id": "B",
+  "label": "选 B：信号控制室",
+  "name": "信号控制室",
+  "notes": "管理端与用户端全部页面重设计",
+  "dials": {
+    "variance": 6,
+    "motion": 3,
+    "density": 6
+  },
+  "adjustments": "但用当前布局，样式采用A的，更加柔和一点",
+  "source": "preview",
+  "receivedAt": "2026-09-14T11:09:01.515Z"
+}

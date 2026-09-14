@@ -1,0 +1,138 @@
+<style>
+.dir-c {
+  --c-paper: #f5f0e5;
+  --c-ink: #302d27;
+  --c-rust: #96462f;
+  --c-rule: #b9afa0;
+  container: ledger-c / inline-size;
+  width: 100%;
+  min-height: 450px;
+  background: var(--c-paper);
+  color: var(--c-ink);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-style: normal;
+  text-align: left;
+}
+.dir-c *, .dir-c *::before, .dir-c *::after { box-sizing: border-box; }
+.dir-c [hidden] { display: none !important; }
+.dir-c section[data-view] { padding: 14px 28px 10px; }
+.dir-c h2, .dir-c h3, .dir-c p { margin: 0; }
+.dir-c h2 { font-size: 25px; font-weight: 600; letter-spacing: .06em; line-height: 1.4; }
+.dir-c h3 { font-size: 14px; font-weight: 600; }
+.dir-c .c-masthead { display: flex; justify-content: space-between; align-items: end; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--c-ink); }
+.dir-c .c-edition { font-size: 12px; text-align: right; }
+.dir-c .c-kicker { font-size: 12px; color: var(--c-rust); letter-spacing: .08em; margin-bottom: 3px; }
+.dir-c .c-nav { display: flex; flex-wrap: wrap; gap: 5px 20px; padding: 9px 0; border-bottom: 1px solid var(--c-rule); font-size: 12px; }
+.dir-c .c-nav a { color: inherit; text-decoration: none; cursor: default; }
+.dir-c .c-nav [aria-current] { color: var(--c-rust); font-weight: 600; }
+.dir-c .c-number { font-family: Georgia, "Times New Roman", "DejaVu Serif", serif; font-style: normal; font-weight: 400; font-variant-numeric: lining-nums tabular-nums; white-space: nowrap; }
+.dir-c .c-spread { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(150px, 1fr); gap: 28px; padding: 10px 0 8px; }
+.dir-c .c-big { display: block; font-size: 65px; line-height: 1.05; margin: 3px 0 7px; }
+.dir-c .c-small { font-size: 12px; }
+.dir-c .c-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 12px; }
+.dir-c .c-summary .c-number { font-size: 23px; }
+.dir-c .c-note { padding-top: 3px; }
+.dir-c .c-note h3 { border-top: 1px solid var(--c-ink); padding-top: 8px; margin-bottom: 6px; }
+.dir-c .c-note p { font-size: 12px; margin-bottom: 8px; }
+.dir-c .c-alert { color: var(--c-rust); }
+.dir-c .c-entry { display: inline-block; color: var(--c-rust); font-size: 12px; text-decoration: underline; text-underline-offset: 4px; cursor: default; }
+.dir-c .c-ledger-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; border-top: 1px solid var(--c-ink); }
+.dir-c table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dir-c th { font-weight: 400; text-align: left; }
+.dir-c th, .dir-c td { padding: 4px 0; border-bottom: 1px solid var(--c-rule); }
+.dir-c th:last-child, .dir-c td:last-child { text-align: right; }
+.dir-c td.c-number { font-size: 17px; }
+.dir-c .c-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; font-size: 12px; margin-top: 8px; }
+.dir-c .c-balance { color: var(--c-rust); }
+.dir-c .c-reset { border-top: 1px solid var(--c-rule); padding-top: 9px; margin-top: 8px; }
+.dir-c .c-access { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+@container ledger-c (max-width: 420px) {
+  .dir-c section[data-view] { padding: 18px; }
+  .dir-c .c-masthead { align-items: start; gap: 10px; }
+  .dir-c h2 { font-size: 23px; }
+  .dir-c .c-edition { max-width: 120px; }
+  .dir-c .c-edition, .dir-c .c-kicker, .dir-c .c-nav, .dir-c .c-small,
+  .dir-c .c-note p, .dir-c .c-entry, .dir-c table, .dir-c .c-footer { font-size: 14px; }
+  .dir-c .c-nav { gap: 8px 16px; padding: 12px 0; }
+  .dir-c .c-spread { grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px 0; }
+  .dir-c .c-big { font-size: 62px; }
+  .dir-c .c-note h3 { padding-top: 12px; }
+  .dir-c .c-note p { margin-bottom: 10px; }
+  .dir-c th, .dir-c td { padding: 9px 0; }
+  .dir-c .c-ledger-heading { flex-wrap: wrap; gap: 4px; }
+  .dir-c .c-footer { margin-top: 14px; }
+}
+</style>
+<div class="dir-c">
+  <section data-view="admin" aria-label="管理员运营账本">
+    <header class="c-masthead">
+      <div><p class="c-kicker">拼车 / 运营月刊</p><h2>九月，运营账本</h2></div>
+      <p class="c-edition">2026.09.14<br>管理员 · 样例数据</p>
+    </header>
+    <nav class="c-nav" aria-label="管理章节（只读样机）">
+      <a role="link" aria-disabled="true" aria-current="page">总览</a>
+      <a role="link" aria-disabled="true" data-section="users">一 · 用户</a>
+      <a role="link" aria-disabled="true" data-section="cars">二 · 车辆</a>
+      <a role="link" aria-disabled="true" data-section="reports">三 · 报表</a>
+      <a role="link" aria-disabled="true" data-section="requests">四 · 请求</a>
+      <a role="link" aria-disabled="true" data-section="system">五 · 系统</a>
+    </nav>
+    <div class="c-spread">
+      <div>
+        <p class="c-small">本月已知费用 / USD</p>
+        <span class="c-number c-big">$186.42</span>
+        <p class="c-summary"><span><span class="c-number">24</span> 位用户</span><span>分属 <span class="c-number">4</span> 辆车</span></p>
+      </div>
+      <aside class="c-note" aria-label="费用核对提示">
+        <h3>本期待核对</h3>
+        <p class="c-alert">2 笔请求费用未知</p>
+        <p>未计入左侧金额，不按 $0 处理。</p>
+        <a class="c-entry" role="link" aria-disabled="true" data-section="requests">查看请求明细 →</a>
+      </aside>
+    </div>
+    <div class="c-ledger-heading"><h3>成员用量摘录</h3><span class="c-small">本月 · 已知费用 / USD</span></div>
+    <table aria-label="管理员成员用量样例，展示 24 位用户中的 3 位">
+      <thead><tr><th scope="col">成员</th><th scope="col">所属车辆</th><th scope="col">请求</th><th scope="col">费用</th></tr></thead>
+      <tbody>
+        <tr><td>林舟</td><td>青禾一号</td><td>148</td><td class="c-number">$12.40</td></tr>
+        <tr><td>陈遥</td><td>青禾一号</td><td>96</td><td class="c-number">$8.15</td></tr>
+        <tr><td>周宁</td><td>白露二号</td><td>211</td><td class="c-number">$19.62</td></tr>
+      </tbody>
+    </table>
+    <footer class="c-footer"><span>账期 09.01—09.30 · UTC</span><a class="c-entry" role="link" aria-disabled="true" data-section="users">全部 24 位成员 →</a></footer>
+  </section>
+  <section data-view="passenger" hidden aria-label="乘客个人额度账本">
+    <header class="c-masthead">
+      <div><p class="c-kicker">拼车 / 青禾一号</p><h2>林舟的九月账页</h2></div>
+      <p class="c-edition">2026.09.14<br>乘客 · 样例数据</p>
+    </header>
+    <nav class="c-nav" aria-label="乘客章节（只读样机）">
+      <a role="link" aria-disabled="true" aria-current="page">我的额度</a>
+      <a role="link" aria-disabled="true" data-section="members">一 · 同车成员</a>
+      <a role="link" aria-disabled="true" data-section="api-key">二 · API Key</a>
+      <a role="link" aria-disabled="true" data-section="account">三 · 账户</a>
+    </nav>
+    <div class="c-spread">
+      <div>
+        <p class="c-small">本月剩余额度 / USD</p>
+        <span class="c-number c-big c-balance">$37.60</span>
+        <p class="c-small">限额 <span class="c-number">$50.00</span> / 已用 <span class="c-number">$12.40</span></p>
+      </div>
+      <aside class="c-note" aria-label="可用状态与额度重置">
+        <h3>当前可用</h3>
+        <p>账户正常 · 车辆可用</p>
+        <div class="c-reset"><p>下次额度重置<br><time datetime="2026-10-01T00:00:00Z">2026-10-01 00:00 UTC</time></p></div>
+      </aside>
+    </div>
+    <div class="c-ledger-heading"><h3>同车成员账页</h3><span class="c-small">本月用量 / USD</span></div>
+    <table aria-label="同车成员用量样例摘录">
+      <thead><tr><th scope="col">成员</th><th scope="col">状态</th><th scope="col">已用 / 限额</th></tr></thead>
+      <tbody>
+        <tr><td>林舟 · 我</td><td>可用</td><td class="c-number">$12.40 / $50</td></tr>
+        <tr><td>陈遥</td><td>可用</td><td class="c-number">$8.15 / $50</td></tr>
+      </tbody>
+    </table>
+    <div class="c-access"><a class="c-entry" role="link" aria-disabled="true" data-section="api-key">API Key · 查看与管理 →</a><a class="c-entry" role="link" aria-disabled="true" data-section="account">账户状态 · 正常 →</a></div>
+    <footer class="c-footer"><span>账期 09.01—09.30 · UTC</span><span>个人额度，不是车队余额</span></footer>
+  </section>
+</div>

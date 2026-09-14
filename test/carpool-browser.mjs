@@ -26,6 +26,8 @@ async function login(page, credentials) {
   await page.locator('#logout').waitFor();
 }
 async function nav(page, route) {
+  const toggle = page.locator('#nav-toggle');
+  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
   await page.locator(`[data-route="${route}"]`).click();
   await page.locator('#content .loading').waitFor({ state: 'detached' });
 }

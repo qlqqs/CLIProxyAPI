@@ -132,8 +132,8 @@ function periodControl() {
   </div>`;
 }
 
-function bindPeriod() {
-  document.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
+function bindPeriod(content = document) {
+  content.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
     state.period = button.dataset.period;
     renderRoute();
   }));
@@ -215,12 +215,68 @@ function openDialog(title, body, wide = false) {
   return dialog;
 }
 
+function closeEntityPanels(root = document) {
+  root.querySelectorAll("dialog.entity-panel").forEach(dialog => {
+    dialog.querySelectorAll(".secret-box").forEach(node => { node.textContent = ""; });
+    dialog.close();
+    dialog.replaceChildren();
+    dialog.remove();
+  });
+}
+
+function openEntityPanel(title, body) {
+  const slot = document.querySelector("#content .entity-detail-slot");
+  if (!slot) return openDialog(title, body, true);
+  const trigger = document.activeElement;
+  closeEntityPanels(slot);
+  const placeholder = slot.querySelector("[data-entity-empty]");
+  if (placeholder) placeholder.hidden = true;
+  const dialog = document.createElement("dialog");
+  dialog.className = "entity-panel";
+  dialog.setAttribute("aria-modal", "false");
+  slot.append(dialog);
+  dialog.addEventListener("close", () => {
+    const current = slot.querySelector("dialog.entity-panel") === dialog;
+    dialog.querySelectorAll(".secret-box").forEach(node => { node.textContent = ""; });
+    dialog.replaceChildren();
+    dialog.remove();
+    if (current) {
+      if (placeholder) placeholder.hidden = false;
+      slot.closest(".entity-workspace")?.querySelectorAll("tr.is-selected").forEach(row => row.classList.remove("is-selected"));
+      if (trigger?.isConnected) trigger.focus();
+    }
+  }, { once: true });
+  dialog.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !event.defaultPrevented) {
+      event.preventDefault();
+      dialog.close();
+    }
+  });
+  setDialogContent(dialog, title, body);
+  dialog.show();
+  dialog.querySelector("[data-dialog-close]").focus();
+  return dialog;
+}
+
+function selectEntityRow(content, button) {
+  content.querySelectorAll(".entity-list tr.is-selected").forEach(row => row.classList.remove("is-selected"));
+  button.closest("tr")?.classList.add("is-selected");
+}
+
+function entityEmptyMarkup(kind) {
+  return `<aside class="entity-detail-slot" aria-label="${escapeHTML(kind)}详情"><div class="empty" data-entity-empty><h3>选择一${kind === "用户" ? "名用户" : "辆车辆"}</h3><p>${kind === "用户" ? "点击列表中的管理，查看用户资料、重置密码或管理 API Key。" : "点击列表中的管理，调整车辆信息、成员额度与账号分配。"}</p></div></aside>`;
+}
+
 function setDialogContent(dialog, title, body) {
+  const restoreFocus = dialog.contains(document.activeElement);
+  dialog.setAttribute("aria-label", title);
   dialog.innerHTML = `<div class="dialog-head"><h2>${escapeHTML(title)}</h2><button class="icon-button" aria-label="关闭" title="关闭" type="button" data-dialog-close>×</button></div><div class="dialog-body">${body}</div>`;
   dialog.querySelectorAll("[data-dialog-close]").forEach(button => button.addEventListener("click", () => dialog.close()));
+  if (restoreFocus) dialog.querySelector("[data-dialog-close]").focus();
 }
 
 function showOneTimeSecret(dialog, title, secret, warning, onFinish) {
+  if (!dialog.isConnected || !dialog.open) return;
   setDialogContent(dialog, title, `<div class="warning-banner">${escapeHTML(warning)}</div><div class="secret-box" role="status"></div><div class="form-actions"><button class="button" type="button" data-finish>完成</button></div>`);
   dialog.querySelector(".secret-box").textContent = secret;
   dialog.querySelector("[data-finish]").addEventListener("click", () => {
@@ -231,10 +287,16 @@ function showOneTimeSecret(dialog, title, secret, warning, onFinish) {
 
 function loginView(message = "") {
   clearStatusRefresh();
+  closeEntityPanels();
   document.querySelector("#app").innerHTML = `<main class="login-shell">
+    <section class="login-story" aria-labelledby="login-title">
+      <div class="brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI</span></div></div>
+      <h1 id="login-title">车辆、额度与用量，<br>在一处看清。</h1>
+      <p>乘客查看本期额度、管理 API Key；管理员分配车辆、成员与上游账号。</p>
+      <ul class="activity-list"><li><strong>乘客工作区</strong><span>自己的额度、账期与车辆状态</span></li><li><strong>运营工作区</strong><span>用户、车辆与可追溯的请求记录</span></li></ul>
+    </section>
     <form class="login-panel" id="login-form">
-      <div class="brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI · 安全登录</span></div></div>
-      <div class="login-intro"><h1>欢迎回来</h1><p>登录后查看车辆、成员和上游账号状态。</p></div>
+      <div class="login-intro"><h2>登录工作台</h2><p>使用管理员分配的账号登录。</p></div>
       ${message ? `<div class="error-banner">${escapeHTML(message)}</div>` : ""}
       <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="64"></div>
       <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128"></div>
@@ -272,18 +334,72 @@ function navigation() {
   return state.session?.role === "carpool_admin" ? admin : passenger;
 }
 
+function iconMarkup(route) {
+  const paths = {
+    "/": '<path d="m3 10 9-7 9 7v10H3Z M9 20v-7h6v7"/>',
+    "/members": '<circle cx="9" cy="7" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M17 4a3 3 0 0 1 0 6m1 4a5 5 0 0 1 3 4v3"/>',
+    "/accounts": '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18m-13 5h3m3 0h2"/>',
+    "/keys": '<circle cx="8" cy="8" r="5"/><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3"/>',
+    "/users": '<circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+    "/cars": '<path d="m5 10 2-6h10l2 6M3 10h18v8H3Zm2 8v3m14-3v3M6 14h2m8 0h2"/>',
+    "/usage": '<path d="M4 3v18h17M8 16v-5m5 5V7m5 9V4"/>',
+    "/requests": '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8m-8 4h5"/>',
+    "/pricing": '<path d="M3 3h8l10 10-8 8L3 11Z"/><circle cx="7.5" cy="7.5" r="1"/>',
+    "/retention": '<path d="M4 7h16v14H4ZM3 3h18v4H3Zm6 9h6"/>',
+    "/audit": '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Zm-4 9 3 3 5-6"/>',
+    "/password": '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/>',
+  };
+  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${Object.hasOwn(paths, route) ? paths[route] : paths["/"]}</svg>`;
+}
+
 function renderShell() {
   if (!state.session) return loginView();
+  closeEntityPanels();
   const navigationItems = navigation();
   document.querySelector("#app").innerHTML = `<div class="app-shell">
-    <header class="topbar">
-      <div class="topbar-brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI</span></div></div>
-      <div class="topbar-title"><span>${escapeHTML(routeTitles[state.route] || "拼车管理")}</span></div><nav class="nav" aria-label="主导航">${navigationItems.map(([route, label]) => `<button type="button" data-route="${route}" aria-current="${state.route === route ? "page" : "false"}">${label}</button>`).join("")}</nav>
-      <div class="topbar-actions"><span class="user-chip"><i aria-hidden="true"></i>${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout">退出</button></div>
-    </header>
-    <main class="main"><div class="content" id="content"><div class="loading">正在加载...</div></div></main>
+    <a class="skip-link" href="#content">跳到主要内容</a>
+    <aside class="app-rail" id="app-rail">
+      <div class="rail-brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI</span></div></div>
+      <nav class="nav" aria-label="主导航">${navigationItems.map(([route, label]) => `<a href="#${route}" data-route="${route}" aria-current="${state.route === route ? "page" : "false"}"><span class="nav-icon">${iconMarkup(route)}</span><span class="nav-label">${label}</span></a>`).join("")}</nav>
+    </aside>
+    <div class="app-workspace">
+      <header class="topbar">
+        <button class="icon-button" id="nav-toggle" type="button" aria-controls="app-rail" aria-expanded="false" aria-label="展开导航"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <div class="topbar-brand"><strong>拼车工作台</strong></div>
+        <div class="topbar-title"><span>${escapeHTML(routeTitles[state.route] || "拼车管理")}</span></div>
+        <div class="topbar-actions"><span class="tag">${state.session.role === "carpool_admin" ? "管理员" : "乘客"}</span>${statusLabel(state.session.module_status || "unknown")}<span class="user-chip">${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout" type="button">退出</button></div>
+      </header>
+      <main class="main"><div class="content" id="content" data-page="${escapeHTML(state.route)}"><div class="loading" role="status">正在加载...</div></div></main>
+    </div>
   </div>`;
-  document.querySelectorAll("[data-route]").forEach(button => button.addEventListener("click", () => { location.hash = `#${button.dataset.route}`; }));
+  const shell = document.querySelector(".app-shell");
+  const toggle = document.querySelector("#nav-toggle");
+  const setNavOpen = open => {
+    shell.classList.toggle("nav-open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-label", open ? "收起导航" : "展开导航");
+  };
+  shell.querySelector(".skip-link").addEventListener("click", event => {
+    event.preventDefault();
+    document.querySelector("#content")?.focus();
+  });
+  toggle.addEventListener("click", () => {
+    const open = !shell.classList.contains("nav-open");
+    setNavOpen(open);
+    if (open) shell.querySelector(".nav a")?.focus();
+  });
+  shell.querySelectorAll(".nav [data-route]").forEach(link => link.addEventListener("click", event => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const wasOpen = shell.classList.contains("nav-open");
+    setNavOpen(false);
+    if (wasOpen) toggle.focus();
+  }));
+  shell.addEventListener("keydown", event => {
+    if (event.key === "Escape" && shell.classList.contains("nav-open")) {
+      setNavOpen(false);
+      toggle.focus();
+    }
+  });
   document.querySelector("#logout").addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
     try { await request("/session", { method: "DELETE" }); } catch (_) { /* Local state still ends. */ }
@@ -303,20 +419,33 @@ async function renderRoute() {
     return;
   }
   renderShellFrameTitle();
-  const content = document.querySelector("#content");
-  content.innerHTML = `<div class="loading">正在加载...</div>`;
+  const previous = document.querySelector("#content");
+  if (!previous) return;
+  closeEntityPanels();
+  // Each render owns a node; older requests can only update detached content.
+  const content = document.createElement("div");
+  content.id = "content";
+  content.tabIndex = -1;
+  content.className = "content";
+  content.dataset.page = state.route;
+  content.innerHTML = `<div class="loading" role="status">正在加载...</div>`;
+  previous.replaceWith(content);
+  const route = state.route;
+  const session = state.session;
   try {
-    if (state.route === "/password") return renderPassword(content);
-    if (state.session.role === "carpool_admin") return renderAdminRoute(content);
-    return renderPassengerRoute(content);
+    if (route === "/password") await renderPassword(content);
+    else if (session.role === "carpool_admin") await renderAdminRoute(content);
+    else await renderPassengerRoute(content);
   } catch (error) {
+    if (document.querySelector("#content") !== content || state.session !== session || state.route !== route) return;
     if (error.status === 401) {
       state.session = null;
       state.csrf = "";
       loginView("会话已失效，请重新登录");
       return;
     }
-    content.innerHTML = `<div class="error-banner">${escapeHTML(error.message)}</div>`;
+    content.innerHTML = `<section class="workspace-panel"><div class="error-banner" role="alert">${escapeHTML(error.message)}</div><p class="muted">页面暂时未能加载，请重试。</p><div class="form-actions"><button class="button secondary" type="button" data-route-retry>重新加载</button></div></section>`;
+    content.querySelector("[data-route-retry]").addEventListener("click", () => renderRoute());
   }
 }
 
@@ -330,31 +459,41 @@ async function renderPassengerRoute(content) {
   if (state.route === "/") {
     const data = await request("/me/car");
     if (!data?.car) {
-      content.innerHTML = `<div class="empty">当前没有可用车辆</div>`;
+      content.innerHTML = `<div class="section-header"><div><h2>我的车辆</h2><p>查看额度、成员用量和上游账号状态</p></div></div><section class="workspace-panel"><div class="empty"><h3>尚未分配车辆</h3><p>请联系管理员分配车辆并设置额度。已有 API Key 可在密钥页面管理。</p><a class="button secondary" href="#/keys">管理 API Key</a></div></section>`;
       return;
     }
-    content.innerHTML = `<div class="section-header"><div><h2>${escapeHTML(data.car.name)}</h2><p>${escapeHTML(data.car.description || "当前车辆")}</p></div>${statusLabel(data.car.status)}</div>
-      ${data.billing ? `<section class="billing-hero"><div><span class="eyebrow">本期乘客额度</span><h3>$${escapeHTML(data.billing.used_usd || "0")} <small>/ $${escapeHTML(data.billing.limit_usd || "0")}</small></h3><p>账期至 ${escapeHTML(formatTime(data.billing.period_to))} · 剩余 $${escapeHTML(data.billing.remaining_usd || "0")}</p></div>${billingMarkup(data.billing)}</section>` : ""}
-      <div class="summary-grid">
-        <div class="metric"><span>当前成员</span><strong>${formatNumber(data.car.member_count)}</strong></div>
-        <div class="metric"><span>可用账号</span><strong>${formatNumber(data.car.available_account_count)}</strong></div>
-        <div class="metric"><span>席位上限</span><strong>${data.car.seat_limit ? formatNumber(data.car.seat_limit) : "不限"}</strong></div>
-        <div class="metric"><span>报表时区</span><strong>${escapeHTML(data.report_timezone || state.session.report_timezone || "UTC")}</strong></div>
-      </div>`;
+    const billing = data.billing;
+    const configured = billing && billing.limit_usd != null && billing.limit_usd !== "" && billing.status !== "not_configured";
+    const exhausted = billing?.status === "exhausted" || billing?.status === "overage";
+    content.innerHTML = `<div class="section-header"><div><h2>我的概览</h2><p>${escapeHTML(data.car.name)} · ${escapeHTML(data.car.description || "当前车辆")}</p></div>${statusLabel(data.car.status)}</div>
+      <div class="dashboard-layout"><div class="dashboard-main">
+        <section class="billing-hero" aria-label="我的本期额度"><div><span class="eyebrow">本期剩余额度 · USD</span><h3 class="${configured && billing.remaining_usd != null && billing.remaining_usd !== "" ? "balance-value" : "quota-missing"}">${configured ? moneyMarkup(billing.remaining_usd) : "待设置额度"}</h3><p>${configured ? `本期额度 ${moneyMarkup(billing.limit_usd)} · 已确认用量 ${moneyMarkup(billing.used_usd)}` : "请联系管理员设置月度额度后再发起请求。"}</p></div>${billingMarkup(billing)}</section>
+        ${exhausted ? `<div class="warning-banner">本期额度已用尽，新的请求将被拒绝。请联系管理员调整额度，或等待下一账期。</div>` : ""}
+        ${data.car.status !== "active" ? `<div class="warning-banner">车辆当前${escapeHTML(statusText(data.car.status))}，请联系管理员确认车辆状态。</div>` : ""}
+        ${billing && (billing.data_complete === false || billing.unknown_cost_events) ? `<div class="warning-banner">${billing.unknown_cost_events ? `${formatNumber(billing.unknown_cost_events)} 条费用未知；` : ""}费用数据不完整，已用金额仅为已确认小计。</div>` : ""}
+        ${usageCoverage(data.coverage)}
+        <section class="workspace-panel"><div class="panel-heading"><h3>当前车辆</h3><a href="#/accounts">查看账号状态</a></div>
+          <dl class="overview-stats"><div><dt>当前成员</dt><dd>${formatNumber(data.car.member_count)}</dd></div><div><dt>可用账号</dt><dd>${formatNumber(data.car.available_account_count)}</dd></div><div><dt>席位上限</dt><dd>${data.car.seat_limit ? formatNumber(data.car.seat_limit) : "不限"}</dd></div></dl>
+          <p class="muted">车辆启用不代表请求一定可用；请求仍受个人额度与上游账号状态限制。</p>
+        </section>
+      </div><aside class="dashboard-side">
+        <section class="workspace-panel"><div class="panel-heading"><h3>常用操作</h3></div><div class="quick-links"><a href="#/keys">${iconMarkup("/keys")}<span>管理 API Key</span></a><a href="#/members">${iconMarkup("/members")}<span>查看成员用量</span></a><a href="#/accounts">${iconMarkup("/accounts")}<span>查看账号状态</span></a></div></section>
+        <section class="workspace-panel"><div class="panel-heading"><h3>账期与统计</h3></div><ul class="activity-list"><li><strong>当前账期</strong><span>${escapeHTML(formatTime(billing?.period_from))} 至 ${escapeHTML(formatTime(billing?.period_to))}</span></li><li><strong>下次重置</strong><span>${escapeHTML(formatTime(billing?.period_to))}</span></li><li><strong>报表时区</strong><span>${escapeHTML(data.report_timezone || state.session?.report_timezone || "UTC")}</span></li>${billing?.coverage_from ? `<li><strong>费用统计起点</strong><span>${escapeHTML(formatTime(billing.coverage_from))}</span></li>` : ""}</ul></section>
+      </aside></div>`;
     return;
   }
   if (state.route === "/members") {
     const data = await request(`/me/members/usage?period=${encodeURIComponent(state.period)}`);
     content.innerHTML = `<div class="section-header"><div><h2>成员用量</h2><p>${escapeHTML(formatTime(data.data_from))} 至 ${escapeHTML(formatTime(data.data_to))}</p></div>${periodControl()}</div>
       ${usageCoverage(data.coverage)}${memberTable(data.items || [])}`;
-    bindPeriod();
+    bindPeriod(content);
     return;
   }
   if (state.route === "/accounts") {
     const data = await request(`/me/accounts?period=${encodeURIComponent(state.period)}`);
     content.innerHTML = `<div class="section-header"><div><h2>车辆账号</h2><p>状态更新时间：${escapeHTML(formatTime(new Date()))}</p></div>${periodControl()}</div>${accountTable(data.items || [])}`;
-    bindPeriod();
-    scheduleAccountRefresh();
+    bindPeriod(content);
+    if (content.isConnected) scheduleAccountRefresh();
     return;
   }
   if (state.route === "/keys") return renderKeys(content, true);
@@ -372,12 +511,16 @@ function memberTable(items) {
   </tbody></table></div>`;
 }
 
+function moneyMarkup(value) {
+  return value == null || value === "" ? "未提供" : `$${escapeHTML(value)}`;
+}
+
 function billingMarkup(billing) {
-  if (!billing || billing.limit_usd == null || billing.limit_usd === "") return `<span class="quota-missing">待管理员设置额度</span>`;
+  if (!billing || billing.limit_usd == null || billing.limit_usd === "" || billing.status === "not_configured") return `<span class="quota-missing">待管理员设置额度</span>`;
   const progress = percentageMeter(billing.usage_percent, "已用金额比例");
   const meter = progress ? `<div class="quota-meter">${progress}<b>${escapeHTML(formatQuotaPercent(billing.usage_percent))}</b></div>` : "";
-  const status = billing.status === "exhausted" || billing.status === "overage" ? "额度已用尽" : "可用";
-  return `<div class="billing-meter"><div class="billing-line"><strong>$${escapeHTML(billing.used_usd || "0")}</strong><span>/ $${escapeHTML(billing.limit_usd)}</span><em>${escapeHTML(status)}</em></div>${meter}<small>剩余 $${escapeHTML(billing.remaining_usd || "0")}${billing.status === "overage" ? ` · 超额 $${escapeHTML(billing.overage_usd || "0")}` : ""} · ${escapeHTML(formatTime(billing.period_to))}${billing.unknown_cost_events ? ` · ${formatNumber(billing.unknown_cost_events)} 条费用未知` : ""}</small></div>`;
+  const status = billing.status === "exhausted" || billing.status === "overage" ? "额度已用尽" : billing.status === "active" ? "额度可用" : "额度状态未知";
+  return `<div class="billing-meter"><div class="billing-line"><strong>${moneyMarkup(billing.used_usd)}</strong><span>/ ${moneyMarkup(billing.limit_usd)}</span><em>${escapeHTML(status)}</em></div>${meter}<small>剩余 ${moneyMarkup(billing.remaining_usd)}${billing.status === "overage" ? ` · 超额 ${moneyMarkup(billing.overage_usd)}` : ""} · ${escapeHTML(formatTime(billing.period_to))}${billing.unknown_cost_events ? ` · ${formatNumber(billing.unknown_cost_events)} 条费用未知` : ""}</small></div>`;
 }
 
 function accountTable(items) {
@@ -469,9 +612,19 @@ function showKeyDialog() {
 
 async function renderAdminRoute(content) {
   if (state.route === "/") {
-    const [users, cars] = await Promise.all([request("/admin/users?limit=1"), request("/admin/cars?limit=1")]);
-    content.innerHTML = `<div class="section-header"><div><h2>运营概览</h2><p>当前拼车业务状态</p></div></div>
-      <div class="summary-grid"><div class="metric"><span>用户总数</span><strong>${formatNumber(users.total)}</strong></div><div class="metric"><span>车辆总数</span><strong>${formatNumber(cars.total)}</strong></div><div class="metric"><span>模块状态</span><strong>${escapeHTML(statusText(state.session.module_status || "healthy"))}</strong></div><div class="metric"><span>报表时区</span><strong>${escapeHTML(state.session.report_timezone || "UTC")}</strong></div></div>`;
+    const [users, cars] = await Promise.all([request("/admin/users?limit=1"), request("/admin/cars?limit=6")]);
+    const carItems = cars.items || [];
+    const count = value => value == null ? "未提供" : formatNumber(value);
+    content.innerHTML = `<div class="section-header"><div><h2>运营概览</h2><p>从车辆和成员开始，管理当前拼车业务。</p></div><a class="button" href="#/cars">管理车辆</a></div>
+      <div class="dashboard-layout"><div class="dashboard-main">
+        <section class="workspace-panel"><div class="panel-heading"><h3>运营摘要</h3></div><dl class="overview-stats"><div><dt>用户总数</dt><dd>${count(users.total)}</dd></div><div><dt>车辆总数</dt><dd>${count(cars.total)}</dd></div><div><dt>模块状态</dt><dd>${statusLabel(state.session?.module_status || "unknown")}</dd></div></dl></section>
+        <section class="workspace-panel"><div class="panel-heading"><div><h3>车辆一览</h3><p class="muted">显示 ${formatNumber(carItems.length)} 辆车辆${cars.total != null ? `，共 ${count(cars.total)} 辆` : ""}</p></div><a href="#/cars">查看全部</a></div>
+          ${carItems.length ? `<ul class="activity-list">${carItems.map(car => `<li><div><strong>${escapeHTML(car.name)}</strong><span>${formatNumber(car.member_count)} 名成员 · ${formatNumber(car.account_count)} 个账号 · 席位 ${car.seat_limit ? formatNumber(car.seat_limit) : "不限"}</span></div>${statusLabel(car.status)}</li>`).join("")}</ul>` : `<div class="empty"><h3>尚未创建车辆</h3><p>进入车辆管理创建车辆，再分配成员与上游账号。</p></div>`}
+        </section>
+      </div><aside class="dashboard-side">
+        <section class="workspace-panel"><div class="panel-heading"><h3>工作入口</h3></div><div class="quick-links"><a href="#/users">${iconMarkup("/users")}<span>管理用户与密钥</span></a><a href="#/usage">${iconMarkup("/usage")}<span>查看用量报表</span></a><a href="#/requests">${iconMarkup("/requests")}<span>追溯请求明细</span></a></div></section>
+        <section class="workspace-panel"><div class="panel-heading"><h3>统计说明</h3></div><ul class="activity-list"><li><strong>报表时区</strong><span>${escapeHTML(state.session?.report_timezone || "UTC")}</span></li><li><strong>费用与用量</strong><span>费用未知和不完整请求会单独标记，不计作零消费。</span></li></ul><div class="quick-links"><a href="#/pricing">价格目录</a><a href="#/retention">数据保留</a><a href="#/audit">审计记录</a></div></section>
+      </aside></div>`;
     return;
   }
   if (state.route === "/users") return renderUsers(content, true);
@@ -494,9 +647,11 @@ async function renderPricing(content) {
 async function renderUsers(content, reset) {
   const page = await loadPage("users", "/admin/users", reset);
   const items = page.items;
-  content.innerHTML = `<div class="section-header"><div><h2>用户</h2><p>共 ${formatNumber(page.total)} 名用户</p></div><button class="button" id="create-user">创建用户</button></div>
-    ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户名</th><th>展示名</th><th>角色</th><th>状态</th><th>首次改密</th><th>创建时间</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHTML(item.username)}</td><td>${escapeHTML(item.display_name)}</td><td>${item.role === "carpool_admin" ? "管理员" : "乘客"}</td><td>${statusLabel(item.status)}</td><td>${item.must_change_password ? "待完成" : "已完成"}</td><td>${escapeHTML(formatTime(item.created_at))}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无用户</div>`}
-    ${paginationFooter(page, "名用户")}`;
+  closeEntityPanels(content);
+  content.innerHTML = `<div class="section-header"><div><h2>用户管理</h2><p>共 ${formatNumber(page.total)} 名用户 · 选择用户后在右侧管理</p></div><button class="button" id="create-user">创建用户</button></div>
+    <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="用户列表">
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>角色与状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${escapeHTML(item.username)}</strong><br><span class="muted">${escapeHTML(item.display_name)}</span><br><small class="muted">创建于 ${escapeHTML(formatTime(item.created_at))}</small></td><td>${statusLabel(item.status)}<br><span class="muted">${item.role === "carpool_admin" ? "管理员" : "乘客"} · ${item.must_change_password ? "首次改密待完成" : "首次改密已完成"}</span></td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无用户，请先创建用户。</div>`}
+      ${paginationFooter(page, "名用户")}</section>${entityEmptyMarkup("用户")}</div>`;
   content.querySelector("#create-user").addEventListener("click", showUserDialog);
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
@@ -504,7 +659,10 @@ async function renderUsers(content, reset) {
   });
   content.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => {
     const user = items.find(item => item.user_ref === button.dataset.manageUser);
-    if (user) showUserManagement(user).catch(error => toast(error.message));
+    if (user) {
+      showUserManagement(user).catch(error => toast(error.message));
+      selectEntityRow(content, button);
+    }
   }));
 }
 
@@ -548,10 +706,12 @@ async function showUserManagement(initialUser) {
     keyPage.loaded = true;
   }
 
-  await loadKeys(true);
-  const dialog = openDialog("管理用户", "", true);
+  const dialog = state.route === "/users" ? openEntityPanel("管理用户", `<div class="loading" role="status">正在加载用户...</div>`) : openDialog("管理用户", `<div class="loading" role="status">正在加载用户...</div>`, true);
+  try { await loadKeys(true); } catch (error) { dialog.close(); throw error; }
+  if (!dialog.isConnected || !dialog.open) return;
 
   function paint() {
+    if (!dialog.isConnected || !dialog.open) return;
     const keyRows = keyPage.items.map(key => `<tr><td>${escapeHTML(key.name)}</td><td class="code-ref">${escapeHTML(key.key_ref)}</td><td>${statusLabel(key.status)}</td><td>${escapeHTML(formatTime(key.expires_at))}</td><td>${escapeHTML(formatTime(key.last_used_at))}</td><td>${key.status === "active" ? `<button class="button danger compact" data-admin-revoke-key="${escapeHTML(key.key_ref)}">撤销</button>` : ""}</td></tr>`).join("");
     setDialogContent(dialog, "管理用户", `<div class="entity-summary"><strong>${escapeHTML(user.username)}</strong><span>${user.role === "carpool_admin" ? "拼车管理员" : "乘客"} · ${escapeHTML(user.user_ref)}</span></div>
       <form id="edit-user-form">
@@ -629,9 +789,11 @@ async function showUserManagement(initialUser) {
 async function renderCars(content, reset) {
   const page = await loadPage("cars", "/admin/cars", reset);
   const items = page.items;
-  content.innerHTML = `<div class="section-header"><div><h2>车辆</h2><p>共 ${formatNumber(page.total)} 辆车辆</p></div><button class="button" id="create-car">创建车辆</button></div>
-    ${items.length ? `<div class="table-wrap"><table><thead><tr><th>车辆</th><th>状态</th><th class="numeric">成员</th><th class="numeric">账号</th><th>席位</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${escapeHTML(item.name)}</strong><br><span class="muted">${escapeHTML(item.description || "")}</span></td><td>${statusLabel(item.status)}</td><td class="numeric">${formatNumber(item.member_count)}</td><td class="numeric">${formatNumber(item.account_count)}</td><td>${item.seat_limit ? formatNumber(item.seat_limit) : "不限"}</td><td><button class="button secondary compact" data-manage-car="${escapeHTML(item.car_ref)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无车辆</div>`}
-    ${paginationFooter(page, "辆车辆")}`;
+  closeEntityPanels(content);
+  content.innerHTML = `<div class="section-header"><div><h2>车辆管理</h2><p>共 ${formatNumber(page.total)} 辆车辆 · 选择车辆后在右侧管理</p></div><button class="button" id="create-car">创建车辆</button></div>
+    <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="车辆列表">
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>车辆</th><th>成员与账号</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${escapeHTML(item.name)}</strong><br><span class="muted">${escapeHTML(item.description || "未填写说明")}</span><br>${statusLabel(item.status)}</td><td><span>${formatNumber(item.member_count)} 名成员 · ${formatNumber(item.account_count)} 个账号</span><br><small class="muted">席位 ${item.seat_limit ? formatNumber(item.seat_limit) : "不限"}</small></td><td><button class="button secondary compact" data-manage-car="${escapeHTML(item.car_ref)}" aria-label="管理车辆 ${escapeHTML(item.name)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无车辆，请先创建车辆。</div>`}
+      ${paginationFooter(page, "辆车辆")}</section>${entityEmptyMarkup("车辆")}</div>`;
   content.querySelector("#create-car").addEventListener("click", showCarDialog);
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
@@ -639,7 +801,10 @@ async function renderCars(content, reset) {
   });
   content.querySelectorAll("[data-manage-car]").forEach(button => button.addEventListener("click", () => {
     const car = items.find(item => item.car_ref === button.dataset.manageCar);
-    if (car) showCarManagement(car).catch(error => toast(error.message));
+    if (car) {
+      showCarManagement(car).catch(error => toast(error.message));
+      selectEntityRow(content, button);
+    }
   }));
 }
 
@@ -668,11 +833,18 @@ function showCarDialog() {
 }
 
 async function showCarManagement(car) {
+  const dialog = state.route === "/cars" ? openEntityPanel("管理车辆", `<div class="loading" role="status">正在加载车辆...</div>`) : openDialog("管理车辆", `<div class="loading" role="status">正在加载车辆...</div>`, true);
+  const panelIsCurrent = () => dialog.isConnected && dialog.open;
   const [members, accounts, users] = await Promise.all([
     request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members`),
     request(`/admin/cars/${encodeURIComponent(car.car_ref)}/accounts`),
     fetchAllPages("/admin/users"),
-  ]);
+  ]).catch(error => {
+    if (!panelIsCurrent()) return [];
+    dialog.close();
+    throw error;
+  });
+  if (!panelIsCurrent()) return;
   const passengers = users.filter(user => user.role === "passenger" && user.status === "active");
   const candidates = (accounts.candidates || []).filter(candidate => !candidate.assigned_to_current_car);
   const passengerOptions = passengers.map(user => `<option value="${escapeHTML(user.user_ref)}" data-display-name="${escapeHTML(user.display_name)}">${escapeHTML(user.display_name)} · ${escapeHTML(user.username)}</option>`).join("");
@@ -680,7 +852,7 @@ async function showCarManagement(car) {
     const assignment = candidate.assigned ? "（将从其他车辆移入）" : "";
     return `<option value="${escapeHTML(candidate.candidate_ref)}">${escapeHTML(candidate.provider)} · ${escapeHTML(candidate.candidate_ref.slice(-8))} ${assignment}</option>`;
   }).join("");
-  const dialog = openDialog("管理车辆", `<div class="entity-summary"><strong>${escapeHTML(car.name)}</strong><span>${escapeHTML(car.car_ref)}</span></div>
+  setDialogContent(dialog, "管理车辆", `<div class="entity-summary"><strong>${escapeHTML(car.name)}</strong><span>${escapeHTML(car.car_ref)}</span></div>
     <form id="edit-car-form">
       <div class="form-row"><div class="field"><label for="edit-car-name">名称</label><input id="edit-car-name" name="name" value="${escapeHTML(car.name)}" required maxlength="80"></div><div class="field"><label for="edit-car-status">状态</label><select id="edit-car-status" name="status"><option value="active"${car.status === "active" ? " selected" : ""}>启用</option><option value="disabled"${car.status === "disabled" ? " selected" : ""}>禁用</option><option value="retired"${car.status === "retired" ? " selected" : ""}>退役</option></select></div></div>
       <div class="field"><label for="edit-car-description">说明</label><textarea id="edit-car-description" name="description" maxlength="500">${escapeHTML(car.description || "")}</textarea></div>
@@ -692,7 +864,7 @@ async function showCarManagement(car) {
     ${passengerOptions && car.status !== "retired" ? `<form id="add-member" class="inline-editor"><div class="field"><label for="member-user">乘客</label><select id="member-user" name="user_ref" required><option value="">选择乘客</option>${passengerOptions}</select></div><div class="field"><label for="member-display-name">车内展示名</label><input id="member-display-name" name="display_name" required maxlength="64"></div><div class="field"><label for="member-limit">月度额度（USD）</label><input id="member-limit" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" placeholder="例如 25.00" required><small>必须填写；输入 0 会暂时禁止新请求。</small></div><button class="button compact" type="submit">加入或换入</button></form>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新成员" : "没有可分配的启用乘客"}</p>`}
     <div class="subsection-head"><div><h3>账号</h3><p>${formatNumber(accounts.total)} 个当前账号</p></div></div>
     ${(accounts.items || []).length ? `<div class="compact-list">${accounts.items.map(item => `<div><span><strong>${escapeHTML(item.safe_label)}</strong><small>${escapeHTML(item.provider)} · ${escapeHTML(item.account_ref)}</small></span><button class="button danger compact" data-remove-account="${escapeHTML(item.account_ref)}">撤销</button></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无账号</div>`}
-    ${candidateOptions && car.status !== "retired" ? `<form id="add-account" class="inline-editor"><div class="field"><label for="account-candidate">上游账号</label><select id="account-candidate" name="candidate_ref" required><option value="">选择账号</option>${candidateOptions}</select></div><div class="field"><label for="account-label">安全标签</label><input id="account-label" name="safe_label" required maxlength="80"></div><button class="button compact" type="submit">分配或移入</button></form>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新账号" : "当前没有可分配的运行时账号"}</p>`}`, true);
+    ${candidateOptions && car.status !== "retired" ? `<form id="add-account" class="inline-editor"><div class="field"><label for="account-candidate">上游账号</label><select id="account-candidate" name="candidate_ref" required><option value="">选择账号</option>${candidateOptions}</select></div><div class="field"><label for="account-label">安全标签</label><input id="account-label" name="safe_label" required maxlength="80"></div><button class="button compact" type="submit">分配或移入</button></form>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新账号" : "当前没有可分配的运行时账号"}</p>`}`);
 
   dialog.querySelector("#member-user")?.addEventListener("change", event => {
     const option = event.currentTarget.selectedOptions[0];
@@ -709,10 +881,12 @@ async function showCarManagement(car) {
     setButtonBusy(button, true);
     try {
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}`, { method: "PATCH", body: JSON.stringify({ name: form.get("name"), description: form.get("description"), seat_limit: form.get("seat_limit") ? Number(form.get("seat_limit")) : null, status: nextStatus }) });
+      if (!panelIsCurrent()) return;
       dialog.close();
       toast("车辆已更新");
       renderRoute();
     } catch (error) {
+      if (!panelIsCurrent()) return;
       toast(error.message);
       setButtonBusy(button, false);
     }
@@ -726,10 +900,12 @@ async function showCarManagement(car) {
     try {
       const limit = String(form.get("monthly_limit_usd") || "").trim();
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members`, { method: "POST", body: JSON.stringify({ user_ref: form.get("user_ref"), display_name: form.get("display_name"), monthly_limit_usd: limit }) });
+      if (!panelIsCurrent()) return;
       dialog.close();
       toast("成员已加入或换入");
       renderRoute();
     } catch (error) {
+      if (!panelIsCurrent()) return;
       toast(error.message);
       setButtonBusy(button, false);
     }
@@ -745,11 +921,13 @@ async function showCarManagement(car) {
       setButtonBusy(submit, true);
       try {
         await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members/${encodeURIComponent(button.dataset.editMemberLimit)}/quota`, { method: "PATCH", body: JSON.stringify({ monthly_limit_usd: value }) });
+        if (!panelIsCurrent() || !editor.isConnected || !editor.open) return;
         editor.close();
         dialog.close();
         toast("额度已立即生效");
         renderRoute();
       } catch (error) {
+        if (!panelIsCurrent() || !editor.isConnected || !editor.open) return;
         toast(error.message);
         setButtonBusy(submit, false);
       }
@@ -763,10 +941,12 @@ async function showCarManagement(car) {
     setButtonBusy(button, true);
     try {
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/accounts`, { method: "POST", body: JSON.stringify({ candidate_ref: form.get("candidate_ref"), safe_label: form.get("safe_label") }) });
+      if (!panelIsCurrent()) return;
       dialog.close();
       toast("账号已分配或移入");
       renderRoute();
     } catch (error) {
+      if (!panelIsCurrent()) return;
       toast(error.message);
       setButtonBusy(button, false);
     }
@@ -777,10 +957,15 @@ async function showCarManagement(car) {
     setButtonBusy(button, true);
     try {
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members/${encodeURIComponent(button.dataset.removeMember)}`, { method: "DELETE" });
+      if (!panelIsCurrent()) return;
       dialog.close();
       toast("成员已移除");
       renderRoute();
-    } catch (error) { toast(error.message); setButtonBusy(button, false); }
+    } catch (error) {
+      if (!panelIsCurrent()) return;
+      toast(error.message);
+      setButtonBusy(button, false);
+    }
   }));
 
   dialog.querySelectorAll("[data-remove-account]").forEach(button => button.addEventListener("click", async () => {
@@ -788,10 +973,15 @@ async function showCarManagement(car) {
     setButtonBusy(button, true);
     try {
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/accounts/${encodeURIComponent(button.dataset.removeAccount)}`, { method: "DELETE" });
+      if (!panelIsCurrent()) return;
       dialog.close();
       toast("账号分配已撤销");
       renderRoute();
-    } catch (error) { toast(error.message); setButtonBusy(button, false); }
+    } catch (error) {
+      if (!panelIsCurrent()) return;
+      toast(error.message);
+      setButtonBusy(button, false);
+    }
   }));
 }
 

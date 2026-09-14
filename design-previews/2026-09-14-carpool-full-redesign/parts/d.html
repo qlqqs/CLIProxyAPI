@@ -1,0 +1,150 @@
+<style>
+.dir-d { container: carpool-d / inline-size; width: 100%; height: 100%; min-height: 450px; overflow: hidden; overscroll-behavior: contain; background: #eaf0e7; color: #243f33; font: 14px/1.5 "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-variant-numeric: tabular-nums; }
+.dir-d *, .dir-d *::before, .dir-d *::after { box-sizing: border-box; }
+.dir-d [hidden] { display: none !important; }
+.dir-d section[data-view] { height: 100%; min-height: 450px; padding: 18px 22px 12px; display: flex; flex-direction: column; gap: 14px; }
+.dir-d .d-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 14px; }
+.dir-d h2, .dir-d h3, .dir-d p { margin: 0; }
+.dir-d h2 { font-size: 20px; font-weight: 600; line-height: 1.5; }
+.dir-d h3 { font-size: 16px; font-weight: 600; }
+.dir-d strong { font-weight: 600; }
+.dir-d button { font: inherit; color: inherit; border: 0; cursor: default; opacity: 1; -webkit-text-fill-color: currentColor; }
+.dir-d button:focus-visible { outline: 2px solid #264d3c; outline-offset: 3px; }
+.dir-d .d-head, .dir-d .d-greeting, .dir-d .d-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dir-d .d-brand { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; }
+.dir-d .d-mark { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid #93ac99; border-radius: 50% 50% 50% 9px; font-size: 16px; }
+.dir-d .d-role { font-size: 12px; color: #526959; }
+.dir-d .d-muted { color: #526959; font-size: 12px; }
+.dir-d .d-greeting { align-items: end; }
+.dir-d .d-primary { padding: 9px 15px; border-radius: 22px; background: #294f3d; color: #fffdf7; white-space: nowrap; font-weight: 600; }
+.dir-d .d-lanes { display: grid; grid-template-columns: 1.12fr 1fr; gap: 14px; }
+.dir-d .d-lane { padding: 18px; border-radius: 24px; background: #fafcf6; min-width: 0; }
+.dir-d .d-attention { background: #f7e6d9; }
+.dir-d .d-count { display: inline-grid; place-items: center; min-width: 25px; height: 25px; border-radius: 50%; background: #e8cbb6; color: #62412c; font-size: 13px; }
+.dir-d .d-fleet { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; padding: 4px; margin: 13px 0; border-radius: 20px; background: #e6eee2; }
+.dir-d .d-fleet button { padding: 7px 1px; background: transparent; border-radius: 16px; font-size: 12px; white-space: nowrap; }
+.dir-d .d-fleet .d-selected { background: #31543f; color: #fffdf7; font-weight: 600; }
+.dir-d .d-car-name { font-size: 15px; }
+.dir-d .d-status { color: #365a42; font-size: 12px; white-space: nowrap; }
+.dir-d .d-members-line { margin-top: 4px; color: #526959; font-size: 12px; }
+.dir-d .d-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 17px; }
+.dir-d .d-secondary { padding: 7px 12px; border: 1px solid #b7c8b5; background: transparent; border-radius: 18px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.dir-d .d-request { padding: 12px 0; }
+.dir-d .d-request + .d-request { border-top: 1px solid #ddc7b7; }
+.dir-d .d-request p { color: #785642; font-size: 12px; margin-top: 3px; }
+.dir-d .d-review { padding: 4px 0 4px 8px; background: transparent; color: #694831; font-size: 12px; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.dir-d .d-note { font-size: 12px; color: #785642; }
+.dir-d .d-bottom { position: sticky; bottom: 0; align-self: center; display: flex; gap: 4px; padding: 5px; margin-top: auto; background: #fcfdf8; border: 1px solid #d2ddce; border-radius: 28px; max-width: 100%; box-shadow: 0 4px 10px #243f3310; }
+.dir-d .d-bottom button { border-radius: 22px; background: transparent; padding: 8px 17px; font-size: 12px; white-space: nowrap; }
+.dir-d .d-bottom .d-current { background: #dce8d7; color: #294f3d; font-weight: 600; }
+.dir-d .d-amount { font: 600 29px/1.5 ui-rounded, "SF Pro Rounded", "Segoe UI", "PingFang SC", sans-serif; font-variant-numeric: tabular-nums; }
+.dir-d .d-quota { margin: 8px 0 6px; }
+.dir-d .d-meter { height: 7px; border-radius: 8px; background: #dbe6d5; margin: 9px 0; overflow: hidden; }
+.dir-d .d-meter-fill { width: 24.8%; height: 100%; background: #507555; border-radius: 8px; }
+.dir-d .d-key { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 14px; padding: 9px 13px; border-radius: 18px; background: #294f3d; color: #fffdf7; font-size: 13px; }
+.dir-d .d-companions { display: flex; gap: 7px; align-items: center; margin: 15px 0 9px; }
+.dir-d .d-avatar { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 50%; background: #dce7d5; font-size: 12px; }
+.dir-d .d-avatar:nth-child(2) { background: #f1decf; }
+.dir-d .d-avatar:nth-child(3) { background: #e4e7db; }
+.dir-d .d-text-button { padding: 0; background: transparent; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.dir-d .d-account { border-top: 1px solid #dce4d6; margin-top: 14px; padding-top: 12px; }
+.dir-d .d-account p { margin-top: 4px; }
+@container carpool-d (max-width: 420px) {
+  .dir-d section[data-view] { padding: 16px 14px 12px; gap: 16px; }
+  .dir-d .d-lanes { grid-template-columns: 1fr; }
+  .dir-d .d-lane { padding: 20px; }
+  .dir-d .d-role, .dir-d .d-muted, .dir-d .d-fleet button, .dir-d .d-status, .dir-d .d-members-line, .dir-d .d-secondary, .dir-d .d-request p, .dir-d .d-review, .dir-d .d-note, .dir-d .d-bottom button, .dir-d .d-key, .dir-d .d-text-button, .dir-d .d-avatar, .dir-d .d-count { font-size: 14px; }
+  .dir-d .d-greeting { align-items: start; flex-wrap: wrap; }
+  .dir-d .d-primary { min-height: 44px; }
+  .dir-d .d-fleet button, .dir-d .d-secondary, .dir-d .d-key, .dir-d .d-review, .dir-d .d-text-button { min-height: 44px; }
+  .dir-d .d-bottom { margin-top: 4px; bottom: 4px; }
+  .dir-d .d-bottom button { min-height: 44px; padding: 8px 13px; }
+}
+</style>
+<div class="dir-d">
+  <section data-view="admin" aria-label="管理员工作台方向样机">
+    <div class="d-scroll">
+    <header class="d-head">
+      <div class="d-brand"><span class="d-mark" aria-hidden="true">行</span>随行空间</div>
+      <span class="d-role">管理端 · 只读样机</span>
+    </header>
+    <div class="d-greeting">
+      <div><h2>今天，先安排哪辆车？</h2><p class="d-muted">24 位用户，4 辆车，在这里照看。</p></div>
+      <button type="button" disabled class="d-primary">＋ 创建用户</button>
+    </div>
+    <div class="d-lanes">
+      <article class="d-lane" aria-label="车队管理">
+        <div class="d-line"><h3>安排车队</h3><span class="d-muted">4 辆车</span></div>
+        <div class="d-fleet" aria-label="车辆选择样机">
+          <button type="button" disabled class="d-selected" aria-pressed="true">青山</button>
+          <button type="button" disabled aria-pressed="false">白露</button>
+          <button type="button" disabled aria-pressed="false">松林</button>
+          <button type="button" disabled aria-pressed="false">晚风</button>
+        </div>
+        <div class="d-line"><strong class="d-car-name">青山号</strong><span class="d-status">● 启用中</span></div>
+        <p class="d-members-line">6 位成员 · 2 个上游账号</p>
+        <div class="d-actions">
+          <button type="button" disabled class="d-secondary">分配车辆</button>
+          <button type="button" disabled class="d-secondary">管理这辆车</button>
+        </div>
+      </article>
+      <article class="d-lane d-attention" aria-label="需要留意的请求">
+        <div class="d-line"><h3>这两笔，留意一下</h3><span class="d-count">2</span></div>
+        <div class="d-request">
+          <div class="d-line"><strong>青山号 · 林悦</strong><button type="button" disabled class="d-review" aria-label="查看林悦的费用未知请求">查看</button></div>
+          <p>费用未知 · 请求 #1048</p>
+        </div>
+        <div class="d-request">
+          <div class="d-line"><strong>白露号 · 许知</strong><button type="button" disabled class="d-review" aria-label="查看许知的费用未知请求">查看</button></div>
+          <p>费用未知 · 请求 #1042</p>
+        </div>
+        <p class="d-note">先看请求明细，未知不代表免费。</p>
+      </article>
+    </div>
+    </div>
+    <nav class="d-bottom" aria-label="管理员底部导航样机">
+      <button type="button" disabled class="d-current" aria-current="page">工作台</button>
+      <button type="button" disabled>用户</button>
+      <button type="button" disabled>车辆</button>
+      <button type="button" disabled>请求</button>
+    </nav>
+  </section>
+  <section data-view="passenger" hidden aria-label="乘客工作台方向样机">
+    <div class="d-scroll">
+    <header class="d-head">
+      <div class="d-brand"><span class="d-mark" aria-hidden="true">行</span>随行空间</div>
+      <span class="d-role">乘客端 · 只读样机</span>
+    </header>
+    <div class="d-greeting">
+      <div><h2>林悦，今天可以继续用</h2><p class="d-muted">你在青山号 · 个人状态正常</p></div>
+      <span class="d-status">● 可用</span>
+    </div>
+    <div class="d-lanes">
+      <article class="d-lane" aria-label="个人额度与 API Key">
+        <div class="d-line"><h3>本期还可用</h3><span class="d-muted">USD</span></div>
+        <div class="d-quota"><strong class="d-amount">$37.60</strong></div>
+        <div class="d-line d-muted"><span>已用 $12.40</span><span>额度 $50.00</span></div>
+        <div class="d-meter" role="meter" aria-label="本期已用额度（美元）" aria-valuemin="0" aria-valuemax="50" aria-valuenow="12.4"><div class="d-meter-fill"></div></div>
+        <p class="d-muted">重置：2026-10-01 00:00 UTC</p>
+        <button type="button" disabled class="d-key"><span>管理我的 API Key</span><span aria-hidden="true">↗</span></button>
+      </article>
+      <article class="d-lane" aria-label="同车成员与账号状态">
+        <div class="d-line"><h3>同车，一起用</h3><span class="d-muted">青山号</span></div>
+        <div class="d-companions" aria-hidden="true"><span class="d-avatar">林</span><span class="d-avatar">陈</span><span class="d-avatar">周</span><span class="d-avatar">+3</span></div>
+        <div class="d-line"><span class="d-muted">你和另外 5 位成员</span><button type="button" disabled class="d-text-button">看成员</button></div>
+        <div class="d-account">
+          <div class="d-line"><strong>上游账号</strong><button type="button" disabled class="d-text-button">看状态</button></div>
+          <p class="d-muted">Codex · 青山 01 <span class="d-status">正常</span></p>
+          <p class="d-muted">Claude · 青山 02 <span class="d-status">正常</span></p>
+        </div>
+      </article>
+    </div>
+    </div>
+    <nav class="d-bottom" aria-label="乘客底部导航样机">
+      <button type="button" disabled class="d-current" aria-current="page">我的车</button>
+      <button type="button" disabled>API Key</button>
+      <button type="button" disabled>成员</button>
+      <button type="button" disabled>账号</button>
+    </nav>
+  </section>
+</div>

@@ -1,0 +1,130 @@
+<style>
+.dir-a{container:dir-a / inline-size;width:100%;height:450px;background:#fff;color:#202c3e;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:12px;line-height:1.5;font-style:normal;font-variant-numeric:tabular-nums;text-align:left;overflow:hidden;color-scheme:light}
+.dir-a *{box-sizing:border-box}
+.dir-a [hidden]{display:none!important}
+.dir-a section[data-view]{display:grid;grid-template-columns:135px minmax(0,1fr);height:100%;overflow:auto;overscroll-behavior:contain}
+.dir-a h2,.dir-a h3,.dir-a p{margin:0}
+.dir-a button{font:inherit;font-style:normal;appearance:none;opacity:1;cursor:default}
+.dir-a .a-sidebar{background:#f4f6f9;padding:20px 12px 12px;display:flex;flex-direction:column;gap:18px;min-width:0}
+.dir-a .a-brand{font-size:17px;font-weight:600;letter-spacing:0;padding:0 7px}
+.dir-a .a-brand-mark{display:inline-block;width:12px;height:12px;background:#2454d6;border-radius:3px;margin-right:7px}
+.dir-a .a-nav{display:grid;gap:13px}
+.dir-a .a-nav-group{display:grid;gap:2px}
+.dir-a .a-nav-label{color:#596579;font-size:12px;padding:0 8px 3px}
+.dir-a .a-nav button{display:flex;align-items:center;justify-content:space-between;width:100%;border:1px solid transparent;background:transparent;color:#455267;text-align:left;padding:5px 8px;border-radius:8px;min-height:29px}
+.dir-a .a-nav button[aria-current="page"]{background:#e5edff;color:#1945bd;font-weight:600;border-color:#d4e0ff}
+.dir-a .a-sidebar-foot{margin-top:auto;padding:8px 7px 0;color:#596579;border-top:1px solid #dce2ea}
+.dir-a .a-workspace{padding:21px 22px 14px;min-width:0;overflow:auto;overscroll-behavior:contain}
+.dir-a .a-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:17px}
+.dir-a .a-eyebrow{color:#596579;font-size:12px;margin-bottom:3px}
+.dir-a h2{font-size:23px;line-height:1.25;font-weight:600;letter-spacing:0}
+.dir-a h3{font-size:14px;line-height:1.4;font-weight:600}
+.dir-a .a-button{border:1px solid #d8dfe9;border-radius:8px;background:#fff;color:#37465d;padding:6px 10px;white-space:nowrap;min-height:32px}
+.dir-a .a-primary{background:#2454d6;border-color:#2454d6;color:#fff}
+.dir-a .a-counts{display:flex;align-items:baseline;gap:25px;padding-bottom:13px;border-bottom:1px solid #dce2ea;margin-bottom:12px}
+.dir-a .a-counts strong{font-size:29px;line-height:1.1;font-weight:650;letter-spacing:-1px;margin-right:6px}
+.dir-a .a-muted{color:#596579}
+.dir-a .a-notice{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;background:#fff8e9;border:1px solid #ead7a8;border-radius:8px;color:#785010;margin-bottom:14px}
+.dir-a .a-notice button{border:0;background:transparent;padding:0;color:#785010;white-space:nowrap;text-decoration:underline;text-underline-offset:3px}
+.dir-a .a-toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.dir-a .a-table-scroll{overflow-x:auto}
+.dir-a table{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+.dir-a th{font-weight:500;color:#596579;background:#f5f7fa;text-align:left;padding:6px 8px;border-bottom:1px solid #dce2ea}
+.dir-a td{padding:9px 8px;border-bottom:1px solid #e6eaf0}
+.dir-a td:first-child{font-weight:650}
+.dir-a .a-number{text-align:right}
+.dir-a .a-status{color:#226047;white-space:nowrap}
+.dir-a .a-status::before{content:"";display:inline-block;width:6px;height:6px;background:#33855f;border-radius:50%;margin-right:5px;vertical-align:middle}
+.dir-a .a-table-foot{display:flex;justify-content:space-between;gap:8px;margin-top:10px;color:#596579}
+.dir-a .a-sample{font-size:12px;color:#596579;margin-top:13px}
+.dir-a .a-balance{padding:0 0 15px;border-bottom:1px solid #dce2ea;margin-bottom:13px}
+.dir-a .a-balance-line{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:2px 0 8px}
+.dir-a .a-money{font-size:41px;font-weight:650;line-height:1.15;letter-spacing:-1.8px}
+.dir-a .a-meter{height:7px;border-radius:8px;background:#e7ecf5;overflow:hidden;margin:10px 0 7px}
+.dir-a .a-meter-fill{display:block;width:24.8%;height:100%;background:#2454d6}
+.dir-a .a-budget-meta{display:flex;justify-content:space-between;gap:8px;color:#596579}
+.dir-a .a-reset{color:#596579;margin-top:6px}
+.dir-a .a-key{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;background:#f4f7fc;border:1px solid #dce3ee;border-radius:8px;margin-bottom:15px}
+.dir-a .a-key p{margin-top:2px;color:#596579}
+.dir-a .a-member-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #e6eaf0}
+.dir-a .a-person{display:flex;align-items:center;gap:8px}
+.dir-a .a-avatar{display:grid;place-items:center;width:27px;height:27px;background:#edf1f7;border-radius:8px;font-weight:650;color:#465771}
+.dir-a .a-passenger-nav{gap:5px}
+@container dir-a (max-width:420px){
+ .dir-a section[data-view]{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;font-size:14px}
+ .dir-a .a-sidebar{padding:12px 14px;gap:10px}
+ .dir-a .a-brand{padding:0;font-size:18px}
+ .dir-a .a-nav{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+ .dir-a .a-nav-group{align-content:start}
+ .dir-a .a-nav-label{font-size:14px;padding:0 5px 2px}
+ .dir-a .a-nav button{font-size:14px;padding:5px;min-height:32px}
+ .dir-a .a-sidebar-foot{display:none}
+ .dir-a .a-workspace{padding:16px 14px;overflow:visible}
+ .dir-a .a-header{margin-bottom:16px}
+ .dir-a .a-eyebrow,.dir-a .a-sample{font-size:14px}
+ .dir-a h2{font-size:24px}
+ .dir-a h3{font-size:16px}
+ .dir-a .a-counts{gap:24px}
+ .dir-a .a-counts strong{font-size:30px}
+ .dir-a .a-notice{align-items:flex-start;flex-wrap:wrap}
+ .dir-a table{font-size:14px;min-width:320px}
+ .dir-a th,.dir-a td{padding:8px 6px}
+ .dir-a .a-button{font-size:14px;min-height:38px;padding:6px 9px}
+ .dir-a .a-key{gap:8px;padding:10px}
+ .dir-a .a-budget-meta,.dir-a .a-table-foot{flex-wrap:wrap}
+ .dir-a .a-passenger-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+</style>
+<div class="dir-a" lang="zh-CN">
+  <section data-view="admin" aria-label="晴昼工作台 · 管理员方向样机">
+    <aside class="a-sidebar">
+      <div class="a-brand"><span class="a-brand-mark" aria-hidden="true"></span>拼车</div>
+      <nav class="a-nav" aria-label="管理员导航（静态样机）">
+        <div class="a-nav-group"><p class="a-nav-label">车队</p><button type="button" disabled>成员 <span>24</span></button><button type="button" disabled aria-current="page">车辆 <span>4</span></button></div>
+        <div class="a-nav-group"><p class="a-nav-label">分析</p><button type="button" disabled>用量</button><button type="button" disabled>请求记录</button></div>
+        <div class="a-nav-group"><p class="a-nav-label">系统</p><button type="button" disabled>模型定价</button><button type="button" disabled>数据保留</button><button type="button" disabled>审计日志</button></div>
+      </nav>
+      <div class="a-sidebar-foot">管理工作区</div>
+    </aside>
+    <div class="a-workspace">
+      <header class="a-header"><div><p class="a-eyebrow">车队 / 车辆</p><h2>车队总览</h2></div><button class="a-button a-primary" type="button" disabled>添加车辆</button></header>
+      <div class="a-counts"><div><strong>24</strong><span class="a-muted">成员</span></div><div><strong>4</strong><span class="a-muted">车辆</span></div></div>
+      <div class="a-notice"><span><strong>2 条请求费用未知</strong> · 待核对定价</span><button type="button" disabled>查看请求</button></div>
+      <div class="a-toolbar"><h3>全部车辆</h3><span class="a-muted">本月 · USD</span></div>
+      <div class="a-table-scroll" tabindex="0" role="region" aria-label="车辆列表，可横向滚动">
+        <table aria-label="示例车队车辆与本月已知费用"><thead><tr><th scope="col">车辆</th><th scope="col">状态</th><th scope="col" class="a-number">成员</th><th scope="col" class="a-number">已知费用</th></tr></thead><tbody>
+          <tr><td>研发一车</td><td><span class="a-status">可用</span></td><td class="a-number">8</td><td class="a-number">$86.20</td></tr>
+          <tr><td>产品二车</td><td><span class="a-status">可用</span></td><td class="a-number">6</td><td class="a-number">$42.80</td></tr>
+          <tr><td>设计三车</td><td><span class="a-status">可用</span></td><td class="a-number">5</td><td class="a-number">$31.50</td></tr>
+          <tr><td>协作四车</td><td><span class="a-status">可用</span></td><td class="a-number">5</td><td class="a-number">$19.10</td></tr>
+        </tbody></table>
+      </div>
+      <div class="a-table-foot"><span>共 4 辆 · 已全部显示</span><span>不含未知费用</span></div>
+      <p class="a-sample">方向样机 · 示例数据 · 控件仅展示</p>
+    </div>
+  </section>
+  <section data-view="passenger" hidden aria-label="晴昼工作台 · 乘客方向样机">
+    <aside class="a-sidebar">
+      <div class="a-brand"><span class="a-brand-mark" aria-hidden="true"></span>拼车</div>
+      <nav class="a-nav a-passenger-nav" aria-label="乘客导航（静态样机）">
+        <div class="a-nav-group"><p class="a-nav-label">我的车队</p><button type="button" disabled aria-current="page">我的概览</button><button type="button" disabled>成员列表</button></div>
+        <div class="a-nav-group"><p class="a-nav-label">个人</p><button type="button" disabled>API Key</button><button type="button" disabled>我的账户</button></div>
+      </nav>
+      <div class="a-sidebar-foot">林晓 · 乘客</div>
+    </aside>
+    <div class="a-workspace">
+      <header class="a-header"><div><p class="a-eyebrow">研发一车 / 我的概览</p><h2>你好，林晓</h2></div><span class="a-status">可用</span></header>
+      <div class="a-balance">
+        <p class="a-muted">我的本月剩余额度</p>
+        <div class="a-balance-line"><strong class="a-money">$37.60</strong><span class="a-muted">USD</span></div>
+        <div class="a-meter" role="meter" aria-label="本月额度已用" aria-valuemin="0" aria-valuemax="50" aria-valuenow="12.4" aria-valuetext="已用 12.40 美元，总额度 50 美元"><span class="a-meter-fill"></span></div>
+        <div class="a-budget-meta"><span>已用 <strong>$12.40</strong></span><span>额度上限 <strong>$50.00</strong></span></div>
+        <p class="a-reset">重置日期：2026-10-01 UTC</p>
+      </div>
+      <div class="a-key"><div><h3>API Key</h3><p>用于接入你的 API 客户端</p></div><button class="a-button a-primary" type="button" disabled>管理密钥</button></div>
+      <div class="a-toolbar"><h3>同车成员 <span class="a-muted">8</span></h3><button class="a-button" type="button" disabled>成员列表 →</button></div>
+      <div class="a-member-row"><div class="a-person"><span class="a-avatar" aria-hidden="true">林</span><span>林晓 <span class="a-muted">· 我</span></span></div><button class="a-button" type="button" disabled>我的账户 →</button></div>
+      <p class="a-sample">方向样机 · 示例数据 · 控件仅展示</p>
+    </div>
+  </section>
+</div>
