@@ -21,6 +21,6 @@
   "children": [],
   "parent": "09-04-passenger-quota-usage",
   "relatedFiles": [],
-  "notes": "2026-09-14 状态校正：主体已随65826c03实现，不再标记planning；本轮随passenger-billing进行真实浏览器集成验收。历史PRD未验证条目不自动勾选；最终覆盖与限制见交付报告。",
+  "notes": "2026-09-14 本轮后端/现有功能收尾通过：筛选游标、真实事件展开、预览确认幂等、设置重启/策略安全、事务审计及续批。全量test/vet/双构建、两套Chromium与独立审查通过；见research/closure-acceptance.md。用户已确认两批本地提交；前端暂缓项/父任务整体尚未完成，不自动归档。",
   "meta": {}
 }

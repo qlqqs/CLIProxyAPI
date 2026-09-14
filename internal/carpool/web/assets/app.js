@@ -9,7 +9,7 @@ function emptyPage() {
 const state = {
   session: null,
   csrf: "",
-  route: location.hash.slice(1) || "/",
+  route: location.hash.slice(1).split("?")[0] || "/",
   period: "today",
   refreshTimer: 0,
   pages: {
@@ -884,14 +884,68 @@ async function renderAdminUsage(content) {
 }
 
 function requestDetailEventMarkup(event) {
-  const usage = event.usage_known ? `${formatNumber(event.total_tokens)} Token` : "上游未提供用量";
+  const tokens = [["输入", "input_tokens"], ["输出", "output_tokens"], ["缓存", "cached_tokens"], ["缓存读取", "cache_read_tokens"], ["缓存写入", "cache_write_tokens"], ["推理", "reasoning_tokens"], ["合计", "total_tokens"]].map(([label, key]) => `<span>${label} Token：${event.usage_known === true && Number.isSafeInteger(event[key]) && event[key] >= 0 ? formatNumber(event[key]) : "上游未提供"}</span>`).join("");
   const cost = event.cost_usd == null ? "费用未知" : `$${escapeHTML(event.cost_usd)}`;
-  return `<div class="request-event"><div><strong>${escapeHTML(event.safe_label || event.provider || "上游尝试")}</strong><span>${escapeHTML(event.model || "模型未提供")} · ${escapeHTML(formatTime(event.requested_at))}</span></div><div class="request-event-numbers"><span>${escapeHTML(usage)}</span><span>${escapeHTML(cost)}</span><span>${escapeHTML(event.pricing_status || "未计价")}</span></div></div>`;
+  return `<div class="request-event"><div><strong>${escapeHTML(event.safe_label || event.provider || "上游尝试")}</strong><span>${escapeHTML(event.model || "模型未提供")} · ${escapeHTML(formatTime(event.requested_at))}</span><span>账号 ${escapeHTML(event.account_ref || "-")}</span></div><div class="request-event-numbers">${tokens}<span>${cost}</span><span>${escapeHTML(event.pricing_status || "未计价")}</span></div></div>`;
 }
 
 function requestDetailMarkup(item) {
-  const amount = item.billed_usd == null ? (Number(item.unknown_cost_events || 0) ? "已确认小计 · 费用不完整" : "未计价") : `$${escapeHTML(item.billed_usd)}`;
-  return `<details class="request-row"><summary><span class="request-main"><strong>${escapeHTML(item.display_name || item.user_ref || "未归属")}</strong><span class="muted">${escapeHTML(item.model || "模型未提供")} · ${escapeHTML(formatTime(item.started_at))}</span></span><span class="request-status">${statusLabel(item.outcome)}</span><span class="request-amount">${amount}<small>${formatNumber(item.event_count)} 个上游事件</small></span></summary><div class="request-detail"><div class="request-meta"><span>请求 ID <code>${escapeHTML(item.request_id)}</code></span><span>车辆 ${escapeHTML(item.car_ref || "-")}</span><span>API Key ${escapeHTML(item.api_key_ref || "-")}</span><span>结果 ${escapeHTML(item.status_class || item.reason_code || "-")}</span></div>${item.events?.length ? item.events.map(requestDetailEventMarkup).join("") : `<div class="empty compact-empty">没有上游事件</div>`}</div></details>`;
+  const incomplete = item.billing_status === "unknown" || Number(item.unknown_cost_events || 0) > 0;
+  const amount = item.billed_usd == null ? (incomplete ? "费用未知 · 费用不完整" : "未计价") : `$${escapeHTML(item.billed_usd)}${incomplete ? " · 已确认小计，费用不完整" : ""}`;
+  const loaded = Array.isArray(item.events);
+  return `<details class="request-row" data-request-id="${escapeHTML(item.request_id)}" data-request-loaded="${loaded}"><summary><span class="request-main"><strong>${escapeHTML(item.display_name || item.user_ref || "未归属")}</strong><span class="muted">${escapeHTML(item.model || "模型未提供")} · ${escapeHTML(formatTime(item.started_at))}</span></span><span class="request-status">${statusLabel(item.outcome)}</span><span class="request-amount">${amount}<small>${formatNumber(item.event_count)} 个上游事件</small></span></summary><div class="request-detail"><div class="request-meta"><span>请求 ID <code>${escapeHTML(item.request_id)}</code></span><span>车辆 ${escapeHTML(item.car_ref || "-")}</span><span>API Key ${escapeHTML(item.api_key_ref || "-")}</span><span>结果 ${escapeHTML(item.status_class || item.reason_code || "-")}</span></div><div data-request-events role="status">${loaded ? (item.events.length ? item.events.map(requestDetailEventMarkup).join("") : `<div class="empty compact-empty">没有上游事件</div>`) : "展开后加载上游事件"}</div></div></details>`;
+}
+
+function bindRequestDetails(content, items) {
+  content.querySelectorAll("[data-request-id]").forEach(row => {
+    const region = row.querySelector("[data-request-events]");
+    let loading = false;
+    let failed = false;
+    const load = async () => {
+      if (loading || row.dataset.requestLoaded === "true") return;
+      loading = true;
+      region.textContent = "正在加载上游事件...";
+      try {
+        const detail = await request(`/admin/usage/requests/${encodeURIComponent(row.dataset.requestId)}`);
+        if (detail?.request_id !== row.dataset.requestId || !Array.isArray(detail.events)) throw new Error("invalid_request_detail");
+        region.innerHTML = detail.events.length ? detail.events.map(requestDetailEventMarkup).join("") : `<div class="empty compact-empty">没有上游事件</div>`;
+        row.dataset.requestLoaded = "true";
+        const item = items.find(item => item.request_id === detail.request_id);
+        if (item) item.events = detail.events;
+      } catch (_) {
+        failed = true;
+        region.innerHTML = `<p>上游事件加载失败，请手动重试。</p><button class="button secondary compact" type="button" data-request-retry>重试加载</button>`;
+        region.querySelector("[data-request-retry]").addEventListener("click", load);
+      } finally {
+        loading = false;
+      }
+    };
+    row.addEventListener("toggle", async () => {
+      if (row.open && !failed) await load();
+    });
+  });
+}
+
+const requestFilterKeys = ["model", "outcome", "billing_status", "user_ref", "car_ref", "account_ref", "api_key_ref", "request_id"];
+
+function restoreRequestFilters() {
+  const query = location.hash.slice(1).split("?").slice(1).join("?");
+  const source = new URLSearchParams(query);
+  const params = new URLSearchParams();
+  // Keep only supported filters; cursors belong to page state, not the URL.
+  if (source.has("from") || source.has("to")) {
+    params.set("from", source.get("from") || "");
+    params.set("to", source.get("to") || "");
+  } else params.set("period", source.get("period") || "30d");
+  const values = {};
+  for (const key of requestFilterKeys) {
+    values[key] = (source.get(key) || "").trim();
+    if (values[key]) params.set(key, values[key]);
+  }
+  const path = `/admin/usage/requests?${params.toString()}`;
+  if (state.requestFilters !== path) state.pages.usageRequests = emptyPage();
+  state.requestFilterValues = values;
+  state.requestFilters = path;
 }
 
 const retentionOperationLabels = {
@@ -900,39 +954,123 @@ const retentionOperationLabels = {
   reset_current_period: "重置本期用量",
 };
 
-function showRetentionConfirmation(button, operation, preview, content) {
+function validRetentionCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function showRetentionConfirmation(button, operation, preview) {
   const panel = button.closest(".retention-panel");
   if (!panel) return;
+  if (!preview || typeof preview.job_id !== "string" || !preview.job_id.trim() || preview.operation !== operation || preview.confirmation_required !== true || !validRetentionCount(preview.expected_count) || !validRetentionCount(preview.in_flight_count)) {
+    toast("预览结果无效，请重新预览；未执行任何操作。");
+    return;
+  }
+  const jobID = preview.job_id;
+  panel.querySelector("[data-retention-result]")?.remove();
   button.hidden = true;
   const confirmation = document.createElement("div");
   confirmation.className = "retention-confirm";
-  const impact = operation === "reset_current_period" ? "本期已确认累计会归零，限额和账期边界不变。" : operation === "closed_periods" ? "已结束账期汇总和关联引用会被删除。" : "本期已确认金额和费用未知数量不会改变。";
-  confirmation.innerHTML = `<strong>确认${escapeHTML(retentionOperationLabels[operation] || "操作")}</strong><p>预计影响 ${formatNumber(preview.expected_count)} 项，进行中的请求 ${formatNumber(preview.in_flight_count)} 项。执行后不可撤销；${impact}</p><div class="retention-confirm-actions"><button class="button secondary compact" type="button" data-retention-cancel>取消</button><button class="button danger compact" type="button" data-retention-confirm>确认执行</button></div>`;
+  const impact = operation === "reset_current_period" ? "本期已确认累计会归零，限额和账期边界不变；在途请求完成后可能再次增加用量。" : operation === "closed_periods" ? "已结束账期汇总和关联引用会被删除。" : "本期已确认金额和费用未知数量不会改变；进行中及不完整请求不会删除。";
+  confirmation.innerHTML = `<strong>确认${escapeHTML(retentionOperationLabels[operation] || "操作")}</strong><p>本批预计影响 ${formatNumber(preview.expected_count)} 项，在途或不完整请求 ${formatNumber(preview.in_flight_count)} 项。每批最多 1,000 个逻辑请求或账期，更多数据需重新预览。执行后不可撤销；${impact}</p><div class="retention-confirm-actions"><button class="button secondary compact" type="button" data-retention-cancel>取消</button><button class="button danger compact" type="button" data-retention-confirm>确认执行</button></div>`;
   panel.append(confirmation);
-  confirmation.querySelector("[data-retention-cancel]").addEventListener("click", () => {
+  const result = document.createElement("p");
+  result.setAttribute("data-retention-result", "");
+  result.setAttribute("role", "status");
+  panel.append(result);
+  const cancelButton = confirmation.querySelector("[data-retention-cancel]");
+  const confirmButton = confirmation.querySelector("[data-retention-confirm]");
+  let active = true;
+  let busy = false;
+  const closeConfirmation = () => {
+    active = false;
     confirmation.remove();
     button.hidden = false;
+    button.focus();
+  };
+  const stalePreview = () => {
+    result.textContent = "预览已失效或数据已变化，请重新预览后确认。";
+    closeConfirmation();
+  };
+  const showResult = job => {
+    if (!job || job.job_id !== jobID || job.operation !== operation) return false;
+    if (job.status === "completed" && validRetentionCount(job.deleted_count) && validRetentionCount(job.in_flight_count)) {
+      const action = operation === "reset_current_period" ? "重置" : "删除";
+      const unit = operation === "usage_details" ? "个逻辑请求" : "个账期";
+      result.textContent = `${retentionOperationLabels[operation]}已完成：实际${action} ${formatNumber(job.deleted_count)} ${unit}；在途或不完整请求 ${formatNumber(job.in_flight_count)} 项。${operation === "reset_current_period" ? "在途请求完成后可能再次增加用量。" : "进行中及不完整请求仍受保护。"}每批最多 1,000 项，更多数据需重新预览。`;
+      closeConfirmation();
+      return true;
+    }
+    if (job.status === "queued" || job.status === "failed") {
+      result.textContent = "本批尚未完成，可点击“重试确认”使用同一预览重试；不会自动执行。";
+      return true;
+    }
+    return false;
+  };
+  cancelButton.addEventListener("click", () => {
+    if (!active || busy) return;
+    result.remove();
+    closeConfirmation();
   });
-  confirmation.querySelector("[data-retention-confirm]").addEventListener("click", async event => {
-    setButtonBusy(event.currentTarget, true);
+  confirmButton.addEventListener("click", async () => {
+    if (!active || busy) return;
+    busy = true;
+    setButtonBusy(confirmButton, true);
+    setButtonBusy(cancelButton, true);
+    result.textContent = "正在确认本批操作，请勿重复提交。";
     try {
-      await request("/admin/retention/jobs", { method: "POST", body: JSON.stringify({ operation, confirm: true }) });
-      toast("清理作业已完成");
-      await renderRetention(content);
-    } catch (error) {
-      toast(error.message);
-      setButtonBusy(event.currentTarget, false);
+      try {
+        const job = await request("/admin/retention/jobs", { method: "POST", body: JSON.stringify({ job_id: jobID, operation, confirm: true }) });
+        if (showResult(job)) return;
+      } catch (error) {
+        if (error.status === 409) {
+          stalePreview();
+          return;
+        }
+      }
+      // Resolve an ambiguous response once using a safe GET, never another POST.
+      try {
+        const job = await request(`/admin/retention/jobs/${encodeURIComponent(jobID)}`);
+        if (!showResult(job)) result.textContent = "暂时无法确认操作结果；可点击“重试确认”使用同一预览重试，不会自动执行。";
+      } catch (error) {
+        if (error.status === 409 || error.status === 404) stalePreview();
+        else result.textContent = "暂时无法查询操作结果；可点击“重试确认”使用同一预览重试，不会自动执行。";
+      }
+    } finally {
+      busy = false;
+      if (active) {
+        confirmButton.textContent = "重试确认";
+        setButtonBusy(confirmButton, false);
+        setButtonBusy(cancelButton, false);
+      }
     }
   });
+  confirmButton.focus();
 }
 
 async function renderAdminRequests(content, reset = true) {
+  restoreRequestFilters();
   const path = state.requestFilters || "/admin/usage/requests?period=30d";
   const page = await loadPage("usageRequests", path, reset);
   const values = state.requestFilterValues;
   const filters = `<form id="request-filter" class="report-toolbar request-filter"><div class="field"><label for="request-model">模型</label><input id="request-model" name="model" placeholder="请求或实际模型" value="${escapeHTML(values.model || "")}"></div><div class="field"><label for="request-outcome">结果</label><select id="request-outcome" name="outcome"><option value="">全部</option><option value="succeeded"${values.outcome === "succeeded" ? " selected" : ""}>成功</option><option value="failed"${values.outcome === "failed" ? " selected" : ""}>失败</option><option value="rejected"${values.outcome === "rejected" ? " selected" : ""}>拒绝</option><option value="incomplete"${values.outcome === "incomplete" ? " selected" : ""}>不完整</option></select></div><div class="field"><label for="request-billing">计价状态</label><select id="request-billing" name="billing_status"><option value="">全部</option><option value="priced"${values.billing_status === "priced" ? " selected" : ""}>已计价</option><option value="unknown"${values.billing_status === "unknown" ? " selected" : ""}>费用未知</option><option value="legacy_unpriced"${values.billing_status === "legacy_unpriced" ? " selected" : ""}>历史未计价</option></select></div><div class="field"><label for="request-user">用户引用</label><input id="request-user" name="user_ref" placeholder="usr_..." value="${escapeHTML(values.user_ref || "")}"></div><div class="field"><label for="request-car">车辆引用</label><input id="request-car" name="car_ref" placeholder="car_..." value="${escapeHTML(values.car_ref || "")}"></div><div class="field"><label for="request-account">账号引用</label><input id="request-account" name="account_ref" placeholder="acct_..." value="${escapeHTML(values.account_ref || "")}"></div><div class="field"><label for="request-key">API Key 引用</label><input id="request-key" name="api_key_ref" placeholder="cpk_..." value="${escapeHTML(values.api_key_ref || "")}"></div><div class="field"><label for="request-id">请求 ID</label><input id="request-id" name="request_id" value="${escapeHTML(values.request_id || "")}"></div><button class="button" type="submit">筛选</button></form>`;
   content.innerHTML = `<div class="section-header"><div><h2>请求明细</h2><p>一行一个逻辑请求，展开查看全部 CPA 上游事件。默认最近 30 天。</p></div></div>${filters}<div class="request-list">${page.items.length ? page.items.map(requestDetailMarkup).join("") : `<div class="empty">当前条件下没有请求记录</div>`}</div>${paginationFooter(page, "个逻辑请求")}`;
-  content.querySelector("#request-filter").addEventListener("submit", async event => { event.preventDefault(); const form = new FormData(event.currentTarget); const params = new URLSearchParams({ period: "30d" }); const filterValues = {}; for (const key of ["model", "outcome", "billing_status", "user_ref", "car_ref", "account_ref", "api_key_ref", "request_id"]) { const value = String(form.get(key) || "").trim(); filterValues[key] = value; if (value) params.set(key, value); } state.requestFilterValues = filterValues; state.requestFilters = `/admin/usage/requests?${params.toString()}`; state.pages.usageRequests = emptyPage(); try { await renderAdminRequests(content, true); } catch (error) { toast(error.message); } });
+  bindRequestDetails(content, page.items);
+  content.querySelector("#request-filter").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const params = new URLSearchParams(state.requestFilters.split("?")[1]);
+    for (const key of requestFilterKeys) {
+      const value = String(form.get(key) || "").trim();
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    const hash = `#/requests?${params.toString()}`;
+    if (location.hash !== hash) location.hash = hash;
+    else {
+      state.pages.usageRequests = emptyPage();
+      try { await renderAdminRequests(content, true); } catch (error) { toast(error.message); }
+    }
+  });
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => { setButtonBusy(event.currentTarget, true); try { await renderAdminRequests(content, false); } catch (error) { toast(error.message); setButtonBusy(event.currentTarget, false); } });
 }
 
@@ -940,7 +1078,7 @@ async function renderRetention(content) {
   const settings = await request("/admin/retention");
   const current = settings.effective_days === 0 ? "永久" : `${settings.effective_days} 天`;
   content.innerHTML = `<div class="section-header"><div><h2>数据保留</h2><p>当前明细保留：${escapeHTML(current)} · 来源：${escapeHTML(settings.source === "database" ? "管理端设置" : "配置文件默认")}</p></div></div><div class="retention-layout"><section class="retention-panel"><h3>明细保留期限</h3><p class="muted">仅影响请求和上游事件明细；账期金额汇总独立保存。</p><form id="retention-form"><label><input type="radio" name="days" value="90"${settings.effective_days === 90 ? " checked" : ""}>90 天</label><label><input type="radio" name="days" value="180"${settings.effective_days === 180 ? " checked" : ""}>半年（180 天）</label><label><input type="radio" name="days" value="365"${settings.effective_days === 365 ? " checked" : ""}>一年（365 天）</label><label><input type="radio" name="days" value="0"${settings.effective_days === 0 ? " checked" : ""}>永久保留</label><div class="form-actions"><button class="button" type="submit">保存设置</button><button class="button secondary" id="restore-retention" type="button">恢复配置默认</button></div></form></section><section class="retention-panel"><h3>明细清理</h3><p class="muted">删除已完成请求及关联事件，不改变账期已确认金额。</p><button class="button danger" data-retention-op="usage_details">预览并清理明细</button></section><section class="retention-panel"><h3>已结束账期</h3><p class="muted">删除账期汇总前请确认历史金额不再需要核对。</p><button class="button danger" data-retention-op="closed_periods">预览并删除账期</button></section><section class="retention-panel"><h3>重置本期用量</h3><p class="muted">归零当前期已确认累计，限额和账期边界保持不变；在途请求完成后可能再次增加。</p><button class="button danger" data-retention-op="reset_current_period">预览并重置</button></section></div>`;
-  content.querySelector("#retention-form").addEventListener("submit", async event => { event.preventDefault(); const days = Number(new FormData(event.currentTarget).get("days")); try { await request("/admin/retention", { method: "PATCH", body: JSON.stringify({ days }) }); toast("保留设置已保存"); renderRetention(content); } catch (error) { toast(error.message); } });
+  content.querySelector("#retention-form").addEventListener("submit", async event => { event.preventDefault(); const selected = new FormData(event.currentTarget).get("days"); if (selected === null) { toast("请选择保留期限后保存。"); return; } const days = Number(selected); try { await request("/admin/retention", { method: "PATCH", body: JSON.stringify({ days }) }); toast("保留设置已保存"); renderRetention(content); } catch (error) { toast(error.message); } });
   content.querySelector("#restore-retention").addEventListener("click", async () => { try { await request("/admin/retention", { method: "PATCH", body: JSON.stringify({ days: null }) }); toast("已恢复配置默认"); renderRetention(content); } catch (error) { toast(error.message); } });
   content.querySelectorAll("[data-retention-op]").forEach(button => button.addEventListener("click", async () => {
     const operation = button.dataset.retentionOp;
@@ -948,9 +1086,9 @@ async function renderRetention(content) {
     try {
       const preview = await request("/admin/retention/preview", { method: "POST", body: JSON.stringify({ operation }) });
       setButtonBusy(button, false);
-      showRetentionConfirmation(button, operation, preview, content);
+      showRetentionConfirmation(button, operation, preview);
     } catch (error) {
-      toast(error.message);
+      toast("预览失败，请稍后重新预览；未执行任何操作。");
       setButtonBusy(button, false);
     }
   }));
@@ -1017,7 +1155,7 @@ function renderPassword(content) {
 }
 
 window.addEventListener("hashchange", () => {
-  state.route = location.hash.slice(1) || "/";
+  state.route = location.hash.slice(1).split("?")[0] || "/";
   if (state.session) renderShell();
 });
 
