@@ -88,3 +88,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 请求明细与保留确认收尾提交
+<!-- trellis-session: v=2 fp=b534428126f8bae7 -->
+
+**Date**: 2026-09-14
+**Task**: 请求明细与保留确认收尾提交
+**Branch**: `feature/carpool-final-delivery`
+
+### Summary
+
+用户确认两批本地提交：固定范围筛选分页、真实事件加载、预览绑定/重复确认幂等、原子清理审计、设置持久化与安全策略读取、未知小计提示。全量test/vet、完整carpool race、双构建、42项Node及两套真实Chromium验收通过。未提交已有design-previews，未推送/部署。任务保留in_progress：前端完整布局、主行总Token/安全Key名称、完整时间选择UI及父任务整体暂缓项未自动归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc89f4fc` | Fix carpool usage pagination and atomic retention confirmation |
+| `eb27d323` | Complete carpool retention workflow checks and acceptance evidence |
+
+### Status
+
+[OK] **Completed**
