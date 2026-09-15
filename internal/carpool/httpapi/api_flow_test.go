@@ -320,11 +320,11 @@ func assertHTTPStatus(t *testing.T, response *httptest.ResponseRecorder, want in
 func responseCookie(t *testing.T, response *httptest.ResponseRecorder, name string) *http.Cookie {
 	t.Helper()
 	for _, cookie := range response.Result().Cookies() {
-		if cookie.Name == name {
+		if cookie.Name == name && cookie.Value != "" {
 			return cookie
 		}
 	}
-	t.Fatalf("response does not contain cookie %q", name)
+	t.Fatalf("response does not contain non-empty cookie %q", name)
 	return nil
 }
 

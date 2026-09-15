@@ -343,11 +343,10 @@ function loginView(message = "") {
   closeEntityPanels();
   document.querySelector("#app").innerHTML = `<main class="login-shell">
     <section class="login-story" aria-labelledby="login-title">
-      <h1 id="login-title">来不及解释了，快上车！</h1>
-      <p>乘客查看本期额度、管理 API Key；管理员分配车辆、成员与上游账号。</p>
+      <h1 id="login-title">来不及解释了，<br>快上车！</h1>
     </section>
     <form class="login-panel" id="login-form">
-      <div class="login-intro"><h2>上车</h2><p>使用售票员下发的专属车票。</p></div>
+      <div class="login-intro"><h2>检票口</h2><p>使用售票员下发的专属车票。</p></div>
       ${message ? `<div class="error-banner">${escapeHTML(message)}</div>` : ""}
       <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="64"></div>
       <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128"></div>
@@ -417,8 +416,6 @@ function renderShell() {
     <div class="app-workspace">
       <header class="topbar">
         <button class="icon-button" id="nav-toggle" type="button" aria-controls="app-rail" aria-expanded="false" aria-label="展开导航"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-        <div class="topbar-brand"><strong>工作台</strong></div>
-        <div class="topbar-title"><span>${escapeHTML(routeTitles[state.route] || "拼车管理")}</span></div>
         <div class="topbar-actions"><span class="tag">${state.session.role === "carpool_admin" ? "管理员" : "乘客"}</span>${statusLabel(state.session.module_status || "unknown")}<span class="user-chip">${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout" type="button">退出</button></div>
       </header>
       <main class="main"><div class="content" id="content" data-page="${escapeHTML(state.route)}"><div class="loading" role="status">正在加载...</div></div></main>
@@ -503,8 +500,6 @@ async function renderRoute() {
 }
 
 function renderShellFrameTitle() {
-  const title = document.querySelector(".topbar-title span");
-  if (title) title.textContent = routeTitles[state.route] || "拼车管理";
   document.querySelectorAll("[data-route]").forEach(button => button.setAttribute("aria-current", button.dataset.route === state.route ? "page" : "false"));
 }
 
@@ -713,7 +708,7 @@ async function renderUsers(content, reset) {
   content.innerHTML = `<div class="section-header"><div><h2>用户管理</h2><p>共 ${formatNumber(page.total)} 名用户 · 选择用户后在右侧管理</p></div><button class="button" id="create-user">创建用户</button></div>
     <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="用户列表">
       ${searchBar("users", "按用户名、展示名或引用搜索")}
-      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.username)}</strong>${item.display_name && item.display_name !== item.username ? `<span class="muted">${escapeHTML(item.display_name)}</span>` : ""}</div><div class="entity-meta"><span>${item.role === "carpool_admin" ? "管理员" : "乘客"}</span><span>${item.must_change_password ? "待完成首次改密" : "首次改密已完成"}</span><span>创建于 ${escapeHTML(formatTime(item.created_at))}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.users ? "没有匹配的用户" : "暂无用户，请先创建用户。"}</div>`}
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.username)}</strong>${item.display_name && item.display_name !== item.username ? `<span class="muted">${escapeHTML(item.display_name)}</span>` : ""}</div><div class="entity-meta"><span>${item.role === "carpool_admin" ? "管理员" : "乘客"}</span><span>创建于 ${escapeHTML(formatTime(item.created_at))}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.users ? "没有匹配的用户" : "暂无用户，请先创建用户。"}</div>`}
       ${paginationFooter(page, "名用户")}</section>${entityEmptyMarkup("用户")}</div>`;
   content.querySelector("#create-user").addEventListener("click", showUserDialog);
   bindSearch(content, "users", async reset => { try { await renderUsers(content, reset); } catch (error) { toast(error.message); } });
@@ -777,12 +772,12 @@ async function showUserManagement(initialUser) {
   function paint() {
     if (!dialog.isConnected || !dialog.open) return;
     const keyRows = keyPage.items.map(key => `<tr><td>${escapeHTML(key.name)}</td><td class="code-ref">${escapeHTML(key.key_ref)}</td><td>${statusLabel(key.status)}</td><td>${escapeHTML(formatTime(key.expires_at))}</td><td>${escapeHTML(formatTime(key.last_used_at))}</td><td>${key.status === "active" ? `<button class="button danger compact" data-admin-revoke-key="${escapeHTML(key.key_ref)}">撤销</button>` : ""}</td></tr>`).join("");
-    setDialogContent(dialog, "管理用户", `<div class="entity-summary"><strong>${escapeHTML(user.username)}</strong><span>${user.role === "carpool_admin" ? "拼车管理员" : "乘客"} · ${escapeHTML(user.user_ref)}</span></div>
+    setDialogContent(dialog, "管理用户", `<div class="entity-summary"><div class="entity-summary-head"><strong>${escapeHTML(user.username)}</strong>${statusLabel(user.status)}</div><span>${user.role === "carpool_admin" ? "拼车管理员" : "乘客"}${user.display_name && user.display_name !== user.username ? ` · ${escapeHTML(user.display_name)}` : ""} · <span class="code-ref">${escapeHTML(user.user_ref)}</span></span></div>
       <form id="edit-user-form">
         <div class="form-row"><div class="field"><label for="edit-display-name">默认展示名</label><input id="edit-display-name" name="default_display_name" value="${escapeHTML(user.display_name)}" required maxlength="64"></div><div class="field"><label for="edit-user-status">状态</label><select id="edit-user-status" name="status"><option value="active"${user.status === "active" ? " selected" : ""}>启用</option><option value="disabled"${user.status === "disabled" ? " selected" : ""}>禁用</option></select></div></div>
         <div class="form-actions"><button class="button secondary" type="button" data-reset-password>重置密码</button><button class="button" type="submit">保存用户</button></div>
       </form>
-      <div class="subsection-head"><div><h3>API Key</h3><p>${formatNumber(keyPage.total)} 个记录</p></div>${user.role === "passenger" ? `<button class="button danger compact" type="button" data-revoke-all-keys>撤销全部</button>` : ""}</div>
+      <div class="subsection-head"><h3>API Key<span class="subsection-count">${formatNumber(keyPage.total)}</span></h3>${user.role === "passenger" ? `<button class="button danger compact" type="button" data-revoke-all-keys>撤销全部</button>` : ""}</div>
       ${keyRows ? `<div class="table-wrap"><table><thead><tr><th>名称</th><th>Key 引用</th><th>状态</th><th>过期时间</th><th>最近使用</th><th></th></tr></thead><tbody>${keyRows}</tbody></table></div>` : `<div class="empty compact-empty">该用户没有 API Key</div>`}
       ${paginationFooter(keyPage, "个 Key")}`);
 
@@ -918,19 +913,17 @@ async function showCarManagement(car) {
     const assignment = candidate.assigned ? "（将从其他车辆移入）" : "";
     return `<option value="${escapeHTML(candidate.candidate_ref)}">${escapeHTML(candidate.provider)} · ${escapeHTML(candidate.candidate_ref.slice(-8))} ${assignment}</option>`;
   }).join("");
-  setDialogContent(dialog, "管理车辆", `<div class="entity-summary"><strong>${escapeHTML(car.name)}</strong><span>${escapeHTML(car.car_ref)}</span></div>
-    <form id="edit-car-form">
-      <div class="form-row"><div class="field"><label for="edit-car-name">名称</label><input id="edit-car-name" name="name" value="${escapeHTML(car.name)}" required maxlength="80"></div><div class="field"><label for="edit-car-status">状态</label><select id="edit-car-status" name="status"><option value="active"${car.status === "active" ? " selected" : ""}>启用</option><option value="disabled"${car.status === "disabled" ? " selected" : ""}>禁用</option><option value="retired"${car.status === "retired" ? " selected" : ""}>退役</option></select></div></div>
-      <div class="field"><label for="edit-car-description">说明</label><textarea id="edit-car-description" name="description" maxlength="500">${escapeHTML(car.description || "")}</textarea></div>
-      <div class="field"><label for="edit-seat-limit">席位上限（留空表示不限）</label><input id="edit-seat-limit" name="seat_limit" type="number" min="1" value="${car.seat_limit || ""}"></div>
+  setDialogContent(dialog, "管理车辆", `<div class="entity-summary"><div class="entity-summary-head"><strong>${escapeHTML(car.name)}</strong>${statusLabel(car.status)}</div><span class="code-ref">${escapeHTML(car.car_ref)}</span></div>
+    <form id="edit-car-form" class="entity-form">
+      <div class="form-row-4"><div class="field"><label for="edit-car-name">名称</label><input id="edit-car-name" name="name" value="${escapeHTML(car.name)}" required maxlength="80"></div><div class="field"><label for="edit-car-status">状态</label><select id="edit-car-status" name="status"><option value="active"${car.status === "active" ? " selected" : ""}>启用</option><option value="disabled"${car.status === "disabled" ? " selected" : ""}>禁用</option><option value="retired"${car.status === "retired" ? " selected" : ""}>退役</option></select></div><div class="field"><label for="edit-seat-limit">席位上限</label><input id="edit-seat-limit" name="seat_limit" type="number" min="1" placeholder="不限" value="${car.seat_limit || ""}"></div><div class="field"><label for="edit-car-description">说明</label><input id="edit-car-description" name="description" maxlength="500" value="${escapeHTML(car.description || "")}"></div></div>
       <div class="form-actions"><button class="button" type="submit">保存车辆</button></div>
     </form>
-    <div class="subsection-head"><div><h3>成员</h3><p>${formatNumber(members.total)} 名当前成员</p></div></div>
-    ${(members.items || []).length ? `<div class="compact-list">${members.items.map(item => `<div><span><strong>${escapeHTML(item.display_name)}</strong><small>${escapeHTML(formatTime(item.started_at))} · ${item.billing && item.billing.status !== "not_configured" ? `本期 $${escapeHTML(item.billing.used_usd || "0")} / $${escapeHTML(item.billing.limit_usd || "0")} · 剩余 $${escapeHTML(item.billing.remaining_usd || "0")}` : (item.monthly_limit_usd == null ? "额度待设置" : `额度 $${escapeHTML(item.monthly_limit_usd)}`)}</small></span><span class="inline-actions"><button class="button secondary compact" data-edit-member-limit="${escapeHTML(item.member_ref)}" data-member-name="${escapeHTML(item.display_name)}" data-member-limit="${escapeHTML(item.monthly_limit_usd || "")}">调额</button><button class="button danger compact" data-remove-member="${escapeHTML(item.member_ref)}">移除</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无成员</div>`}
-    ${passengerOptions && car.status !== "retired" ? `<form id="add-member" class="inline-editor"><div class="field"><label for="member-user">乘客</label><select id="member-user" name="user_ref" required><option value="">选择乘客</option>${passengerOptions}</select></div><div class="field"><label for="member-display-name">车内展示名</label><input id="member-display-name" name="display_name" required maxlength="64"></div><div class="field"><label for="member-limit">月度额度（USD）</label><input id="member-limit" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" placeholder="例如 25.00" required><small>必须填写；输入 0 会暂时禁止新请求。</small></div><button class="button compact" type="submit">加入或换入</button></form>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新成员" : "没有可分配的启用乘客"}</p>`}
-    <div class="subsection-head"><div><h3>账号</h3><p>${formatNumber(accounts.total)} 个当前账号</p></div></div>
-    ${(accounts.items || []).length ? `<div class="compact-list">${accounts.items.map(item => `<div><span><strong>${escapeHTML(item.safe_label)}</strong><small>${escapeHTML(item.provider)} · ${escapeHTML(item.account_ref)}</small></span><button class="button danger compact" data-remove-account="${escapeHTML(item.account_ref)}">撤销</button></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无账号</div>`}
-    ${candidateOptions && car.status !== "retired" ? `<form id="add-account" class="inline-editor"><div class="field"><label for="account-candidate">上游账号</label><select id="account-candidate" name="candidate_ref" required><option value="">选择账号</option>${candidateOptions}</select></div><div class="field"><label for="account-label">安全标签</label><input id="account-label" name="safe_label" required maxlength="80"></div><button class="button compact" type="submit">分配或移入</button></form>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新账号" : "当前没有可分配的运行时账号"}</p>`}`);
+    <div class="subsection-head"><h3>成员<span class="subsection-count">${formatNumber(members.total)}</span></h3></div>
+    ${(members.items || []).length ? `<div class="compact-list">${members.items.map(item => `<div><strong>${escapeHTML(item.display_name)}</strong><span class="compact-meta quota-cell">${item.billing && item.billing.status !== "not_configured" ? `<span class="quota-bar-wrap">${percentageMeter(item.billing.usage_percent, `${escapeHTML(item.display_name)} 本期已用`)}<span class="quota-pct">${escapeHTML(formatQuotaPercent(item.billing.usage_percent))}</span></span><span class="quota-nums">$${escapeHTML(item.billing.used_usd || "0")} / $${escapeHTML(item.billing.limit_usd || "0")}</span>` : (item.monthly_limit_usd == null ? "待设额度" : `$${escapeHTML(item.monthly_limit_usd)}`)}</span><span class="compact-meta">${escapeHTML(formatTime(item.started_at))}</span><span class="inline-actions"><button class="button secondary compact" data-edit-member-limit="${escapeHTML(item.member_ref)}" data-member-name="${escapeHTML(item.display_name)}" data-member-limit="${escapeHTML(item.monthly_limit_usd || "")}">调额</button><button class="button danger compact" data-remove-member="${escapeHTML(item.member_ref)}">移除</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无成员</div>`}
+    ${passengerOptions && car.status !== "retired" ? `<details class="add-form"><summary>+ 添加成员</summary><form id="add-member" class="inline-editor"><div class="field"><label for="member-user">乘客</label><select id="member-user" name="user_ref" required><option value="">选择乘客</option>${passengerOptions}</select></div><div class="field"><label for="member-display-name">车内展示名</label><input id="member-display-name" name="display_name" required maxlength="64"></div><div class="field"><label for="member-limit">月度额度（USD）</label><input id="member-limit" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" placeholder="例如 25.00" required><small>必须填写；输入 0 会暂时禁止新请求。</small></div><button class="button compact" type="submit">加入或换入</button></form></details>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新成员" : "没有可分配的启用乘客"}</p>`}
+    <div class="subsection-head"><h3>账号<span class="subsection-count">${formatNumber(accounts.total)}</span></h3></div>
+    ${(accounts.items || []).length ? `<div class="compact-list">${accounts.items.map(item => `<div><strong>${escapeHTML(item.safe_label)}</strong><span class="compact-meta">${escapeHTML(item.provider)}</span><span class="compact-meta code-ref">${escapeHTML(item.account_ref)}</span><button class="button danger compact" data-remove-account="${escapeHTML(item.account_ref)}">撤销</button></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无账号</div>`}
+    ${candidateOptions && car.status !== "retired" ? `<details class="add-form"><summary>+ 添加账号</summary><form id="add-account" class="inline-editor"><div class="field"><label for="account-candidate">上游账号</label><select id="account-candidate" name="candidate_ref" required><option value="">选择账号</option>${candidateOptions}</select></div><div class="field"><label for="account-label">安全标签</label><input id="account-label" name="safe_label" required maxlength="80"></div><button class="button compact" type="submit">分配或移入</button></form></details>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新账号" : "当前没有可分配的运行时账号"}</p>`}`);
 
   dialog.querySelector("#member-user")?.addEventListener("change", event => {
     const option = event.currentTarget.selectedOptions[0];

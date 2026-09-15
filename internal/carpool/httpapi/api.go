@@ -191,17 +191,27 @@ func (a *API) requireOrigin() gin.HandlerFunc {
 
 func (a *API) requireSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, errCookie := c.Cookie(sessionCookieName)
-		if errCookie != nil || token == "" {
+		tokens := sessionTokensFromRequest(c)
+		if len(tokens) == 0 {
 			writeAPIError(c, http.StatusUnauthorized, "session_required", "请先登录")
 			c.Abort()
 			return
 		}
-		identity, errIdentity := a.control.AuthenticateSession(c.Request.Context(), token)
-		if errIdentity != nil {
-			if !errors.Is(errIdentity, carpoolservice.ErrUnauthenticated) {
-				log.WithError(errIdentity).Error("carpool session validation failed")
+		var identity carpoolservice.SessionIdentity
+		authenticated := false
+		for _, token := range tokens {
+			candidate, errIdentity := a.control.AuthenticateSession(c.Request.Context(), token)
+			if errIdentity != nil {
+				if !errors.Is(errIdentity, carpoolservice.ErrUnauthenticated) {
+					log.WithError(errIdentity).Error("carpool session validation failed")
+				}
+				continue
 			}
+			identity = candidate
+			authenticated = true
+			break
+		}
+		if !authenticated {
 			a.clearSessionCookie(c)
 			writeAPIError(c, http.StatusUnauthorized, "session_invalid", "会话已失效")
 			c.Abort()
@@ -210,6 +220,22 @@ func (a *API) requireSession() gin.HandlerFunc {
 		c.Set(identityContextKey, identity)
 		c.Next()
 	}
+}
+
+// sessionTokensFromRequest returns every session cookie value sent with the request.
+// Browsers may carry a stale cookie scoped to the legacy /carpool/ path alongside the
+// current root-scoped cookie, so all values are tried before declaring the session lost.
+func sessionTokensFromRequest(c *gin.Context) []string {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+	tokens := make([]string, 0, 2)
+	for _, cookie := range c.Request.Cookies() {
+		if cookie != nil && cookie.Name == sessionCookieName && cookie.Value != "" {
+			tokens = append(tokens, cookie.Value)
+		}
+	}
+	return tokens
 }
 
 func (a *API) requireMutation() gin.HandlerFunc {
@@ -1077,10 +1103,14 @@ func (a *API) auditEvents(c *gin.Context) {
 }
 
 func (a *API) setSessionCookie(c *gin.Context, token string, expiresAt time.Time) {
+	// Also expire the legacy /carpool/-scoped cookie so a stale value does not shadow
+	// the root-scoped cookie on /carpool/api/* requests.
+	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/carpool/", Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", Expires: expiresAt, MaxAge: int(a.sessionTTL.Seconds()), HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
 }
 
 func (a *API) clearSessionCookie(c *gin.Context) {
+	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/carpool/", Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
 }
 
