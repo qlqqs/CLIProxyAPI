@@ -100,7 +100,7 @@ func TestCarpoolHTTPAdministratorAndPassengerFlow(t *testing.T) {
 	adminCookie := responseCookie(t, adminLogin, sessionCookieName)
 	adminSession := decodeResponseObject(t, adminLogin)
 	adminCSRF := stringField(t, adminSession, "csrf_token")
-	if adminCookie.HttpOnly != true || adminCookie.SameSite != http.SameSiteStrictMode || adminCookie.Path != "/carpool/" {
+	if adminCookie.HttpOnly != true || adminCookie.SameSite != http.SameSiteStrictMode || adminCookie.Path != "/" {
 		t.Fatalf("admin session cookie = %#v", adminCookie)
 	}
 

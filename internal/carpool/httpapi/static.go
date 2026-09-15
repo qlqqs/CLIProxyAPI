@@ -15,17 +15,28 @@ func RegisterStaticRoutes(engine *gin.Engine) {
 	if engine == nil {
 		return
 	}
-	engine.GET("/carpool", func(c *gin.Context) {
-		c.Redirect(http.StatusPermanentRedirect, "/carpool/")
-	})
-	engine.GET("/carpool/", serveEmbeddedAsset("index.html", false))
-	engine.GET("/carpool/assets/*filepath", func(c *gin.Context) {
+	engine.GET("/", serveEmbeddedAsset("index.html", false))
+	engine.GET("/assets/*filepath", func(c *gin.Context) {
 		name := strings.TrimPrefix(c.Param("filepath"), "/")
 		if name == "" {
 			c.Status(http.StatusNotFound)
 			return
 		}
 		serveEmbeddedAsset(name, true)(c)
+	})
+	engine.GET("/carpool", func(c *gin.Context) {
+		c.Redirect(http.StatusPermanentRedirect, "/")
+	})
+	engine.GET("/carpool/", func(c *gin.Context) {
+		c.Redirect(http.StatusPermanentRedirect, "/")
+	})
+	engine.GET("/carpool/assets/*filepath", func(c *gin.Context) {
+		name := strings.TrimPrefix(c.Param("filepath"), "/")
+		if name == "" {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Redirect(http.StatusPermanentRedirect, "/assets/"+name)
 	})
 }
 

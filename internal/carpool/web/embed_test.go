@@ -28,7 +28,7 @@ func TestIndexUsesExternalResourcesOnly(t *testing.T) {
 			t.Fatalf("index.html contains forbidden value %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(asset.Body), "/carpool/assets/app.js") {
+	if !strings.Contains(string(asset.Body), "/assets/app.js") {
 		t.Fatal("index.html does not load embedded application module")
 	}
 }

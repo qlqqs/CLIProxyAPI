@@ -1077,11 +1077,11 @@ func (a *API) auditEvents(c *gin.Context) {
 }
 
 func (a *API) setSessionCookie(c *gin.Context, token string, expiresAt time.Time) {
-	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/carpool/", Expires: expiresAt, MaxAge: int(a.sessionTTL.Seconds()), HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", Expires: expiresAt, MaxAge: int(a.sessionTTL.Seconds()), HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
 }
 
 func (a *API) clearSessionCookie(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/carpool/", Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteStrictMode})
 }
 
 func currentIdentity(c *gin.Context) (carpoolservice.SessionIdentity, bool) {
