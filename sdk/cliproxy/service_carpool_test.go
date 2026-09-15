@@ -53,8 +53,8 @@ func TestCommitConfigUpdateWarnsWhenCarpoolSettingsRequireRestart(t *testing.T) 
 
 func TestCarpoolConfigChangeRequiresRestart(t *testing.T) {
 	disabled := &internalconfig.Config{Carpool: internalconfig.DefaultCarpoolConfig()}
+	disabled.Carpool.Enabled = false
 	enabled := &internalconfig.Config{Carpool: internalconfig.DefaultCarpoolConfig()}
-	enabled.Carpool.Enabled = true
 	changedSession := *enabled
 	changedSession.Carpool.Session.IdleTTL = "1h"
 

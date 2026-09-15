@@ -41,10 +41,10 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
-# Optional administrator-managed carpool module. It is disabled by default.
+# Administrator-managed carpool module. It is enabled by default.
 # The SQLite file must live on persistent local storage and may only be opened by one CPA process.
 carpool:
-  enabled: false
+  enabled: true
   database-path: "./data/carpool.db"
   report-timezone: "UTC"
   usage-retention-days: 90

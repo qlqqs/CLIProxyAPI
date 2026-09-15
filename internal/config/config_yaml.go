@@ -317,16 +317,27 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		return false
 	}
 
+	// carpool defaults to enabled; an explicit "enabled: false" is meaningful and must be
+	// preserved so saving does not silently re-enable the module.
+	if len(path) == 0 {
+		return false
+	}
+	fullPathEarly := strings.Join(path, ".")
+	if node != nil && node.Kind == yaml.ScalarNode && node.Tag == "!!bool" && fullPathEarly == "carpool.enabled" {
+		return false
+	}
+	// A carpool mapping that still has keys after default pruning carries an explicit
+	// setting (e.g. enabled: false); keep it instead of treating the block as all-zero.
+	if node != nil && node.Kind == yaml.MappingNode && fullPathEarly == "carpool" && len(node.Content) > 0 {
+		return false
+	}
+
 	// First check if it's a zero value
 	if isZeroValueNode(node) {
 		return true
 	}
 
 	// Match known non-zero defaults by exact dotted path.
-	if len(path) == 0 {
-		return false
-	}
-
 	fullPath := strings.Join(path, ".")
 
 	// Check string defaults

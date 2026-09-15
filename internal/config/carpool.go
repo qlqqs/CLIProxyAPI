@@ -49,6 +49,7 @@ type CarpoolSessionConfig struct {
 // DefaultCarpoolConfig returns the documented carpool defaults.
 func DefaultCarpoolConfig() CarpoolConfig {
 	return CarpoolConfig{
+		Enabled:            true,
 		DatabasePath:       DefaultCarpoolDatabasePath,
 		ReportTimezone:     DefaultCarpoolReportTimezone,
 		UsageRetentionDays: DefaultCarpoolUsageRetention,

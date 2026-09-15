@@ -168,6 +168,7 @@ func TestRunCarpoolCommandRejectsDisabledAndConflictingModes(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		directory := t.TempDir()
 		cfg := &config.Config{Carpool: config.DefaultCarpoolConfig()}
+		cfg.Carpool.Enabled = false
 		cfg.Carpool.DatabasePath = "./data/carpool.db"
 		configPath := filepath.Join(directory, "config.yaml")
 		databasePath := filepath.Join(directory, "data", "carpool.db")

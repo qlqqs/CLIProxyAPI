@@ -107,12 +107,14 @@ func TestDisabledCarpoolIgnoresDormantValues(t *testing.T) {
 	}
 }
 
-func TestSaveConfigPreserveCommentsPrunesDisabledCarpoolDefaults(t *testing.T) {
+func TestSaveConfigPreserveCommentsPreservesDisabledCarpool(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	if errWrite := os.WriteFile(configPath, []byte("debug: true\n"), 0o600); errWrite != nil {
 		t.Fatalf("os.WriteFile() error = %v", errWrite)
 	}
-	cfg := &Config{Debug: true, Carpool: DefaultCarpoolConfig()}
+	carpool := DefaultCarpoolConfig()
+	carpool.Enabled = false
+	cfg := &Config{Debug: true, Carpool: carpool}
 	if errSave := SaveConfigPreserveComments(configPath, cfg); errSave != nil {
 		t.Fatalf("SaveConfigPreserveComments() error = %v", errSave)
 	}
@@ -120,7 +122,7 @@ func TestSaveConfigPreserveCommentsPrunesDisabledCarpoolDefaults(t *testing.T) {
 	if errRead != nil {
 		t.Fatalf("os.ReadFile() error = %v", errRead)
 	}
-	if strings.Contains(string(data), "carpool:") {
-		t.Fatalf("saved config contains disabled carpool defaults:\n%s", data)
+	if !strings.Contains(string(data), "enabled: false") {
+		t.Fatalf("saved config dropped explicit carpool disable:\n%s", data)
 	}
 }
