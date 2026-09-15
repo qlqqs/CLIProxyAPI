@@ -111,3 +111,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 用户多周期额度与并发排队交付
+<!-- trellis-session: v=2 fp=9784da23a2560eda -->
+
+**Date**: 2026-09-15
+**Task**: 用户多周期额度与并发排队交付
+**Branch**: `feat/user-quota-concurrency`
+
+### Summary
+
+完成与账号真实 5h/7d 窗口同步的用户额度、用户及账号并发、全局默认10等待队列和UI。全量Go测试、race、vet、双构建、UI78及浏览器/真实HTTP验收通过。用户确认提交时全部59个计划文件已在3b1910ce，保留现有历史；仅归档本任务，未推送或部署。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3b1910ce` | Update files |
+
+### Status
+
+[OK] **Completed**
