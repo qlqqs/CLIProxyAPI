@@ -343,13 +343,11 @@ function loginView(message = "") {
   closeEntityPanels();
   document.querySelector("#app").innerHTML = `<main class="login-shell">
     <section class="login-story" aria-labelledby="login-title">
-      <div class="brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI</span></div></div>
-      <h1 id="login-title">你的专属司机</h1>
+      <h1 id="login-title">来不及解释了，快上车！</h1>
       <p>乘客查看本期额度、管理 API Key；管理员分配车辆、成员与上游账号。</p>
-      <ul class="activity-list"><li><strong>乘客工作区</strong><span>自己的额度、账期与车辆状态</span></li><li><strong>运营工作区</strong><span>用户、车辆与可追溯的请求记录</span></li></ul>
     </section>
     <form class="login-panel" id="login-form">
-      <div class="login-intro"><h2>登录工作台</h2><p>使用管理员分配的账号登录。</p></div>
+      <div class="login-intro"><h2>上车</h2><p>使用售票员下发的专属车票。</p></div>
       ${message ? `<div class="error-banner">${escapeHTML(message)}</div>` : ""}
       <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="64"></div>
       <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128"></div>
@@ -413,13 +411,13 @@ function renderShell() {
   document.querySelector("#app").innerHTML = `<div class="app-shell">
     <a class="skip-link" href="#content">跳到主要内容</a>
     <aside class="app-rail" id="app-rail">
-      <div class="rail-brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI</span></div></div>
+      <div class="rail-brand"><strong>工作台</strong></div>
       <nav class="nav" aria-label="主导航">${navigationItems.map(([route, label]) => `<a href="#${route}" data-route="${route}" aria-current="${state.route === route ? "page" : "false"}"><span class="nav-icon">${iconMarkup(route)}</span><span class="nav-label">${label}</span></a>`).join("")}</nav>
     </aside>
     <div class="app-workspace">
       <header class="topbar">
         <button class="icon-button" id="nav-toggle" type="button" aria-controls="app-rail" aria-expanded="false" aria-label="展开导航"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-        <div class="topbar-brand"><strong>拼车工作台</strong></div>
+        <div class="topbar-brand"><strong>工作台</strong></div>
         <div class="topbar-title"><span>${escapeHTML(routeTitles[state.route] || "拼车管理")}</span></div>
         <div class="topbar-actions"><span class="tag">${state.session.role === "carpool_admin" ? "管理员" : "乘客"}</span>${statusLabel(state.session.module_status || "unknown")}<span class="user-chip">${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout" type="button">退出</button></div>
       </header>
