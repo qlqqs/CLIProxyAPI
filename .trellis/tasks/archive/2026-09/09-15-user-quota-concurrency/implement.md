@@ -2,7 +2,7 @@
 
 ## 状态
 
-用户已明确批准最终方案与默认容量 10，任务已进入 in_progress。核心、API/UI、独立检查与浏览器/真实 HTTP 验收全部完成，证据见 `research/final-verification.md`；等待提交计划确认。
+用户已明确批准最终方案与默认容量 10，任务已进入 in_progress。核心、API/UI、独立检查与浏览器/真实 HTTP 验收全部完成，证据见 `research/final-verification.md`；用户已确认提交；全部计划文件已在现有提交 `3b1910ce` 中，随后归档并记录会话。
 
 ## 顺序与职责
 
@@ -67,7 +67,7 @@ node --check internal/carpool/web/assets/app.js
 ### 6. 收尾与回滚点
 
 - [x] 最终全范围检查通过，更新 backend 拼车、同步记账与清理规范，保留中英文语言约束。
-- [ ] 按 trellis-finish-work 处理提交/会话记录；不自动归档其他尚未完成任务。
+- [x] 按 trellis-finish-work 处理提交/会话记录；不自动归档其他尚未完成任务。
 - 回滚点 A：只有规划文档，尚无运行行为变化。
 - 回滚点 B：隔离库验证失败，停止实施修正 migration，不动生产库。
 - 回滚点 C：实现发现需突破单账号/单实例或新增复杂恢复协议，退回规划，重新取得范围批准。
