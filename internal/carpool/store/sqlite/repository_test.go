@@ -296,7 +296,7 @@ func TestLoginSessionKeyAndCRUDRepository(t *testing.T) {
 	if errByRef != nil || byRef.ID != passenger.ID {
 		t.Fatalf("GetUserByRef() = (%#v, %v)", byRef, errByRef)
 	}
-	users, errUsers := store.ListUsers(ctx, "", 10)
+	users, errUsers := store.ListUsers(ctx, "", "", 10)
 	if errUsers != nil || len(users) != 2 {
 		t.Fatalf("ListUsers() = (%d, %v), want (2, nil)", len(users), errUsers)
 	}
@@ -323,7 +323,7 @@ func TestLoginSessionKeyAndCRUDRepository(t *testing.T) {
 
 	firstKey, _ := store.CreateAPIKey(ctx, domain.APIKey{UserID: passenger.ID, Name: "one", SecretDigest: []byte("one")})
 	secondKey, _ := store.CreateAPIKey(ctx, domain.APIKey{UserID: passenger.ID, Name: "two", SecretDigest: []byte("two")})
-	keys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, "", 10)
+	keys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, "", "", 10)
 	if errKeys != nil || len(keys) != 2 {
 		t.Fatalf("ListAPIKeysForUser() = (%d, %v), want (2, nil)", len(keys), errKeys)
 	}
@@ -345,7 +345,7 @@ func TestLoginSessionKeyAndCRUDRepository(t *testing.T) {
 	}
 
 	car, _ := store.CreateCar(ctx, domain.Car{Name: "car", Status: domain.CarStatusActive})
-	cars, errCars := store.ListCars(ctx, "", 10)
+	cars, errCars := store.ListCars(ctx, "", "", 10)
 	if errCars != nil || len(cars) != 1 {
 		t.Fatalf("ListCars() = (%d, %v), want (1, nil)", len(cars), errCars)
 	}

@@ -34,18 +34,18 @@ func TestPublicReferencePaginationAndCounts(t *testing.T) {
 			t.Fatalf("CreateUser(%q) error = %v", item.username, errCreate)
 		}
 	}
-	firstUsers, errUsers := store.ListUsers(ctx, "", 2)
+	firstUsers, errUsers := store.ListUsers(ctx, "", "", 2)
 	if errUsers != nil || len(firstUsers) != 2 {
 		t.Fatalf("ListUsers(first) = (%#v, %v)", firstUsers, errUsers)
 	}
 	if firstUsers[0].UserRef != "usr_AAAAAAAAAAAAAAAA" || firstUsers[1].UserRef != "usr_CwsLCwsLCwsLCwsL" {
 		t.Fatalf("first user page is not ordered by public reference: %#v", firstUsers)
 	}
-	secondUsers, errUsers := store.ListUsers(ctx, firstUsers[1].UserRef, 2)
+	secondUsers, errUsers := store.ListUsers(ctx, firstUsers[1].UserRef, "", 2)
 	if errUsers != nil || len(secondUsers) != 1 || secondUsers[0].UserRef != "usr_DAwMDAwMDAwMDAwM" {
 		t.Fatalf("ListUsers(second) = (%#v, %v)", secondUsers, errUsers)
 	}
-	if total, errCount := store.CountUsers(ctx); errCount != nil || total != 3 {
+	if total, errCount := store.CountUsers(ctx, ""); errCount != nil || total != 3 {
 		t.Fatalf("CountUsers() = (%d, %v), want (3, nil)", total, errCount)
 	}
 
@@ -55,15 +55,15 @@ func TestPublicReferencePaginationAndCounts(t *testing.T) {
 			t.Fatalf("CreateAPIKey(%q) error = %v", keyID, errCreate)
 		}
 	}
-	firstKeys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, "", 2)
+	firstKeys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, "", "", 2)
 	if errKeys != nil || len(firstKeys) != 2 || firstKeys[0].KeyID != "AAAAAAAAAAAAAAAA" || firstKeys[1].KeyID != "AQEBAQEBAQEBAQEB" {
 		t.Fatalf("ListAPIKeysForUser(first) = (%#v, %v)", firstKeys, errKeys)
 	}
-	secondKeys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, firstKeys[1].KeyID, 2)
+	secondKeys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, firstKeys[1].KeyID, "", 2)
 	if errKeys != nil || len(secondKeys) != 1 || secondKeys[0].KeyID != "AgICAgICAgICAgIC" {
 		t.Fatalf("ListAPIKeysForUser(second) = (%#v, %v)", secondKeys, errKeys)
 	}
-	if total, errCount := store.CountAPIKeysForUser(ctx, passenger.ID); errCount != nil || total != 3 {
+	if total, errCount := store.CountAPIKeysForUser(ctx, passenger.ID, ""); errCount != nil || total != 3 {
 		t.Fatalf("CountAPIKeysForUser() = (%d, %v), want (3, nil)", total, errCount)
 	}
 
@@ -76,15 +76,15 @@ func TestPublicReferencePaginationAndCounts(t *testing.T) {
 			t.Fatalf("CreateCar(%q) error = %v", car.CarRef, errCreate)
 		}
 	}
-	firstCars, errCars := store.ListCars(ctx, "", 2)
+	firstCars, errCars := store.ListCars(ctx, "", "", 2)
 	if errCars != nil || len(firstCars) != 2 || firstCars[0].CarRef != "car_AAAAAAAAAAAAAAAA" || firstCars[1].CarRef != "car_AQEBAQEBAQEBAQEB" {
 		t.Fatalf("ListCars(first) = (%#v, %v)", firstCars, errCars)
 	}
-	secondCars, errCars := store.ListCars(ctx, firstCars[1].CarRef, 2)
+	secondCars, errCars := store.ListCars(ctx, firstCars[1].CarRef, "", 2)
 	if errCars != nil || len(secondCars) != 1 || secondCars[0].CarRef != "car_AgICAgICAgICAgIC" {
 		t.Fatalf("ListCars(second) = (%#v, %v)", secondCars, errCars)
 	}
-	if total, errCount := store.CountCars(ctx); errCount != nil || total != 3 {
+	if total, errCount := store.CountCars(ctx, ""); errCount != nil || total != 3 {
 		t.Fatalf("CountCars() = (%d, %v), want (3, nil)", total, errCount)
 	}
 	if car, errCar := store.GetCarByRef(ctx, "car_AQEBAQEBAQEBAQEB"); errCar != nil || car.Name != "Beta" {

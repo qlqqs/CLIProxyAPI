@@ -42,7 +42,7 @@ func (s *Store) GetUserByRef(ctx context.Context, userRef string) (domain.User, 
 	`, userRef))
 }
 
-func (s *Store) ListUsers(ctx context.Context, afterUserRef string, limit int) (users []domain.User, err error) {
+func (s *Store) ListUsers(ctx context.Context, afterUserRef, search string, limit int) (users []domain.User, err error) {
 	if errReady := s.ready(); errReady != nil {
 		return nil, errReady
 	}
@@ -50,15 +50,17 @@ func (s *Store) ListUsers(ctx context.Context, afterUserRef string, limit int) (
 	if errLimit != nil {
 		return nil, errLimit
 	}
+	pattern := likePattern(search)
 	rows, errQuery := s.db.QueryContext(ctx, `
 		SELECT id, user_ref, username, username_normalized, default_display_name, role, status,
 		       password_hash, password_version, must_change_password, disabled_at,
 		       created_at, updated_at
 		FROM users
 		WHERE (? = '' OR user_ref > ?)
+		  AND (? = '' OR username LIKE ? ESCAPE '\' OR default_display_name LIKE ? ESCAPE '\' OR user_ref LIKE ? ESCAPE '\')
 		ORDER BY user_ref
 		LIMIT ?
-	`, afterUserRef, afterUserRef, limit)
+	`, afterUserRef, afterUserRef, pattern, pattern, pattern, pattern, limit)
 	if errQuery != nil {
 		return nil, fmt.Errorf("sqlite store: list users: %w", classifyError(errQuery))
 	}
@@ -83,12 +85,16 @@ func (s *Store) ListUsers(ctx context.Context, afterUserRef string, limit int) (
 	return users, nil
 }
 
-func (s *Store) CountUsers(ctx context.Context) (int64, error) {
+func (s *Store) CountUsers(ctx context.Context, search string) (int64, error) {
 	if errReady := s.ready(); errReady != nil {
 		return 0, errReady
 	}
+	pattern := likePattern(search)
 	var count int64
-	if errCount := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&count); errCount != nil {
+	if errCount := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM users
+		WHERE (? = '' OR username LIKE ? ESCAPE '\' OR default_display_name LIKE ? ESCAPE '\' OR user_ref LIKE ? ESCAPE '\')
+	`, pattern, pattern, pattern, pattern).Scan(&count); errCount != nil {
 		return 0, fmt.Errorf("sqlite store: count users: %w", classifyError(errCount))
 	}
 	return count, nil
@@ -242,7 +248,7 @@ func (s *Store) TouchSessionLastSeen(ctx context.Context, sessionID string, seen
 	return rows == 1, errRows
 }
 
-func (s *Store) ListAPIKeysForUser(ctx context.Context, userID, afterKeyID string, limit int) (keys []domain.APIKey, err error) {
+func (s *Store) ListAPIKeysForUser(ctx context.Context, userID, afterKeyID, search string, limit int) (keys []domain.APIKey, err error) {
 	if errReady := s.ready(); errReady != nil {
 		return nil, errReady
 	}
@@ -250,14 +256,16 @@ func (s *Store) ListAPIKeysForUser(ctx context.Context, userID, afterKeyID strin
 	if errLimit != nil {
 		return nil, errLimit
 	}
+	pattern := likePattern(search)
 	rows, errQuery := s.db.QueryContext(ctx, `
 		SELECT key_id, user_id, name, secret_digest, created_at, expires_at,
 		       last_used_at, revoked_at, revoke_reason
 		FROM user_api_keys
 		WHERE user_id = ? AND (? = '' OR key_id > ?)
+		  AND (? = '' OR name LIKE ? ESCAPE '\' OR key_id LIKE ? ESCAPE '\')
 		ORDER BY key_id
 		LIMIT ?
-	`, userID, afterKeyID, afterKeyID, limit)
+	`, userID, afterKeyID, afterKeyID, pattern, pattern, pattern, limit)
 	if errQuery != nil {
 		return nil, fmt.Errorf("sqlite store: list user API keys: %w", classifyError(errQuery))
 	}
@@ -275,14 +283,16 @@ func (s *Store) ListAPIKeysForUser(ctx context.Context, userID, afterKeyID strin
 	return keys, nil
 }
 
-func (s *Store) CountAPIKeysForUser(ctx context.Context, userID string) (int64, error) {
+func (s *Store) CountAPIKeysForUser(ctx context.Context, userID, search string) (int64, error) {
 	if errReady := s.ready(); errReady != nil {
 		return 0, errReady
 	}
+	pattern := likePattern(search)
 	var count int64
 	if errCount := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM user_api_keys WHERE user_id = ?
-	`, userID).Scan(&count); errCount != nil {
+		SELECT COUNT(*) FROM user_api_keys
+		WHERE user_id = ? AND (? = '' OR name LIKE ? ESCAPE '\' OR key_id LIKE ? ESCAPE '\')
+	`, userID, pattern, pattern, pattern).Scan(&count); errCount != nil {
 		return 0, fmt.Errorf("sqlite store: count user API keys: %w", classifyError(errCount))
 	}
 	return count, nil
@@ -356,7 +366,7 @@ func (s *Store) GetCarByRef(ctx context.Context, carRef string) (domain.Car, err
 	`, carRef))
 }
 
-func (s *Store) ListCars(ctx context.Context, afterCarRef string, limit int) (cars []domain.Car, err error) {
+func (s *Store) ListCars(ctx context.Context, afterCarRef, search string, limit int) (cars []domain.Car, err error) {
 	if errReady := s.ready(); errReady != nil {
 		return nil, errReady
 	}
@@ -364,11 +374,15 @@ func (s *Store) ListCars(ctx context.Context, afterCarRef string, limit int) (ca
 	if errLimit != nil {
 		return nil, errLimit
 	}
+	pattern := likePattern(search)
 	rows, errQuery := s.db.QueryContext(ctx, `
 		SELECT id, car_ref, name, description, seat_limit, status, version,
 		       disabled_at, retired_at, created_at, updated_at
-		FROM cars WHERE (? = '' OR car_ref > ?) ORDER BY car_ref LIMIT ?
-	`, afterCarRef, afterCarRef, limit)
+		FROM cars
+		WHERE (? = '' OR car_ref > ?)
+		  AND (? = '' OR name LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' OR car_ref LIKE ? ESCAPE '\')
+		ORDER BY car_ref LIMIT ?
+	`, afterCarRef, afterCarRef, pattern, pattern, pattern, pattern, limit)
 	if errQuery != nil {
 		return nil, fmt.Errorf("sqlite store: list cars: %w", classifyError(errQuery))
 	}
@@ -386,12 +400,16 @@ func (s *Store) ListCars(ctx context.Context, afterCarRef string, limit int) (ca
 	return cars, nil
 }
 
-func (s *Store) CountCars(ctx context.Context) (int64, error) {
+func (s *Store) CountCars(ctx context.Context, search string) (int64, error) {
 	if errReady := s.ready(); errReady != nil {
 		return 0, errReady
 	}
+	pattern := likePattern(search)
 	var count int64
-	if errCount := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM cars").Scan(&count); errCount != nil {
+	if errCount := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM cars
+		WHERE (? = '' OR name LIKE ? ESCAPE '\' OR description LIKE ? ESCAPE '\' OR car_ref LIKE ? ESCAPE '\')
+	`, pattern, pattern, pattern, pattern).Scan(&count); errCount != nil {
 		return 0, fmt.Errorf("sqlite store: count cars: %w", classifyError(errCount))
 	}
 	return count, nil
@@ -727,6 +745,25 @@ func normalizeLimit(limit int) (int, error) {
 		return 0, fmt.Errorf("sqlite store: page limit must be between 1 and 500: %w", domain.ErrInvalid)
 	}
 	return limit, nil
+}
+
+// likePattern wraps a user search term in %..% and escapes LIKE wildcards so the
+// input is always matched literally.
+func likePattern(search string) string {
+	search = strings.TrimSpace(search)
+	if search == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteByte('%')
+	for _, r := range search {
+		if r == '%' || r == '_' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('%')
+	return b.String()
 }
 
 func closeRows(targetErr *error, rows *sql.Rows, name string) func() {

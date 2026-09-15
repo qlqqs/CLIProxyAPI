@@ -21,6 +21,7 @@ const state = {
   },
   requestFilters: "",
   requestFilterValues: {},
+  searches: { keys: "", users: "", cars: "" },
   report: {
     rangeMode: "preset",
     period: "today",
@@ -132,6 +133,28 @@ function periodControl() {
   </div>`;
 }
 
+// Resets report, request-filter, and period selections that otherwise linger
+// across routes and can be mistaken for unfiltered data.
+function resetEphemeralFilters() {
+  state.period = "today";
+  state.report = { rangeMode: "preset", period: "today", from: "", to: "", groupBy: "user", carRef: "", userRef: "", accountRef: "" };
+  state.requestFilters = "";
+  state.requestFilterValues = {};
+}
+
+function activeFilterCount() {
+  return requestFilterKeys.filter(key => String(state.requestFilterValues[key] || "").trim()).length;
+}
+
+function activePeriodFilter() {
+  const source = new URLSearchParams((state.requestFilters.split("?")[1] || ""));
+  const period = source.get("period");
+  const from = source.get("from");
+  const to = source.get("to");
+  if (from || to) return "自定义区间";
+  return { today: "今日", "7d": "最近 7 天", "30d": "最近 30 天" }[period] || null;
+}
+
 function bindPeriod(content = document) {
   content.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
     state.period = button.dataset.period;
@@ -193,6 +216,36 @@ function paginationFooter(page, label = "项") {
   const total = page.total >= page.items.length ? page.total : page.items.length;
   return `<div class="pagination"><span>已显示 ${formatNumber(page.items.length)} / ${formatNumber(total)} ${escapeHTML(label)}</span>
     ${page.nextCursor ? `<button class="button secondary compact" type="button" data-load-more>加载更多</button>` : ""}</div>`;
+}
+
+function searchBar(name, placeholder) {
+  const value = state.searches[name] || "";
+  return `<form class="list-search" data-search-form="${escapeHTML(name)}" role="search">
+    <input type="search" name="q" value="${escapeHTML(value)}" placeholder="${escapeHTML(placeholder)}" aria-label="${escapeHTML(placeholder)}" maxlength="80">
+    <button class="button secondary compact" type="submit">搜索</button>
+    ${value ? `<button class="button secondary compact" type="button" data-search-clear="${escapeHTML(name)}">清除</button>` : ""}
+  </form>`;
+}
+
+function searchPath(name, base) {
+  const q = (state.searches[name] || "").trim();
+  if (!q) return base;
+  return `${base}${base.includes("?") ? "&" : "?"}q=${encodeURIComponent(q)}`;
+}
+
+function bindSearch(content, name, rerender) {
+  const form = content.querySelector(`[data-search-form="${name}"]`);
+  form?.addEventListener("submit", event => {
+    event.preventDefault();
+    state.searches[name] = String(new FormData(form).get("q") || "").trim();
+    resetPage(name);
+    rerender(true);
+  });
+  content.querySelector(`[data-search-clear="${name}"]`)?.addEventListener("click", () => {
+    state.searches[name] = "";
+    resetPage(name);
+    rerender(true);
+  });
 }
 
 function setButtonBusy(button, busy) {
@@ -291,7 +344,7 @@ function loginView(message = "") {
   document.querySelector("#app").innerHTML = `<main class="login-shell">
     <section class="login-story" aria-labelledby="login-title">
       <div class="brand"><div class="brand-mark">cpa</div><div><strong>拼车工作台</strong><span>CLIProxyAPI</span></div></div>
-      <h1 id="login-title">车辆、额度与用量，<br>在一处看清。</h1>
+      <h1 id="login-title">你的专属司机</h1>
       <p>乘客查看本期额度、管理 API Key；管理员分配车辆、成员与上游账号。</p>
       <ul class="activity-list"><li><strong>乘客工作区</strong><span>自己的额度、账期与车辆状态</span></li><li><strong>运营工作区</strong><span>用户、车辆与可追溯的请求记录</span></li></ul>
     </section>
@@ -312,6 +365,7 @@ function loginView(message = "") {
       const data = await request("/session", { method: "POST", body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) });
       state.session = data;
       state.csrf = data.csrf_token || "";
+      resetEphemeralFilters();
       state.route = data.must_change_password ? "/password" : "/";
       location.hash = `#${state.route}`;
       renderShell();
@@ -405,6 +459,7 @@ function renderShell() {
     try { await request("/session", { method: "DELETE" }); } catch (_) { /* Local state still ends. */ }
     state.session = null;
     state.csrf = "";
+    resetEphemeralFilters();
     loginView();
   });
   renderRoute();
@@ -455,6 +510,13 @@ function renderShellFrameTitle() {
   document.querySelectorAll("[data-route]").forEach(button => button.setAttribute("aria-current", button.dataset.route === state.route ? "page" : "false"));
 }
 
+function updatePageHash(route, query = "") {
+  const hash = `#${route}${query ? `?${query}` : ""}`;
+  if (location.hash === hash) return false;
+  location.hash = hash;
+  return true;
+}
+
 async function renderPassengerRoute(content) {
   if (state.route === "/") {
     const data = await request("/me/car");
@@ -491,7 +553,7 @@ async function renderPassengerRoute(content) {
   }
   if (state.route === "/accounts") {
     const data = await request(`/me/accounts?period=${encodeURIComponent(state.period)}`);
-    content.innerHTML = `<div class="section-header"><div><h2>车辆账号</h2><p>状态更新时间：${escapeHTML(formatTime(new Date()))}</p></div>${periodControl()}</div>${accountTable(data.items || [])}`;
+    content.innerHTML = `<div class="section-header"><div><h2>车辆账号</h2><p>状态更新时间：${escapeHTML(formatTime(new Date()))} · <span class="muted">每 60 秒自动刷新</span></p></div>${periodControl()}</div>${accountTable(data.items || [])}`;
     bindPeriod(content);
     if (content.isConnected) scheduleAccountRefresh();
     return;
@@ -564,12 +626,14 @@ function quotaMarkup(quota) {
 }
 
 async function renderKeys(content, reset) {
-  const page = await loadPage("keys", "/me/api-keys", reset);
+  const page = await loadPage("keys", searchPath("keys", "/me/api-keys"), reset);
   const items = page.items;
   content.innerHTML = `<div class="section-header"><div><h2>API Key</h2><p>密钥只在创建时显示一次</p></div><button class="button" id="create-key">创建 Key</button></div>
-    ${items.length ? `<div class="table-wrap"><table><thead><tr><th>名称</th><th>Key 引用</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHTML(item.name)}</td><td class="code-ref">${escapeHTML(item.key_ref)}</td><td>${statusLabel(item.status)}</td><td>${escapeHTML(formatTime(item.created_at))}</td><td>${escapeHTML(formatTime(item.expires_at))}</td><td>${escapeHTML(formatTime(item.last_used_at))}</td><td>${item.status === "active" ? `<button class="button danger compact" data-revoke-key="${escapeHTML(item.key_ref)}">撤销</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">尚未创建 API Key</div>`}
+    ${searchBar("keys", "按名称或 Key 引用搜索")}
+    ${items.length ? `<div class="table-wrap"><table><thead><tr><th>名称</th><th>Key 引用</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHTML(item.name)}</td><td class="code-ref">${escapeHTML(item.key_ref)}</td><td>${statusLabel(item.status)}</td><td>${escapeHTML(formatTime(item.created_at))}</td><td>${escapeHTML(formatTime(item.expires_at))}</td><td>${escapeHTML(formatTime(item.last_used_at))}</td><td>${item.status === "active" ? `<button class="button danger compact" data-revoke-key="${escapeHTML(item.key_ref)}">撤销</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.keys ? "没有匹配的 API Key" : "尚未创建 API Key"}</div>`}
     ${paginationFooter(page, "个 Key")}`;
   content.querySelector("#create-key").addEventListener("click", showKeyDialog);
+  bindSearch(content, "keys", async reset => { try { await renderKeys(content, reset); } catch (error) { toast(error.message); } });
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
     try { await renderKeys(content, false); } catch (error) { toast(error.message); }
@@ -645,14 +709,16 @@ async function renderPricing(content) {
 }
 
 async function renderUsers(content, reset) {
-  const page = await loadPage("users", "/admin/users", reset);
+  const page = await loadPage("users", searchPath("users", "/admin/users"), reset);
   const items = page.items;
   closeEntityPanels(content);
   content.innerHTML = `<div class="section-header"><div><h2>用户管理</h2><p>共 ${formatNumber(page.total)} 名用户 · 选择用户后在右侧管理</p></div><button class="button" id="create-user">创建用户</button></div>
     <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="用户列表">
-      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>角色与状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${escapeHTML(item.username)}</strong><br><span class="muted">${escapeHTML(item.display_name)}</span><br><small class="muted">创建于 ${escapeHTML(formatTime(item.created_at))}</small></td><td>${statusLabel(item.status)}<br><span class="muted">${item.role === "carpool_admin" ? "管理员" : "乘客"} · ${item.must_change_password ? "首次改密待完成" : "首次改密已完成"}</span></td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无用户，请先创建用户。</div>`}
+      ${searchBar("users", "按用户名、展示名或引用搜索")}
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.username)}</strong>${item.display_name && item.display_name !== item.username ? `<span class="muted">${escapeHTML(item.display_name)}</span>` : ""}</div><div class="entity-meta"><span>${item.role === "carpool_admin" ? "管理员" : "乘客"}</span><span>${item.must_change_password ? "待完成首次改密" : "首次改密已完成"}</span><span>创建于 ${escapeHTML(formatTime(item.created_at))}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.users ? "没有匹配的用户" : "暂无用户，请先创建用户。"}</div>`}
       ${paginationFooter(page, "名用户")}</section>${entityEmptyMarkup("用户")}</div>`;
   content.querySelector("#create-user").addEventListener("click", showUserDialog);
+  bindSearch(content, "users", async reset => { try { await renderUsers(content, reset); } catch (error) { toast(error.message); } });
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
     try { await renderUsers(content, false); } catch (error) { toast(error.message); }
@@ -706,7 +772,7 @@ async function showUserManagement(initialUser) {
     keyPage.loaded = true;
   }
 
-  const dialog = state.route === "/users" ? openEntityPanel("管理用户", `<div class="loading" role="status">正在加载用户...</div>`) : openDialog("管理用户", `<div class="loading" role="status">正在加载用户...</div>`, true);
+  const dialog = openEntityPanel("管理用户", `<div class="loading" role="status">正在加载用户...</div>`);
   try { await loadKeys(true); } catch (error) { dialog.close(); throw error; }
   if (!dialog.isConnected || !dialog.open) return;
 
@@ -787,14 +853,16 @@ async function showUserManagement(initialUser) {
 }
 
 async function renderCars(content, reset) {
-  const page = await loadPage("cars", "/admin/cars", reset);
+  const page = await loadPage("cars", searchPath("cars", "/admin/cars"), reset);
   const items = page.items;
   closeEntityPanels(content);
   content.innerHTML = `<div class="section-header"><div><h2>车辆管理</h2><p>共 ${formatNumber(page.total)} 辆车辆 · 选择车辆后在右侧管理</p></div><button class="button" id="create-car">创建车辆</button></div>
     <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="车辆列表">
-      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>车辆</th><th>成员与账号</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><strong>${escapeHTML(item.name)}</strong><br><span class="muted">${escapeHTML(item.description || "未填写说明")}</span><br>${statusLabel(item.status)}</td><td><span>${formatNumber(item.member_count)} 名成员 · ${formatNumber(item.account_count)} 个账号</span><br><small class="muted">席位 ${item.seat_limit ? formatNumber(item.seat_limit) : "不限"}</small></td><td><button class="button secondary compact" data-manage-car="${escapeHTML(item.car_ref)}" aria-label="管理车辆 ${escapeHTML(item.name)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无车辆，请先创建车辆。</div>`}
+      ${searchBar("cars", "按名称、说明或引用搜索")}
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>车辆</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.name)}</strong>${item.description ? `<span class="muted">${escapeHTML(item.description)}</span>` : ""}</div><div class="entity-meta"><span>${formatNumber(item.member_count)} 名成员</span><span>${formatNumber(item.account_count)} 个账号</span><span>席位 ${item.seat_limit ? formatNumber(item.seat_limit) : "不限"}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-car="${escapeHTML(item.car_ref)}" aria-label="管理车辆 ${escapeHTML(item.name)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.cars ? "没有匹配的车辆" : "暂无车辆，请先创建车辆。"}</div>`}
       ${paginationFooter(page, "辆车辆")}</section>${entityEmptyMarkup("车辆")}</div>`;
   content.querySelector("#create-car").addEventListener("click", showCarDialog);
+  bindSearch(content, "cars", async reset => { try { await renderCars(content, reset); } catch (error) { toast(error.message); } });
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
     try { await renderCars(content, false); } catch (error) { toast(error.message); }
@@ -833,7 +901,7 @@ function showCarDialog() {
 }
 
 async function showCarManagement(car) {
-  const dialog = state.route === "/cars" ? openEntityPanel("管理车辆", `<div class="loading" role="status">正在加载车辆...</div>`) : openDialog("管理车辆", `<div class="loading" role="status">正在加载车辆...</div>`, true);
+  const dialog = openEntityPanel("管理车辆", `<div class="loading" role="status">正在加载车辆...</div>`);
   const panelIsCurrent = () => dialog.isConnected && dialog.open;
   const [members, accounts, users] = await Promise.all([
     request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members`),
@@ -953,7 +1021,7 @@ async function showCarManagement(car) {
   });
 
   dialog.querySelectorAll("[data-remove-member]").forEach(button => button.addEventListener("click", async () => {
-    if (!confirm("移除后该乘客的新请求将无法使用本车账号，是否继续？")) return;
+    if (!confirm("移除后该乘客的新请求将无法使用本车账号。本期已确认用量与在途请求不受影响、仍会计费。是否继续？")) return;
     setButtonBusy(button, true);
     try {
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members/${encodeURIComponent(button.dataset.removeMember)}`, { method: "DELETE" });
@@ -969,7 +1037,7 @@ async function showCarManagement(car) {
   }));
 
   dialog.querySelectorAll("[data-remove-account]").forEach(button => button.addEventListener("click", async () => {
-    if (!confirm("撤销后该账号不会再参与本车的新请求，是否继续？")) return;
+    if (!confirm("撤销后该账号不会再参与本车的新请求。已产生用量与在途请求不受影响、仍会计费。是否继续？")) return;
     setButtonBusy(button, true);
     try {
       await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/accounts/${encodeURIComponent(button.dataset.removeAccount)}`, { method: "DELETE" });
@@ -1030,7 +1098,7 @@ async function renderAdminUsage(content) {
   const [options, data] = await Promise.all([reportOptions(), request(adminReportPath())]);
   const report = state.report;
   content.innerHTML = `<form id="report-form" class="report-toolbar">
-      <div class="field"><label for="report-range">时间范围</label><select id="report-range" name="range_mode"><option value="preset"${report.rangeMode === "preset" ? " selected" : ""}>预设周期</option><option value="custom"${report.rangeMode === "custom" ? " selected" : ""}>自定义 UTC 区间</option></select></div>
+      <div class="field"><label for="report-range">时间范围</label><select id="report-range" name="range_mode"><option value="preset"${report.rangeMode === "preset" ? " selected" : ""}>预设周期</option><option value="custom"${report.rangeMode === "custom" ? " selected" : ""}>自定义区间（本地时间）</option></select></div>
       <div class="field" data-preset-range${report.rangeMode === "custom" ? " hidden" : ""}><label for="report-period">周期</label><select id="report-period" name="period"><option value="today"${report.period === "today" ? " selected" : ""}>今日</option><option value="7d"${report.period === "7d" ? " selected" : ""}>最近 7 天</option><option value="30d"${report.period === "30d" ? " selected" : ""}>最近 30 天</option></select></div>
       <div class="field" data-custom-range${report.rangeMode !== "custom" ? " hidden" : ""}><label for="report-from">开始（本地时间）</label><input id="report-from" name="from" type="datetime-local" value="${escapeHTML(report.from)}"></div>
       <div class="field" data-custom-range${report.rangeMode !== "custom" ? " hidden" : ""}><label for="report-to">结束（本地时间）</label><input id="report-to" name="to" type="datetime-local" value="${escapeHTML(report.to)}"></div>
@@ -1243,8 +1311,24 @@ async function renderAdminRequests(content, reset = true) {
   const page = await loadPage("usageRequests", path, reset);
   const values = state.requestFilterValues;
   const filters = `<form id="request-filter" class="report-toolbar request-filter"><div class="field"><label for="request-model">模型</label><input id="request-model" name="model" placeholder="请求或实际模型" value="${escapeHTML(values.model || "")}"></div><div class="field"><label for="request-outcome">结果</label><select id="request-outcome" name="outcome"><option value="">全部</option><option value="succeeded"${values.outcome === "succeeded" ? " selected" : ""}>成功</option><option value="failed"${values.outcome === "failed" ? " selected" : ""}>失败</option><option value="rejected"${values.outcome === "rejected" ? " selected" : ""}>拒绝</option><option value="incomplete"${values.outcome === "incomplete" ? " selected" : ""}>不完整</option></select></div><div class="field"><label for="request-billing">计价状态</label><select id="request-billing" name="billing_status"><option value="">全部</option><option value="priced"${values.billing_status === "priced" ? " selected" : ""}>已计价</option><option value="unknown"${values.billing_status === "unknown" ? " selected" : ""}>费用未知</option><option value="legacy_unpriced"${values.billing_status === "legacy_unpriced" ? " selected" : ""}>历史未计价</option></select></div><div class="field"><label for="request-user">用户引用</label><input id="request-user" name="user_ref" placeholder="usr_..." value="${escapeHTML(values.user_ref || "")}"></div><div class="field"><label for="request-car">车辆引用</label><input id="request-car" name="car_ref" placeholder="car_..." value="${escapeHTML(values.car_ref || "")}"></div><div class="field"><label for="request-account">账号引用</label><input id="request-account" name="account_ref" placeholder="acct_..." value="${escapeHTML(values.account_ref || "")}"></div><div class="field"><label for="request-key">API Key 引用</label><input id="request-key" name="api_key_ref" placeholder="cpk_..." value="${escapeHTML(values.api_key_ref || "")}"></div><div class="field"><label for="request-id">请求 ID</label><input id="request-id" name="request_id" value="${escapeHTML(values.request_id || "")}"></div><button class="button" type="submit">筛选</button></form>`;
-  content.innerHTML = `<div class="section-header"><div><h2>请求明细</h2><p>一行一个逻辑请求，展开查看全部 CPA 上游事件。默认最近 30 天。</p></div></div>${filters}<div class="request-list">${page.items.length ? page.items.map(requestDetailMarkup).join("") : `<div class="empty">当前条件下没有请求记录</div>`}</div>${paginationFooter(page, "个逻辑请求")}`;
+  const activeCount = activeFilterCount();
+  const activePeriod = activePeriodFilter();
+  const applied = [
+    activePeriod ? `周期：${escapeHTML(activePeriod)}` : "",
+    activeCount ? `${activeCount} 个条件` : "",
+  ].filter(Boolean).join(" · ");
+  const filterNote = applied ? `<div class="filter-status" role="status">已应用筛选：${applied}<button class="button secondary compact" type="button" data-clear-filters>清除</button></div>` : "";
+  content.innerHTML = `<div class="section-header"><div><h2>请求明细</h2><p>一行一个逻辑请求，展开查看全部 CPA 上游事件。默认最近 30 天。</p></div></div>${filterNote}${filters}<div class="request-list">${page.items.length ? page.items.map(requestDetailMarkup).join("") : `<div class="empty">当前条件下没有请求记录</div>`}</div>${paginationFooter(page, "个逻辑请求")}`;
   bindRequestDetails(content, page.items);
+  content.querySelector("[data-clear-filters]")?.addEventListener("click", () => {
+    const cleared = `#/requests?${new URLSearchParams({ period: "30d" }).toString()}`;
+    if (location.hash !== cleared) location.hash = cleared;
+    else {
+      state.pages.usageRequests = emptyPage();
+      state.requestFilters = "";
+      renderAdminRequests(content, true).catch(error => toast(error.message));
+    }
+  });
   content.querySelector("#request-filter").addEventListener("submit", async event => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);

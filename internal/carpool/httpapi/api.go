@@ -338,7 +338,7 @@ func (a *API) listMyAPIKeys(c *gin.Context) {
 		return
 	}
 	identity, _ := currentIdentity(c)
-	page, errKeys := a.control.ListAPIKeys(c.Request.Context(), identity.User, identity.User, cursor, limit)
+	page, errKeys := a.control.ListAPIKeys(c.Request.Context(), identity.User, identity.User, cursor, searchQuery(c), limit)
 	if errKeys != nil {
 		writeMappedError(c, errKeys)
 		return
@@ -490,7 +490,7 @@ func (a *API) listUsers(c *gin.Context) {
 		return
 	}
 	identity, _ := currentIdentity(c)
-	page, errUsers := a.control.ListUsers(c.Request.Context(), identity.User, cursor, limit)
+	page, errUsers := a.control.ListUsers(c.Request.Context(), identity.User, cursor, searchQuery(c), limit)
 	if errUsers != nil {
 		writeMappedError(c, errUsers)
 		return
@@ -550,7 +550,7 @@ func (a *API) listUserAPIKeys(c *gin.Context) {
 		writeMappedError(c, errOwner)
 		return
 	}
-	page, errKeys := a.control.ListAPIKeys(c.Request.Context(), identity.User, owner, cursor, limit)
+	page, errKeys := a.control.ListAPIKeys(c.Request.Context(), identity.User, owner, cursor, searchQuery(c), limit)
 	if errKeys != nil {
 		writeMappedError(c, errKeys)
 		return
@@ -606,7 +606,7 @@ func (a *API) listCars(c *gin.Context) {
 		return
 	}
 	identity, _ := currentIdentity(c)
-	page, errCars := a.control.ListCars(c.Request.Context(), identity.User, cursor, limit)
+	page, errCars := a.control.ListCars(c.Request.Context(), identity.User, cursor, searchQuery(c), limit)
 	if errCars != nil {
 		writeMappedError(c, errCars)
 		return
@@ -1254,6 +1254,11 @@ func paginationQuery(c *gin.Context) (string, int, bool) {
 		return "", 0, false
 	}
 	return cursor, limit, true
+}
+
+// searchQuery returns the trimmed `q` filter shared by the list endpoints.
+func searchQuery(c *gin.Context) string {
+	return strings.TrimSpace(c.Query("q"))
 }
 
 func pageResponse(items []gin.H, total int64, nextCursor string) gin.H {

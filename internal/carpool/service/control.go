@@ -54,8 +54,8 @@ type Repository interface {
 	GetUser(context.Context, string) (domain.User, error)
 	GetUserByNormalizedUsername(context.Context, string) (domain.User, error)
 	GetUserByRef(context.Context, string) (domain.User, error)
-	ListUsers(context.Context, string, int) ([]domain.User, error)
-	CountUsers(context.Context) (int64, error)
+	ListUsers(context.Context, string, string, int) ([]domain.User, error)
+	CountUsers(context.Context, string) (int64, error)
 	UpdateUser(context.Context, domain.User, *domain.AuditEvent) (domain.User, error)
 
 	CreateSession(context.Context, domain.Session, ...*domain.AuditEvent) (domain.Session, error)
@@ -65,8 +65,8 @@ type Repository interface {
 
 	CreateAPIKey(context.Context, domain.APIKey, ...*domain.AuditEvent) (domain.APIKey, error)
 	GetAPIKey(context.Context, string) (domain.APIKey, error)
-	ListAPIKeysForUser(context.Context, string, string, int) ([]domain.APIKey, error)
-	CountAPIKeysForUser(context.Context, string) (int64, error)
+	ListAPIKeysForUser(context.Context, string, string, string, int) ([]domain.APIKey, error)
+	CountAPIKeysForUser(context.Context, string, string) (int64, error)
 	RevokeAPIKey(context.Context, string, string, time.Time, ...*domain.AuditEvent) error
 	RevokeAPIKeysForUser(context.Context, string, string, time.Time, ...*domain.AuditEvent) (int64, error)
 	TouchAPIKeyLastUsed(context.Context, string, time.Time, time.Duration) (bool, error)
@@ -74,8 +74,8 @@ type Repository interface {
 	CreateCar(context.Context, domain.Car, ...*domain.AuditEvent) (domain.Car, error)
 	GetCar(context.Context, string) (domain.Car, error)
 	GetCarByRef(context.Context, string) (domain.Car, error)
-	ListCars(context.Context, string, int) ([]domain.Car, error)
-	CountCars(context.Context) (int64, error)
+	ListCars(context.Context, string, string, int) ([]domain.Car, error)
+	CountCars(context.Context, string) (int64, error)
 	UpdateCar(context.Context, domain.Car, *domain.AuditEvent) (domain.Car, error)
 
 	CurrentMembership(context.Context, string) (domain.Membership, error)
@@ -497,7 +497,7 @@ func (c *Control) CreateUser(ctx context.Context, actor domain.User, username, d
 	return CreateUserResult{User: user, TemporaryPassword: temporaryPassword}, nil
 }
 
-func (c *Control) ListUsers(ctx context.Context, actor domain.User, cursor string, limit int) (Page[domain.User], error) {
+func (c *Control) ListUsers(ctx context.Context, actor domain.User, cursor, search string, limit int) (Page[domain.User], error) {
 	if actor.Role != domain.UserRoleAdmin {
 		return Page[domain.User]{}, ErrForbidden
 	}
@@ -511,11 +511,11 @@ func (c *Control) ListUsers(ctx context.Context, actor domain.User, cursor strin
 		}
 	}
 	limit = normalizePageLimit(limit)
-	users, errUsers := c.repository.ListUsers(ctx, afterRef, limit+1)
+	users, errUsers := c.repository.ListUsers(ctx, afterRef, search, limit+1)
 	if errUsers != nil {
 		return Page[domain.User]{}, errUsers
 	}
-	total, errTotal := c.repository.CountUsers(ctx)
+	total, errTotal := c.repository.CountUsers(ctx, search)
 	if errTotal != nil {
 		return Page[domain.User]{}, errTotal
 	}
@@ -632,7 +632,7 @@ func (c *Control) CreateAPIKey(ctx context.Context, user domain.User, name strin
 	return CreateAPIKeyResult{APIKey: key, Token: secret.Token}, nil
 }
 
-func (c *Control) ListAPIKeys(ctx context.Context, actor, owner domain.User, cursor string, limit int) (Page[domain.APIKey], error) {
+func (c *Control) ListAPIKeys(ctx context.Context, actor, owner domain.User, cursor, search string, limit int) (Page[domain.APIKey], error) {
 	if actor.Role != domain.UserRoleAdmin && actor.ID != owner.ID {
 		return Page[domain.APIKey]{}, ErrForbidden
 	}
@@ -644,11 +644,11 @@ func (c *Control) ListAPIKeys(ctx context.Context, actor, owner domain.User, cur
 		return Page[domain.APIKey]{}, domain.ErrInvalid
 	}
 	limit = normalizePageLimit(limit)
-	keys, errKeys := c.repository.ListAPIKeysForUser(ctx, owner.ID, afterKeyID, limit+1)
+	keys, errKeys := c.repository.ListAPIKeysForUser(ctx, owner.ID, afterKeyID, search, limit+1)
 	if errKeys != nil {
 		return Page[domain.APIKey]{}, errKeys
 	}
-	total, errTotal := c.repository.CountAPIKeysForUser(ctx, owner.ID)
+	total, errTotal := c.repository.CountAPIKeysForUser(ctx, owner.ID, search)
 	if errTotal != nil {
 		return Page[domain.APIKey]{}, errTotal
 	}
@@ -716,7 +716,7 @@ func (c *Control) CreateCar(ctx context.Context, actor domain.User, name, descri
 	return car, nil
 }
 
-func (c *Control) ListCars(ctx context.Context, actor domain.User, cursor string, limit int) (Page[CarSummary], error) {
+func (c *Control) ListCars(ctx context.Context, actor domain.User, cursor, search string, limit int) (Page[CarSummary], error) {
 	if actor.Role != domain.UserRoleAdmin {
 		return Page[CarSummary]{}, ErrForbidden
 	}
@@ -730,11 +730,11 @@ func (c *Control) ListCars(ctx context.Context, actor domain.User, cursor string
 		}
 	}
 	limit = normalizePageLimit(limit)
-	cars, errCars := c.repository.ListCars(ctx, afterRef, limit+1)
+	cars, errCars := c.repository.ListCars(ctx, afterRef, search, limit+1)
 	if errCars != nil {
 		return Page[CarSummary]{}, errCars
 	}
-	total, errTotal := c.repository.CountCars(ctx)
+	total, errTotal := c.repository.CountCars(ctx, search)
 	if errTotal != nil {
 		return Page[CarSummary]{}, errTotal
 	}
@@ -1559,7 +1559,7 @@ func (c *Control) listAllUsers(ctx context.Context) ([]domain.User, error) {
 	var result []domain.User
 	after := ""
 	for {
-		page, errPage := c.repository.ListUsers(ctx, after, maximumListLimit)
+		page, errPage := c.repository.ListUsers(ctx, after, "", maximumListLimit)
 		if errPage != nil {
 			return nil, errPage
 		}
@@ -1575,7 +1575,7 @@ func (c *Control) listAllCars(ctx context.Context) ([]domain.Car, error) {
 	var result []domain.Car
 	after := ""
 	for {
-		page, errPage := c.repository.ListCars(ctx, after, maximumListLimit)
+		page, errPage := c.repository.ListCars(ctx, after, "", maximumListLimit)
 		if errPage != nil {
 			return nil, errPage
 		}

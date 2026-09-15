@@ -17,7 +17,7 @@ func TestAtomicAuditFailureRollsBackStateChanges(t *testing.T) {
 		_, errCreate := store.CreateUser(t.Context(), testUser("rollback-user", domain.UserRolePassenger), invalidAtomicAudit(now))
 		assertInvalidAuditError(t, errCreate)
 
-		count, errCount := store.CountUsers(t.Context())
+		count, errCount := store.CountUsers(t.Context(), "")
 		if errCount != nil || count != 0 {
 			t.Fatalf("CountUsers() = (%d, %v), want (0, nil)", count, errCount)
 		}
