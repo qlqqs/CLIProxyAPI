@@ -104,6 +104,7 @@ type reviewedInPlaceByteWrite struct {
 }
 
 var reviewedInPlaceByteWrites = map[string]reviewedInPlaceByteWrite{
+	"internal/carpool/runtime/concurrency.go":               {1, "shifts a private slice of waiter pointers under the limiter lock; no JSON or byte buffers are mutated"},
 	"cmd/server/carpool_commands.go":                        {1, "zeroes private TTY password buffers that never enter JSON parsing or escape the command"},
 	"internal/runtime/executor/claude_signing.go":           {2, "writes CCH digits into bytes.Clone(body); the caller's body is never touched"},
 	"internal/runtime/executor/claude_executor_cloaking.go": {1, "shifts []string headers to prepend a block; no byte of any payload is rewritten"},

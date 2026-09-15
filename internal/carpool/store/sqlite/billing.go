@@ -15,31 +15,8 @@ import (
 // SetMonthlyLimit changes the current member limit and the current period limit
 // atomically. A nil limit leaves the member in the legacy, not-configured state.
 func (s *Store) SetMonthlyLimit(ctx context.Context, membershipID string, limit *int64, audit *domain.AuditEvent) (domain.Membership, error) {
-	if err := s.ready(); err != nil {
+	if err := s.SetMemberLimits(ctx, membershipID, domain.MemberLimitsUpdate{MonthlySet: true, MonthlyNanoUSD: limit}, audit); err != nil {
 		return domain.Membership{}, err
-	}
-	if strings.TrimSpace(membershipID) == "" || (limit != nil && *limit < 0) {
-		return domain.Membership{}, fmt.Errorf("sqlite store: invalid monthly limit: %w", domain.ErrInvalid)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Membership{}, fmt.Errorf("sqlite store: begin monthly limit: %w", classifyError(err))
-	}
-	var oldLimit sql.NullInt64
-	if err = tx.QueryRowContext(ctx, "SELECT monthly_limit_nano_usd FROM memberships WHERE id = ? AND ended_at IS NULL", membershipID).Scan(&oldLimit); err != nil {
-		return domain.Membership{}, rollback(tx, scanError("read current membership limit", err))
-	}
-	if _, err = tx.ExecContext(ctx, "UPDATE memberships SET monthly_limit_nano_usd = ? WHERE id = ? AND ended_at IS NULL", nullableInt64(limit), membershipID); err != nil {
-		return domain.Membership{}, rollback(tx, fmt.Errorf("sqlite store: update monthly limit: %w", classifyError(err)))
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE billing_periods SET limit_nano_usd = ?, revision = revision + 1 WHERE membership_id = ? AND period_from <= ? AND period_to > ?`, nullableInt64(limit), membershipID, toDatabaseTime(s.currentTime()), toDatabaseTime(s.currentTime())); err != nil {
-		return domain.Membership{}, rollback(tx, fmt.Errorf("sqlite store: update billing period limit: %w", classifyError(err)))
-	}
-	if err = insertAudit(ctx, tx, audit, s.currentTime()); err != nil {
-		return domain.Membership{}, rollback(tx, err)
-	}
-	if err = tx.Commit(); err != nil {
-		return domain.Membership{}, fmt.Errorf("sqlite store: commit monthly limit: %w", classifyError(err))
 	}
 	return s.membershipByID(ctx, membershipID)
 }
@@ -103,14 +80,7 @@ func (s *Store) RecordUsageEventBilled(ctx context.Context, event domain.UsageEv
 	if cost != nil && *cost < 0 {
 		return domain.UsageEvent{}, fmt.Errorf("sqlite store: negative event cost: %w", domain.ErrInvalid)
 	}
-	if strings.TrimSpace(periodID) == "" {
-		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(billing_period_id, '') FROM proxy_requests WHERE request_id = ?`, event.RequestID).Scan(&periodID); err != nil {
-			return domain.UsageEvent{}, scanError("read request billing period", err)
-		}
-		if strings.TrimSpace(periodID) == "" {
-			return domain.UsageEvent{}, fmt.Errorf("sqlite store: request has no billing period: %w", domain.ErrInvalid)
-		}
-	}
+
 	if pricingStatus == "" {
 		if cost == nil {
 			pricingStatus = "unknown"
@@ -121,6 +91,32 @@ func (s *Store) RecordUsageEventBilled(ctx context.Context, event domain.UsageEv
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.UsageEvent{}, fmt.Errorf("sqlite store: begin billed usage: %w", classifyError(err))
+	}
+	// Receipts outlive request details, so replay after retention remains a no-op.
+	var receiptRequest, receiptStatus, receiptReason string
+	var receiptCost sql.NullInt64
+	errReceipt := tx.QueryRowContext(ctx, `SELECT request_id,cost_nano_usd,pricing_status,pricing_reason FROM billed_event_receipts WHERE event_id=?`, event.EventID).Scan(&receiptRequest, &receiptCost, &receiptStatus, &receiptReason)
+	if errReceipt == nil {
+		if receiptRequest != event.RequestID {
+			return domain.UsageEvent{}, rollback(tx, domain.ErrConflict)
+		}
+		event.CostNanoUSD, event.PricingStatus, event.PricingReason = fromNullableInt64(receiptCost), receiptStatus, receiptReason
+		event.BillingPeriodID = periodID
+		if errCommit := tx.Commit(); errCommit != nil {
+			return domain.UsageEvent{}, classifyError(errCommit)
+		}
+		return event, nil
+	}
+	if !errors.Is(errReceipt, sql.ErrNoRows) {
+		return domain.UsageEvent{}, rollback(tx, scanError("read billed receipt", errReceipt))
+	}
+	if strings.TrimSpace(periodID) == "" {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(billing_period_id, '') FROM proxy_requests WHERE request_id = ?`, event.RequestID).Scan(&periodID); err != nil {
+			return domain.UsageEvent{}, rollback(tx, scanError("read request billing period", err))
+		}
+		if strings.TrimSpace(periodID) == "" {
+			return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: request has no billing period: %w", domain.ErrInvalid))
+		}
 	}
 	if err = populateUsageScope(ctx, tx, &event); err != nil {
 		return domain.UsageEvent{}, rollback(tx, err)
@@ -140,6 +136,9 @@ func (s *Store) RecordUsageEventBilled(ctx context.Context, event domain.UsageEv
 		return domain.UsageEvent{}, rollback(tx, err)
 	}
 	if affected == 1 {
+		if errQuota := recordQuotaFeeTx(ctx, tx, event, cost, pricingStatus, pricingReason); errQuota != nil {
+			return domain.UsageEvent{}, rollback(tx, errQuota)
+		}
 		var query string
 		var args []any
 		if cost == nil {
@@ -164,7 +163,7 @@ func (s *Store) RecordUsageEventBilled(ctx context.Context, event domain.UsageEv
 			_, e = tx.ExecContext(ctx, `UPDATE proxy_requests SET billing_status = 'unknown' WHERE request_id = ?`, event.RequestID)
 		} else {
 			_, e = tx.ExecContext(ctx, `UPDATE proxy_requests
-				SET billing_status = CASE WHEN EXISTS (
+				SET billing_status = CASE WHEN billing_status = 'unknown' OR EXISTS (
 					SELECT 1 FROM usage_events WHERE request_id = ? AND pricing_status = 'unknown'
 				) THEN 'unknown' ELSE 'priced' END,
 				billed_nano_usd = COALESCE(billed_nano_usd, 0) + ?

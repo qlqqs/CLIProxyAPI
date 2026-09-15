@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -68,7 +69,13 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 	cfg.RemoteManagement.DisableControlPanel = true
 	configPath := filepath.Join(root, "unused-config.yaml")
 	manager := coreauth.NewManager(nil, nil, nil)
-	executor := &browserFixtureExecutor{}
+	limitsFixture := os.Getenv("CARPOOL_BROWSER_LIMITS") == "1"
+	provider := "openai"
+	if limitsFixture {
+		provider = "codex"
+	}
+	executor := &browserFixtureExecutor{provider: provider}
+	defer executor.setHold(false)
 	manager.RegisterExecutor(executor)
 	module, errOpen := Open(ctx, cfg, configPath, manager)
 	if errOpen != nil {
@@ -105,20 +112,28 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 			t.Fatal(errMember)
 		}
 		authID := fmt.Sprintf("qa-fake-openai-%d", index+1)
-		if _, errRegister := manager.Register(ctx, &coreauth.Auth{ID: authID, Provider: "openai", Status: coreauth.StatusActive}); errRegister != nil {
+		auth := &coreauth.Auth{ID: authID, Provider: provider, Status: coreauth.StatusActive}
+		if limitsFixture && index == 0 {
+			observed := time.Now().UTC()
+			auth.Quota = coreauth.QuotaState{ObservedAt: observed, Signals: map[string]string{
+				"X-Codex-Primary-Window-Minutes": "300", "X-Codex-Primary-Used-Percent": "10", "X-Codex-Primary-Reset-At": fmt.Sprint(observed.Add(3 * time.Hour).Unix()),
+				"X-Codex-Secondary-Window-Minutes": "10080", "X-Codex-Secondary-Used-Percent": "20", "X-Codex-Secondary-Reset-At": fmt.Sprint(observed.Add(3 * 24 * time.Hour).Unix()),
+			}}
+		}
+		if _, errRegister := manager.Register(ctx, auth); errRegister != nil {
 			t.Fatal(errRegister)
 		}
 		models := []*registry.ModelInfo{{ID: "gpt-4o", Object: "model", OwnedBy: "openai"}, {ID: "qa-price-missing", Object: "model", OwnedBy: "openai"}}
 		if index == 1 {
 			models = append(models, &registry.ModelInfo{ID: "qa-isolated-only", Object: "model", OwnedBy: "openai"})
 		}
-		registry.GetGlobalRegistry().RegisterClient(authID, "openai", models)
+		registry.GetGlobalRegistry().RegisterClient(authID, provider, models)
 		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(authID) })
 		if _, errAssign := module.Control().MoveAccount(ctx, admin, car.CarRef, authID, fmt.Sprintf("QA Fake Account %d", index+1)); errAssign != nil {
 			t.Fatal(errAssign)
 		}
 
-		if index == 0 {
+		if index == 0 && !limitsFixture {
 			for _, observation := range []struct {
 				id, provider, label string
 				quota               coreauth.QuotaState
@@ -142,7 +157,12 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 	api.NewServer(cfg, manager, accessManager, configPath, options...)
 	accessManager.SetProviders([]sdkaccess.Provider{module.Provider()})
 	accessManager.SetAuthenticatedRequestHook(module.AuthenticatedRequestHook)
-	engine.GET("/__fixture/calls", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"calls": executor.calls.Load()}) })
+	engine.GET("/__fixture/calls", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"calls": executor.calls.Load(), "blocked": executor.blocked.Load()})
+	})
+	if limitsFixture {
+		engine.POST("/__fixture/hold", func(c *gin.Context) { executor.setHold(c.Query("enabled") == "true"); c.Status(http.StatusNoContent) })
+	}
 	catalog := append([]byte(nil), module.pricing.Current().Raw...)
 	engine.GET("/__fixture/catalog", func(c *gin.Context) { c.Data(http.StatusOK, "application/json", catalog) })
 	module.Start()
@@ -183,9 +203,49 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 	}
 }
 
-type browserFixtureExecutor struct{ calls atomic.Int64 }
+type browserFixtureExecutor struct {
+	calls    atomic.Int64
+	provider string
+	gateMu   sync.Mutex
+	gate     chan struct{}
+	blocked  atomic.Int64
+}
 
-func (*browserFixtureExecutor) Identifier() string { return "openai" }
+func (e *browserFixtureExecutor) setHold(enabled bool) {
+	e.gateMu.Lock()
+	defer e.gateMu.Unlock()
+	if enabled && e.gate == nil {
+		e.gate = make(chan struct{})
+	}
+	if !enabled && e.gate != nil {
+		close(e.gate)
+		e.gate = nil
+	}
+}
+
+func (e *browserFixtureExecutor) wait(ctx context.Context) error {
+	e.gateMu.Lock()
+	gate := e.gate
+	e.gateMu.Unlock()
+	if gate == nil {
+		return nil
+	}
+	e.blocked.Add(1)
+	defer e.blocked.Add(-1)
+	select {
+	case <-gate:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *browserFixtureExecutor) Identifier() string {
+	if e.provider != "" {
+		return e.provider
+	}
+	return "openai"
+}
 func (e *browserFixtureExecutor) publish(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options, stream bool) {
 	sequence := e.calls.Add(1)
 	requestID := opts.RequestID
@@ -194,16 +254,22 @@ func (e *browserFixtureExecutor) publish(ctx context.Context, auth *coreauth.Aut
 	}
 	usage.PublishRecord(ctx, usage.Record{
 		EventID: fmt.Sprintf("qa-event-%d", sequence), RequestID: requestID,
-		AuthID: auth.ID, AuthIndex: auth.Index, Provider: "openai", ExecutorType: "openai", Model: req.Model,
+		AuthID: auth.ID, AuthIndex: auth.Index, Provider: auth.Provider, ExecutorType: auth.Provider, Model: req.Model,
 		UsageKnown: true, Stream: stream, RequestedAt: time.Now().UTC(), ResponseServiceTier: "default",
 		Detail: usage.Detail{InputTokens: 10000, OutputTokens: 2000, TotalTokens: 12000, TokenBreakdown: usage.NewSubsetTokenBreakdown(10000, 0, 0, 2000, 0, 12000)},
 	})
 }
 func (e *browserFixtureExecutor) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (coreexecutor.Response, error) {
+	if errWait := e.wait(ctx); errWait != nil {
+		return coreexecutor.Response{}, errWait
+	}
 	e.publish(ctx, auth, req, opts, false)
 	return coreexecutor.Response{Payload: []byte(`{"id":"qa-completion","object":"chat.completion","created":0,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"Synthetic browser QA response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10000,"completion_tokens":2000,"total_tokens":12000}}`)}, nil
 }
 func (e *browserFixtureExecutor) ExecuteStream(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+	if errWait := e.wait(ctx); errWait != nil {
+		return nil, errWait
+	}
 	e.publish(ctx, auth, req, opts, true)
 	chunks := make(chan coreexecutor.StreamChunk, 2)
 	chunks <- coreexecutor.StreamChunk{Payload: []byte(`{"id":"qa-stream","object":"chat.completion.chunk","created":0,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Synthetic browser QA stream"},"finish_reason":null}]}`)}

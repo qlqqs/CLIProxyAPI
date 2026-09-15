@@ -244,6 +244,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			ctx = context.Background()
 		}
 
+		// Stop queued carpool admission before waiting for HTTP requests to drain.
+		if s.carpoolModule != nil && s.carpoolModule.Control() != nil {
+			s.carpoolModule.Control().CloseAdmission()
+		}
 		s.homeLifecycleMu.Lock()
 		if supervisor := s.homeSupervisor; supervisor != nil {
 			s.homeConfigCommitMu.Lock()

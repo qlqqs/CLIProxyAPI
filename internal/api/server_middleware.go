@@ -180,9 +180,13 @@ func accessAuthMiddleware(manager *sdkaccess.Manager, realtimeError bool) gin.Ha
 		if statusCode >= http.StatusInternalServerError {
 			log.Errorf("authentication middleware error: %v", err)
 		}
-		if err.Code == sdkaccess.AuthErrorCodeAccountingUnavailable {
+		if err.Code == sdkaccess.AuthErrorCodeAccountingUnavailable || err.Code == "concurrency_queue_full" || err.Code == "concurrency_closed" || err.Code == "five_hour_quota_exhausted" || err.Code == "weekly_quota_exhausted" {
+			errorType := "server_error"
+			if statusCode < 500 {
+				errorType = "limit_error"
+			}
 			c.AbortWithStatusJSON(statusCode, gin.H{"error": gin.H{
-				"message": err.Message, "type": "server_error", "code": string(err.Code),
+				"message": err.Message, "type": errorType, "code": string(err.Code),
 			}})
 			return
 		}

@@ -298,6 +298,10 @@ type AuditEvent struct {
 }
 
 type ProxyAuthorization struct {
+	// CheckOnly validates admission without persisting a request or audit.
+	CheckOnly            bool
+	ExpectedMembershipID string
+	ExpectedAuthID       string
 	// NonBillable is set only by the server for model metadata reads.
 	NonBillable         bool
 	RequestID           string

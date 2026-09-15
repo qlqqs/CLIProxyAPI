@@ -522,18 +522,20 @@ async function renderPassengerRoute(content) {
     const exhausted = billing?.status === "exhausted" || billing?.status === "overage";
     content.innerHTML = `<div class="section-header"><div><h2>我的概览</h2><p>${escapeHTML(data.car.name)} · ${escapeHTML(data.car.description || "当前车辆")}</p></div>${statusLabel(data.car.status)}</div>
       <div class="dashboard-layout"><div class="dashboard-main">
-        <section class="billing-hero" aria-label="我的本期额度"><div><span class="eyebrow">本期剩余额度 · USD</span><h3 class="${configured && billing.remaining_usd != null && billing.remaining_usd !== "" ? "balance-value" : "quota-missing"}">${configured ? moneyMarkup(billing.remaining_usd) : "待设置额度"}</h3><p>${configured ? `本期额度 ${moneyMarkup(billing.limit_usd)} · 已确认用量 ${moneyMarkup(billing.used_usd)}` : "请联系管理员设置月度额度后再发起请求。"}</p></div>${billingMarkup(billing)}</section>
-        ${exhausted ? `<div class="warning-banner">本期额度已用尽，新的请求将被拒绝。请联系管理员调整额度，或等待下一账期。</div>` : ""}
+        <section class="billing-hero" aria-label="我的本月额度"><div><span class="eyebrow">本月剩余额度 · USD</span><h3 class="${configured && billing.remaining_usd != null && billing.remaining_usd !== "" ? "balance-value" : "quota-missing"}">${configured ? moneyMarkup(billing.remaining_usd) : "待设置额度"}</h3><p>${configured ? `本月额度 ${moneyMarkup(billing.limit_usd)} · 已确认用量 ${moneyMarkup(billing.used_usd)}` : "请联系管理员设置月度额度后再发起请求。"}</p></div>${billingMarkup(billing)}</section>
+        ${exhausted ? `<div class="warning-banner">本月额度已用尽，新的请求将被拒绝。请联系管理员调整额度，或等待下一账期。</div>` : ""}
         ${data.car.status !== "active" ? `<div class="warning-banner">车辆当前${escapeHTML(statusText(data.car.status))}，请联系管理员确认车辆状态。</div>` : ""}
         ${billing && (billing.data_complete === false || billing.unknown_cost_events) ? `<div class="warning-banner">${billing.unknown_cost_events ? `${formatNumber(billing.unknown_cost_events)} 条费用未知；` : ""}费用数据不完整，已用金额仅为已确认小计。</div>` : ""}
         ${usageCoverage(data.coverage)}
+        <section class="workspace-panel"><div class="panel-heading"><h3>我的短周期额度 · USD</h3></div>${memberQuotaMarkup(data)}<p class="muted section-note">跟随车辆账号实际的 5 小时 / 7 天周期，与账号原生百分比配额分开计算。已开始的请求仍会结算，可能产生超额。</p></section>
         <section class="workspace-panel"><div class="panel-heading"><h3>当前车辆</h3><a href="#/accounts">查看账号状态</a></div>
           <dl class="overview-stats"><div><dt>当前成员</dt><dd>${formatNumber(data.car.member_count)}</dd></div><div><dt>可用账号</dt><dd>${formatNumber(data.car.available_account_count)}</dd></div><div><dt>席位上限</dt><dd>${data.car.seat_limit ? formatNumber(data.car.seat_limit) : "不限"}</dd></div></dl>
           <p class="muted">车辆启用不代表请求一定可用；请求仍受个人额度与上游账号状态限制。</p>
         </section>
       </div><aside class="dashboard-side">
         <section class="workspace-panel"><div class="panel-heading"><h3>常用操作</h3></div><div class="quick-links"><a href="#/keys">${iconMarkup("/keys")}<span>管理 API Key</span></a><a href="#/members">${iconMarkup("/members")}<span>查看成员用量</span></a><a href="#/accounts">${iconMarkup("/accounts")}<span>查看账号状态</span></a></div></section>
-        <section class="workspace-panel"><div class="panel-heading"><h3>账期与统计</h3></div><ul class="activity-list"><li><strong>当前账期</strong><span>${escapeHTML(formatTime(billing?.period_from))} 至 ${escapeHTML(formatTime(billing?.period_to))}</span></li><li><strong>下次重置</strong><span>${escapeHTML(formatTime(billing?.period_to))}</span></li><li><strong>报表时区</strong><span>${escapeHTML(data.report_timezone || state.session?.report_timezone || "UTC")}</span></li>${billing?.coverage_from ? `<li><strong>费用统计起点</strong><span>${escapeHTML(formatTime(billing.coverage_from))}</span></li>` : ""}</ul></section>
+        <section class="workspace-panel"><div class="panel-heading"><h3>我的请求并发</h3></div><p>用户上限：<strong>${concurrencyMarkup(data.concurrency_limit)}</strong></p><p class="muted">所有 API Key 共享此上限，同时受账号并发限制。</p><p class="muted">${concurrencyQueueHelp}</p></section>
+        <section class="workspace-panel"><div class="panel-heading"><h3>月账期与统计</h3></div><ul class="activity-list"><li><strong>当前月账期</strong><span>${escapeHTML(formatTime(billing?.period_from))} 至 ${escapeHTML(formatTime(billing?.period_to))}</span></li><li><strong>月额度重置</strong><span>${escapeHTML(formatTime(billing?.period_to))}</span></li><li><strong>报表时区</strong><span>${escapeHTML(data.report_timezone || state.session?.report_timezone || "UTC")}</span></li>${billing?.coverage_from ? `<li><strong>费用统计起点</strong><span>${escapeHTML(formatTime(billing.coverage_from))}</span></li>` : ""}</ul></section>
       </aside></div>`;
     return;
   }
@@ -546,7 +548,7 @@ async function renderPassengerRoute(content) {
   }
   if (state.route === "/accounts") {
     const data = await request(`/me/accounts?period=${encodeURIComponent(state.period)}`);
-    content.innerHTML = `<div class="section-header"><div><h2>车辆账号</h2><p>状态更新时间：${escapeHTML(formatTime(new Date()))} · <span class="muted">每 60 秒自动刷新</span></p></div>${periodControl()}</div>${accountTable(data.items || [])}`;
+    content.innerHTML = `<div class="section-header"><div><h2>车辆账号</h2><p>状态更新时间：${escapeHTML(formatTime(new Date()))} · <span class="muted">每 60 秒自动刷新</span></p><p>账号并发由同账号乘客共享；CPA 原生配额不是个人 USD 额度。</p></div>${periodControl()}</div>${accountTable(data.items || [])}`;
     bindPeriod(content);
     if (content.isConnected) scheduleAccountRefresh();
     return;
@@ -561,13 +563,95 @@ function usageCoverage(coverage) {
 
 function memberTable(items) {
   if (!items.length) return `<div class="empty">该周期暂无成员用量</div>`;
-  return `<div class="table-wrap"><table><thead><tr><th>成员</th><th>额度进度</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${billingMarkup(item.billing)}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
+  return `<div class="table-wrap"><table><thead><tr><th>成员</th><th>个人额度 · USD</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
+    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td><span class="muted">月额度</span>${billingMarkup(item.billing)}${!item.left ? `${memberQuotaMarkup(item, true)}<small class="policy-concurrency">用户并发：${concurrencyMarkup(item.concurrency_limit)}</small>` : ""}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
 function moneyMarkup(value) {
   return value == null || value === "" ? "未提供" : `$${escapeHTML(value)}`;
+}
+
+const concurrencyQueueHelp = "达到用户或账号并发上限时，请求会排队等待；等待队列已满时返回 HTTP 429。取消请求会退出等待。";
+
+function concurrencyMarkup(value) {
+  return value == null ? "不限" : `${escapeHTML(value)} 个请求`;
+}
+
+function memberQuotaMarkup(member, compact = false) {
+  const windows = Array.isArray(member.quota_windows) ? member.quota_windows : [];
+  return `<div class="member-quota-windows${compact ? " compact-quota-windows" : ""}">${[
+    ["5h", "5 小时", "five_hour_limit_usd"], ["7d", "7 天", "weekly_limit_usd"],
+  ].map(([kind, label, field]) => {
+    const window = windows.find(item => item.kind === kind);
+    const limit = window ? window.limit_usd : member[field];
+    const status = window?.status || (limit == null ? "unlimited" : "pending_sync");
+    const labels = { unlimited: "不限", pending_sync: "周期待同步", active: "额度可用", exhausted: "额度已用尽", overage: "已超额" };
+    const knownStatus = Object.hasOwn(labels, status) ? status : "unknown";
+    const pending = knownStatus === "pending_sync";
+    const amounts = pending ? "已确认未提供 · 剩余未提供" : `已确认 ${moneyMarkup(window?.used_usd)}${limit != null ? ` · 剩余 ${moneyMarkup(window?.remaining_usd)}` : ""}${status === "overage" ? ` · 超额 ${moneyMarkup(window?.overage_usd)}` : ""}`;
+    const details = compact ? "" : `<small>重置：${pending || !window?.reset_at ? "待同步" : escapeHTML(formatTime(window.reset_at))}${window?.period_from ? ` · 周期起点：${escapeHTML(formatTime(window.period_from))}` : ""}</small><small>统计覆盖起点：${window?.coverage_from ? escapeHTML(formatTime(window.coverage_from)) : "未提供"}</small>`;
+    const unknown = window?.unknown_cost_events ? `${formatNumber(window.unknown_cost_events)} 条费用未知` : "";
+    const incomplete = window?.data_complete === false && !pending ? "统计覆盖不完整，金额仅为已确认小计" : "";
+    return `<div class="member-quota-window"><div class="member-quota-heading"><strong>${label} · ${limit == null ? "不限额" : moneyMarkup(limit)}</strong><span class="status ${knownStatus}">${labels[knownStatus] || "额度状态未知"}</span></div><span class="member-quota-amounts">${amounts}</span>${details}${pending ? `<small class="quota-policy-warning">${compact ? "暂不执行此周期限制" : "周期待同步，暂不执行此项短周期限制；月额度与并发限制仍生效。"}</small>` : ""}${unknown || incomplete ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : ""}</div>`;
+  }).join("")}</div>`;
+}
+
+function optionalConcurrency(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const count = Number(text);
+  if (!/^[0-9]+$/.test(text) || !Number.isSafeInteger(count) || count < 1) throw new Error("并发上限请填写正整数，或留空表示不限；不能填写 0。");
+  return count;
+}
+
+function memberQuotaPatch(form, member) {
+  const patch = {};
+  for (const field of ["monthly_limit_usd", "five_hour_limit_usd", "weekly_limit_usd"]) {
+    const text = String(form.get(field) ?? "").trim();
+    const previous = String(member[field] ?? "").trim();
+    if (text === previous) continue;
+    if (!text && field !== "monthly_limit_usd") patch[field] = null;
+    else {
+      if (!/^[0-9]+(\.[0-9]{1,9})?$/.test(text)) throw new Error("额度请填写非负 USD 金额，最多 9 位小数；月度额度不能留空。");
+      patch[field] = text;
+    }
+  }
+  const concurrency = optionalConcurrency(form.get("concurrency_limit"));
+  if (concurrency !== (member.concurrency_limit ?? null)) patch.concurrency_limit = concurrency;
+  return patch;
+}
+
+function bindPolicyForm(editor, path, buildPatch, onSaved) {
+  const form = editor.querySelector("form");
+  const submit = form.querySelector("button[type=submit]");
+  const errorRegion = form.querySelector("[data-policy-error]");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (submit.disabled) return;
+    errorRegion.hidden = true;
+    try {
+      const patch = buildPatch(new FormData(form));
+      if (!Object.keys(patch).length) {
+        editor.close();
+        return;
+      }
+      setButtonBusy(submit, true);
+      submit.textContent = "正在保存…";
+      await request(path, { method: "PATCH", body: JSON.stringify(patch) });
+      if (!editor.isConnected || !editor.open) return;
+      editor.close();
+      onSaved();
+    } catch (error) {
+      if (!editor.isConnected || !editor.open) return;
+      errorRegion.textContent = `${error.message} 请检查输入后重试；如连接中断，请重新打开表单核对保存结果。`;
+      errorRegion.hidden = false;
+      errorRegion.focus();
+    } finally {
+      setButtonBusy(submit, false);
+      submit.textContent = "保存设置";
+    }
+  });
 }
 
 function billingMarkup(billing) {
@@ -580,8 +664,8 @@ function billingMarkup(billing) {
 
 function accountTable(items) {
   if (!items.length) return `<div class="empty">当前车辆还没有分配账号</div>`;
-  return `<div class="table-wrap account-table"><table><thead><tr><th>账号</th><th>供应商</th><th>CPA 原生配额</th><th>状态</th><th>观测时间</th><th class="numeric">请求</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.label || item.safe_label)}</strong></td><td>${escapeHTML(item.provider)}</td><td>${quotaMarkup(item.quota)}</td><td>${statusLabel(item.stale ? "unknown" : item.status)}${item.stale ? ` <span class="tag">健康数据陈旧</span>` : ""}</td><td>${escapeHTML(formatTime(item.observed_at))}</td><td class="numeric">${formatNumber(item.usage?.logical_requests)}</td><td class="numeric">${formatNumber(item.usage?.known_total_tokens)}</td><td class="numeric">${formatNumber(item.usage?.unknown_usage_events)}</td></tr>`).join("")}
+  return `<div class="table-wrap account-table"><table><thead><tr><th>账号</th><th>供应商</th><th>账号并发</th><th>CPA 原生配额</th><th>状态</th><th>观测时间</th><th class="numeric">请求</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
+    ${items.map(item => `<tr><td><strong>${escapeHTML(item.label || item.safe_label)}</strong></td><td>${escapeHTML(item.provider)}</td><td>${concurrencyMarkup(item.concurrency_limit)}</td><td>${quotaMarkup(item.quota)}</td><td>${statusLabel(item.stale ? "unknown" : item.status)}${item.stale ? ` <span class="tag">健康数据陈旧</span>` : ""}</td><td>${escapeHTML(formatTime(item.observed_at))}</td><td class="numeric">${formatNumber(item.usage?.logical_requests)}</td><td class="numeric">${formatNumber(item.usage?.known_total_tokens)}</td><td class="numeric">${formatNumber(item.usage?.unknown_usage_events)}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
@@ -919,10 +1003,10 @@ async function showCarManagement(car) {
       <div class="form-actions"><button class="button" type="submit">保存车辆</button></div>
     </form>
     <div class="subsection-head"><h3>成员<span class="subsection-count">${formatNumber(members.total)}</span></h3></div>
-    ${(members.items || []).length ? `<div class="compact-list">${members.items.map(item => `<div><strong>${escapeHTML(item.display_name)}</strong><span class="compact-meta quota-cell">${item.billing && item.billing.status !== "not_configured" ? `<span class="quota-bar-wrap">${percentageMeter(item.billing.usage_percent, `${escapeHTML(item.display_name)} 本期已用`)}<span class="quota-pct">${escapeHTML(formatQuotaPercent(item.billing.usage_percent))}</span></span><span class="quota-nums">$${escapeHTML(item.billing.used_usd || "0")} / $${escapeHTML(item.billing.limit_usd || "0")}</span>` : (item.monthly_limit_usd == null ? "待设额度" : `$${escapeHTML(item.monthly_limit_usd)}`)}</span><span class="compact-meta">${escapeHTML(formatTime(item.started_at))}</span><span class="inline-actions"><button class="button secondary compact" data-edit-member-limit="${escapeHTML(item.member_ref)}" data-member-name="${escapeHTML(item.display_name)}" data-member-limit="${escapeHTML(item.monthly_limit_usd || "")}">调额</button><button class="button danger compact" data-remove-member="${escapeHTML(item.member_ref)}">移除</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无成员</div>`}
-    ${passengerOptions && car.status !== "retired" ? `<details class="add-form"><summary>+ 添加成员</summary><form id="add-member" class="inline-editor"><div class="field"><label for="member-user">乘客</label><select id="member-user" name="user_ref" required><option value="">选择乘客</option>${passengerOptions}</select></div><div class="field"><label for="member-display-name">车内展示名</label><input id="member-display-name" name="display_name" required maxlength="64"></div><div class="field"><label for="member-limit">月度额度（USD）</label><input id="member-limit" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" placeholder="例如 25.00" required><small>必须填写；输入 0 会暂时禁止新请求。</small></div><button class="button compact" type="submit">加入或换入</button></form></details>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新成员" : "没有可分配的启用乘客"}</p>`}
+    ${(members.items || []).length ? `<div class="compact-list member-policy-list">${members.items.map(item => `<div><strong>${escapeHTML(item.display_name)}</strong><div class="compact-meta member-policy"><span>月额度 · ${moneyMarkup(item.monthly_limit_usd)}</span>${item.billing && item.billing.status !== "not_configured" ? `<span class="quota-cell"><span class="quota-bar-wrap">${percentageMeter(item.billing.usage_percent, `${item.display_name} 本月已用`)}<span class="quota-pct">${escapeHTML(formatQuotaPercent(item.billing.usage_percent))}</span></span><span class="quota-nums">${moneyMarkup(item.billing.used_usd)} / ${moneyMarkup(item.billing.limit_usd)}</span></span>` : ""}${memberQuotaMarkup(item, true)}</div><span class="compact-meta">用户并发：${concurrencyMarkup(item.concurrency_limit)}<br>上车：${escapeHTML(formatTime(item.started_at))}</span><span class="inline-actions"><button class="button secondary compact" data-edit-member-limit="${escapeHTML(item.member_ref)}" data-member-name="${escapeHTML(item.display_name)}" aria-label="调整 ${escapeHTML(item.display_name)} 的额度与并发">调额 / 并发</button><button class="button danger compact" data-remove-member="${escapeHTML(item.member_ref)}">移除</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无成员</div>`}
+    ${passengerOptions && car.status !== "retired" ? `<details class="add-form"><summary>+ 添加成员</summary><form id="add-member" class="inline-editor"><div class="field"><label for="member-user">乘客</label><select id="member-user" name="user_ref" required><option value="">选择乘客</option>${passengerOptions}</select></div><div class="field"><label for="member-display-name">车内展示名</label><input id="member-display-name" name="display_name" required maxlength="64"></div><div class="field"><label for="member-limit">月度额度（USD）</label><input id="member-limit" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" placeholder="例如 25.00" required><small>必须填写；输入 0 会暂时禁止新请求。加入后可通过“调额 / 并发”设置短周期额度与用户并发。</small></div><button class="button compact" type="submit">加入或换入</button></form></details>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新成员" : "没有可分配的启用乘客"}</p>`}
     <div class="subsection-head"><h3>账号<span class="subsection-count">${formatNumber(accounts.total)}</span></h3></div>
-    ${(accounts.items || []).length ? `<div class="compact-list">${accounts.items.map(item => `<div><strong>${escapeHTML(item.safe_label)}</strong><span class="compact-meta">${escapeHTML(item.provider)}</span><span class="compact-meta code-ref">${escapeHTML(item.account_ref)}</span><button class="button danger compact" data-remove-account="${escapeHTML(item.account_ref)}">撤销</button></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无账号</div>`}
+    ${(accounts.items || []).length ? `<div class="compact-list">${accounts.items.map(item => `<div><strong>${escapeHTML(item.safe_label)}</strong><span class="compact-meta">${escapeHTML(item.provider)} · 并发 ${concurrencyMarkup(item.concurrency_limit)}</span><span class="compact-meta code-ref">${escapeHTML(item.account_ref)}</span><span class="inline-actions"><button class="button secondary compact" data-edit-account-concurrency="${escapeHTML(item.account_ref)}" aria-label="设置 ${escapeHTML(item.safe_label)} 的账号并发">设置并发</button><button class="button danger compact" data-remove-account="${escapeHTML(item.account_ref)}">撤销</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无账号</div>`}
     ${candidateOptions && car.status !== "retired" ? `<details class="add-form"><summary>+ 添加账号</summary><form id="add-account" class="inline-editor"><div class="field"><label for="account-candidate">上游账号</label><select id="account-candidate" name="candidate_ref" required><option value="">选择账号</option>${candidateOptions}</select></div><div class="field"><label for="account-label">安全标签</label><input id="account-label" name="safe_label" required maxlength="80"></div><button class="button compact" type="submit">分配或移入</button></form></details>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新账号" : "当前没有可分配的运行时账号"}</p>`}`);
 
   dialog.querySelector("#member-user")?.addEventListener("change", event => {
@@ -970,27 +1054,32 @@ async function showCarManagement(car) {
     }
   });
 
+  const policySaved = () => {
+    toast("设置已保存；不终止已开始的请求");
+    if (!panelIsCurrent()) return;
+    dialog.close();
+    renderRoute();
+  };
   dialog.querySelectorAll("[data-edit-member-limit]").forEach(button => button.addEventListener("click", () => {
-    const editor = openDialog("调整月度额度", `<form id="member-quota-form"><p class="muted">${escapeHTML(button.dataset.memberName)} · 当前账期立即生效。调低到已用金额以下会暂停新请求，输入 0 可暂时停用。</p><div class="field"><label for="member-quota-value">月度额度（USD）</label><input id="member-quota-value" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" value="${escapeHTML(button.dataset.memberLimit || "")}" placeholder="例如 25.00" required></div><div class="form-actions"><button class="button secondary" type="button" data-dialog-close>取消</button><button class="button" type="submit">保存额度</button></div></form>`);
-    editor.querySelector("#member-quota-form").addEventListener("submit", async event => {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      const value = String(form.get("monthly_limit_usd") || "").trim();
-      const submit = event.currentTarget.querySelector("button[type=submit]");
-      setButtonBusy(submit, true);
-      try {
-        await request(`/admin/cars/${encodeURIComponent(car.car_ref)}/members/${encodeURIComponent(button.dataset.editMemberLimit)}/quota`, { method: "PATCH", body: JSON.stringify({ monthly_limit_usd: value }) });
-        if (!panelIsCurrent() || !editor.isConnected || !editor.open) return;
-        editor.close();
-        dialog.close();
-        toast("额度已立即生效");
-        renderRoute();
-      } catch (error) {
-        if (!panelIsCurrent() || !editor.isConnected || !editor.open) return;
-        toast(error.message);
-        setButtonBusy(submit, false);
-      }
-    });
+    const member = (members.items || []).find(item => item.member_ref === button.dataset.editMemberLimit);
+    if (!member) return;
+    const editor = openDialog("调整额度与用户并发", `<form id="member-quota-form"><p class="muted">${escapeHTML(member.display_name)} · 修改后立即应用于新请求。调低额度到已用金额以下会拒绝新请求；不终止在途请求。</p>
+      <div class="field"><label for="member-quota-value">月度额度（USD，必填）</label><input id="member-quota-value" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" value="${escapeHTML(member.monthly_limit_usd ?? "")}" placeholder="例如 25.00" required></div>
+      <div class="form-row"><div class="field"><label for="member-five-hour">5 小时额度（USD，可选）</label><input id="member-five-hour" name="five_hour_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" value="${escapeHTML(member.five_hour_limit_usd ?? "")}" placeholder="不限" aria-describedby="member-window-help"></div><div class="field"><label for="member-weekly">7 天额度（USD，可选）</label><input id="member-weekly" name="weekly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" value="${escapeHTML(member.weekly_limit_usd ?? "")}" placeholder="不限" aria-describedby="member-window-help"></div></div>
+      <p class="muted section-note" id="member-window-help">短周期额度留空表示不限，0 表示零额度；跟随账号实际周期，周期待同步时暂不执行对应短周期限制。金额最多 9 位小数。</p>
+      <div class="field"><label for="member-concurrency">用户并发上限（可选）</label><input id="member-concurrency" name="concurrency_limit" type="number" min="1" step="1" max="9007199254740991" value="${escapeHTML(member.concurrency_limit ?? "")}" placeholder="不限" aria-describedby="member-concurrency-help"><small id="member-concurrency-help">留空表示不限，仅接受正整数；此用户的全部 API Key 共享上限。</small></div><p class="muted">${concurrencyQueueHelp}</p>
+      <div class="error-banner" data-policy-error role="alert" tabindex="-1" hidden></div><div class="form-actions"><button class="button secondary" type="button" data-dialog-close>取消</button><button class="button" type="submit">保存设置</button></div></form>`);
+    bindPolicyForm(editor, `/admin/cars/${encodeURIComponent(car.car_ref)}/members/${encodeURIComponent(member.member_ref)}/quota`, form => memberQuotaPatch(form, member), policySaved);
+  }));
+
+  dialog.querySelectorAll("[data-edit-account-concurrency]").forEach(button => button.addEventListener("click", () => {
+    const account = (accounts.items || []).find(item => item.account_ref === button.dataset.editAccountConcurrency);
+    if (!account) return;
+    const editor = openDialog("设置账号并发", `<form id="account-concurrency-form"><p class="muted">${escapeHTML(account.safe_label)} · 使用此账号的拼车用户共享此上限。调低上限不会中断在途请求。</p><div class="field"><label for="account-concurrency">账号并发上限（可选）</label><input id="account-concurrency" name="concurrency_limit" type="number" min="1" step="1" max="9007199254740991" value="${escapeHTML(account.concurrency_limit ?? "")}" placeholder="不限" aria-describedby="account-concurrency-help"><small id="account-concurrency-help">留空表示不限，仅接受正整数；不能填写 0。</small></div><p class="muted">${concurrencyQueueHelp}</p><div class="error-banner" data-policy-error role="alert" tabindex="-1" hidden></div><div class="form-actions"><button class="button secondary" type="button" data-dialog-close>取消</button><button class="button" type="submit">保存设置</button></div></form>`);
+    bindPolicyForm(editor, `/admin/cars/${encodeURIComponent(car.car_ref)}/accounts/${encodeURIComponent(account.account_ref)}/concurrency`, form => {
+      const value = optionalConcurrency(form.get("concurrency_limit"));
+      return value === (account.concurrency_limit ?? null) ? {} : { concurrency_limit: value };
+    }, policySaved);
   }));
 
   dialog.querySelector("#add-account")?.addEventListener("submit", async event => {
@@ -1200,7 +1289,7 @@ function restoreRequestFilters() {
 const retentionOperationLabels = {
   usage_details: "清理用量明细",
   closed_periods: "删除已结束账期",
-  reset_current_period: "重置本期用量",
+  reset_current_period: "重置本月用量",
 };
 
 function validRetentionCount(value) {
@@ -1219,7 +1308,7 @@ function showRetentionConfirmation(button, operation, preview) {
   button.hidden = true;
   const confirmation = document.createElement("div");
   confirmation.className = "retention-confirm";
-  const impact = operation === "reset_current_period" ? "本期已确认累计会归零，限额和账期边界不变；在途请求完成后可能再次增加用量。" : operation === "closed_periods" ? "已结束账期汇总和关联引用会被删除。" : "本期已确认金额和费用未知数量不会改变；进行中及不完整请求不会删除。";
+  const impact = operation === "reset_current_period" ? "本月已确认累计会归零，月额度和月账期边界不变；5 小时与 7 天累计不受影响；在途请求完成后可能再次增加用量。" : operation === "closed_periods" ? "已结束账期汇总和关联引用会被删除。" : "本期已确认金额和费用未知数量不会改变；进行中及不完整请求不会删除。";
   confirmation.innerHTML = `<strong>确认${escapeHTML(retentionOperationLabels[operation] || "操作")}</strong><p>本批预计影响 ${formatNumber(preview.expected_count)} 项，在途或不完整请求 ${formatNumber(preview.in_flight_count)} 项。每批最多 1,000 个逻辑请求或账期，更多数据需重新预览。执行后不可撤销；${impact}</p><div class="retention-confirm-actions"><button class="button secondary compact" type="button" data-retention-cancel>取消</button><button class="button danger compact" type="button" data-retention-confirm>确认执行</button></div>`;
   panel.append(confirmation);
   const result = document.createElement("p");
@@ -1342,7 +1431,7 @@ async function renderAdminRequests(content, reset = true) {
 async function renderRetention(content) {
   const settings = await request("/admin/retention");
   const current = settings.effective_days === 0 ? "永久" : `${settings.effective_days} 天`;
-  content.innerHTML = `<div class="section-header"><div><h2>数据保留</h2><p>当前明细保留：${escapeHTML(current)} · 来源：${escapeHTML(settings.source === "database" ? "管理端设置" : "配置文件默认")}</p></div></div><div class="retention-layout"><section class="retention-panel"><h3>明细保留期限</h3><p class="muted">仅影响请求和上游事件明细；账期金额汇总独立保存。</p><form id="retention-form"><label><input type="radio" name="days" value="90"${settings.effective_days === 90 ? " checked" : ""}>90 天</label><label><input type="radio" name="days" value="180"${settings.effective_days === 180 ? " checked" : ""}>半年（180 天）</label><label><input type="radio" name="days" value="365"${settings.effective_days === 365 ? " checked" : ""}>一年（365 天）</label><label><input type="radio" name="days" value="0"${settings.effective_days === 0 ? " checked" : ""}>永久保留</label><div class="form-actions"><button class="button" type="submit">保存设置</button><button class="button secondary" id="restore-retention" type="button">恢复配置默认</button></div></form></section><section class="retention-panel"><h3>明细清理</h3><p class="muted">删除已完成请求及关联事件，不改变账期已确认金额。</p><button class="button danger" data-retention-op="usage_details">预览并清理明细</button></section><section class="retention-panel"><h3>已结束账期</h3><p class="muted">删除账期汇总前请确认历史金额不再需要核对。</p><button class="button danger" data-retention-op="closed_periods">预览并删除账期</button></section><section class="retention-panel"><h3>重置本期用量</h3><p class="muted">归零当前期已确认累计，限额和账期边界保持不变；在途请求完成后可能再次增加。</p><button class="button danger" data-retention-op="reset_current_period">预览并重置</button></section></div>`;
+  content.innerHTML = `<div class="section-header"><div><h2>数据保留</h2><p>当前明细保留：${escapeHTML(current)} · 来源：${escapeHTML(settings.source === "database" ? "管理端设置" : "配置文件默认")}</p></div></div><div class="retention-layout"><section class="retention-panel"><h3>明细保留期限</h3><p class="muted">仅影响请求和上游事件明细；账期金额汇总独立保存。</p><form id="retention-form"><label><input type="radio" name="days" value="90"${settings.effective_days === 90 ? " checked" : ""}>90 天</label><label><input type="radio" name="days" value="180"${settings.effective_days === 180 ? " checked" : ""}>半年（180 天）</label><label><input type="radio" name="days" value="365"${settings.effective_days === 365 ? " checked" : ""}>一年（365 天）</label><label><input type="radio" name="days" value="0"${settings.effective_days === 0 ? " checked" : ""}>永久保留</label><div class="form-actions"><button class="button" type="submit">保存设置</button><button class="button secondary" id="restore-retention" type="button">恢复配置默认</button></div></form></section><section class="retention-panel"><h3>明细清理</h3><p class="muted">删除已完成请求及关联事件，不改变账期已确认金额。</p><button class="button danger" data-retention-op="usage_details">预览并清理明细</button></section><section class="retention-panel"><h3>已结束账期</h3><p class="muted">删除账期汇总前请确认历史金额不再需要核对。</p><button class="button danger" data-retention-op="closed_periods">预览并删除账期</button></section><section class="retention-panel"><h3>重置本月用量</h3><p class="muted">仅归零当前月账期已确认累计，月额度和月账期边界保持不变；5 小时与 7 天累计不会清空；在途请求完成后可能再次增加。</p><button class="button danger" data-retention-op="reset_current_period">预览并重置本月</button></section></div>`;
   content.querySelector("#retention-form").addEventListener("submit", async event => { event.preventDefault(); const selected = new FormData(event.currentTarget).get("days"); if (selected === null) { toast("请选择保留期限后保存。"); return; } const days = Number(selected); try { await request("/admin/retention", { method: "PATCH", body: JSON.stringify({ days }) }); toast("保留设置已保存"); renderRetention(content); } catch (error) { toast(error.message); } });
   content.querySelector("#restore-retention").addEventListener("click", async () => { try { await request("/admin/retention", { method: "PATCH", body: JSON.stringify({ days: null }) }); toast("已恢复配置默认"); renderRetention(content); } catch (error) { toast(error.message); } });
   content.querySelectorAll("[data-retention-op]").forEach(button => button.addEventListener("click", async () => {

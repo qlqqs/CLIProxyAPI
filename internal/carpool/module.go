@@ -105,14 +105,15 @@ func Open(ctx context.Context, cfg *config.Config, configPath string, authCatalo
 		return nil, closeStore(errWriter)
 	}
 	control, errControl := carpoolservice.NewControl(store, authCatalog, carpoolservice.ControlConfig{
-		SessionAbsoluteTTL:  absoluteTTL,
-		SessionIdleTTL:      idleTTL,
-		ReportLocation:      reportLocation,
-		UsageRetention:      time.Duration(carpoolCfg.UsageRetentionDays) * 24 * time.Hour,
-		HomeEnabled:         cfg.Home.Enabled,
-		Now:                 now,
-		PricingProvider:     pricingManager,
-		AccountingAdmission: writer.CheckAdmission,
+		SessionAbsoluteTTL:       absoluteTTL,
+		ConcurrencyQueueCapacity: carpoolCfg.ConcurrencyQueueCapacity,
+		SessionIdleTTL:           idleTTL,
+		ReportLocation:           reportLocation,
+		UsageRetention:           time.Duration(carpoolCfg.UsageRetentionDays) * 24 * time.Hour,
+		HomeEnabled:              cfg.Home.Enabled,
+		Now:                      now,
+		PricingProvider:          pricingManager,
+		AccountingAdmission:      writer.CheckAdmission,
 	})
 	if errControl != nil {
 		return nil, closeStore(errControl)
@@ -188,6 +189,7 @@ func (m *Module) ServerOptions() []api.ServerOption {
 	}
 	return []api.ServerOption{
 		api.WithMiddleware(m.httpAPI.ProxyCredentialGuard()),
+		api.WithMiddleware(m.httpAPI.ScopedFailedRequestCompletion(m.observeHTTPFallbackCompletion)),
 		api.WithMiddleware(m.httpAPI.ScopedModelRequestCompletion(m.observeModelRequestCompletion)),
 		api.WithRouterConfigurator(func(engine *gin.Engine, _ *handlers.BaseAPIHandler, _ *config.Config) {
 			m.httpAPI.RegisterRoutes(engine)
@@ -216,8 +218,26 @@ func (m *Module) observeRequestCompletion(ctx context.Context, completion plugin
 	if !ok {
 		return
 	}
-	completion.RequestID = snapshot.RequestID()
-	m.writer.HandleRequestCompletion(ctx, completion)
+	snapshot.CompleteOnce(func() {
+		completion.RequestID = snapshot.RequestID()
+		m.writer.HandleRequestCompletion(ctx, completion)
+		if m.control != nil {
+			if errSync := m.control.SyncQuotaWindows(context.WithoutCancel(ctx), snapshot.AuthIDs()...); errSync != nil {
+				log.WithError(errSync).Warn("carpool quota period observation failed")
+			}
+		}
+	})
+}
+
+func (m *Module) observeHTTPFallbackCompletion(ctx context.Context, completion pluginapi.RequestCompletion) {
+	snapshot, ok := carpoolruntime.AuthorizationFromContext(ctx)
+	if !ok {
+		return
+	}
+	snapshot.CompleteOnce(func() {
+		completion.RequestID = snapshot.RequestID()
+		m.writer.HandleHTTPFallbackCompletion(ctx, completion, snapshot.ExecutionMayHaveStarted())
+	})
 }
 
 func (m *Module) observeModelRequestCompletion(ctx context.Context, completion pluginapi.RequestCompletion) {
@@ -258,6 +278,9 @@ func (m *Module) Close(ctx context.Context) error {
 			return errors.Join(m.closeError, m.writer.Close(ctx))
 		}
 		return m.closeError
+	}
+	if m.control != nil {
+		m.control.CloseAdmission()
 	}
 	var drainError error
 	if m.pricing != nil {

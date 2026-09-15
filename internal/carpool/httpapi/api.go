@@ -127,6 +127,7 @@ func (a *API) RegisterRoutes(engine *gin.Engine) {
 	admin.GET("/cars/:car_ref/accounts", a.listAccounts)
 	admin.POST("/cars/:car_ref/accounts", a.requireMutation(), a.moveAccount)
 	admin.DELETE("/cars/:car_ref/accounts/:account_ref", a.requireMutation(), a.removeAccount)
+	admin.PATCH("/cars/:car_ref/accounts/:account_ref/concurrency", a.requireMutation(), a.updateAccountConcurrency)
 	admin.GET("/usage", a.adminUsage)
 	admin.GET("/usage/requests", a.adminUsageRequests)
 	admin.GET("/usage/requests/:request_id", a.adminUsageRequest)
@@ -419,6 +420,12 @@ func (a *API) myCar(c *gin.Context) {
 	if _, billing, errBilling := a.control.PassengerBilling(c.Request.Context(), identity.User); errBilling == nil {
 		response["billing"] = billingResponse(billing)
 	}
+	limits, windows, errLimits := a.control.PassengerQuota(c.Request.Context(), identity.User)
+	if errLimits != nil {
+		writeMappedError(c, errLimits)
+		return
+	}
+	appendMemberLimits(response, limits, windows)
 	c.JSON(http.StatusOK, response)
 }
 
@@ -435,7 +442,11 @@ func (a *API) myMemberUsage(c *gin.Context) {
 		aggregate := view.Usage
 		unknown += aggregate.UnknownUsageCount
 		incomplete += aggregate.IncompleteCount
-		items = append(items, memberUsageResponse(aggregate, view.Left, view.Billing))
+		response := memberUsageResponse(aggregate, view.Left, view.Billing)
+		if !view.Left {
+			appendMemberLimits(response, view.Limits, view.QuotaWindows)
+		}
+		items = append(items, response)
 	}
 	c.JSON(http.StatusOK, reportResponse(period, items, unknown, incomplete))
 }
@@ -450,13 +461,14 @@ func (a *API) myAccounts(c *gin.Context) {
 	items := make([]gin.H, 0, len(views))
 	for _, view := range views {
 		items = append(items, gin.H{
-			"account_ref": view.Assignment.AccountRef,
-			"label":       view.Assignment.SafeLabel,
-			"provider":    view.Assignment.ProviderSnapshot,
-			"status":      view.Health.Status,
-			"observed_at": optionalTime(view.Health.ObservedAt),
-			"stale":       view.Health.Stale,
-			"quota":       quotaResponse(view.Quota),
+			"account_ref":       view.Assignment.AccountRef,
+			"concurrency_limit": view.ConcurrencyLimit,
+			"label":             view.Assignment.SafeLabel,
+			"provider":          view.Assignment.ProviderSnapshot,
+			"status":            view.Health.Status,
+			"observed_at":       optionalTime(view.Health.ObservedAt),
+			"stale":             view.Health.Stale,
+			"quota":             quotaResponse(view.Quota),
 			"usage": gin.H{
 				"logical_requests":     view.Usage.RequestCount,
 				"known_input_tokens":   view.Usage.KnownInputTokens,
@@ -708,7 +720,9 @@ func (a *API) listMembers(c *gin.Context) {
 	items := make([]gin.H, 0, len(members))
 	for _, view := range members {
 		member := view.Membership
-		items = append(items, gin.H{"member_ref": member.MemberRef, "display_name": member.DisplayName, "started_at": member.StartedAt, "monthly_limit_usd": formatNanoUSD(member.MonthlyLimitNanoUSD), "billing_timezone": member.BillingTimezone, "billing": billingResponse(view.Billing)})
+		response := membershipResponse(member)
+		response["billing"] = billingResponse(view.Billing)
+		items = append(items, appendMemberLimits(response, view.Limits, view.QuotaWindows))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
 }
@@ -745,24 +759,22 @@ func (a *API) moveMember(c *gin.Context) {
 }
 
 func (a *API) updateMemberQuota(c *gin.Context) {
-	var request struct {
-		MonthlyLimitUSD string `json:"monthly_limit_usd"`
-	}
+	var request memberLimitsRequest
 	if !decodeJSON(c, &request) {
 		return
 	}
-	limit, errParse := carpoolbilling.ParseNanoUSD(request.MonthlyLimitUSD)
+	update, errParse := request.update()
 	if errParse != nil {
-		writeMappedError(c, domain.ErrInvalid)
+		writeMappedError(c, errParse)
 		return
 	}
 	identity, _ := currentIdentity(c)
-	membership, errUpdate := a.control.SetMemberMonthlyLimit(c.Request.Context(), identity.User, c.Param("car_ref"), c.Param("member_ref"), &limit)
+	member, limits, errUpdate := a.control.SetMemberLimits(c.Request.Context(), identity.User, c.Param("car_ref"), c.Param("member_ref"), update)
 	if errUpdate != nil {
 		writeMappedError(c, errUpdate)
 		return
 	}
-	c.JSON(http.StatusOK, membershipResponse(membership))
+	c.JSON(http.StatusOK, appendMemberLimits(membershipResponse(member), limits, nil))
 }
 
 func (a *API) removeMember(c *gin.Context) {
@@ -783,7 +795,14 @@ func (a *API) listAccounts(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(accounts))
 	for _, account := range accounts {
-		items = append(items, adminAccountResponse(account))
+		limit, errLimit := a.control.AccountConcurrency(c.Request.Context(), identity.User, c.Param("car_ref"), account.AccountRef)
+		if errLimit != nil {
+			writeMappedError(c, errLimit)
+			return
+		}
+		response := adminAccountResponse(account)
+		response["concurrency_limit"] = limit
+		items = append(items, response)
 	}
 	candidates, errCandidates := a.control.ListAccountCandidates(c.Request.Context(), identity.User, c.Param("car_ref"))
 	if errCandidates != nil {

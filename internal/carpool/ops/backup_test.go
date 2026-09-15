@@ -265,7 +265,7 @@ func TestStoppedOperationsRejectSQLiteSidecars(t *testing.T) {
 func assertManifest(t *testing.T, manifest BackupManifest, backupPath, binaryVersion string, createdAt time.Time) {
 	t.Helper()
 	if manifest.FormatVersion != manifestFormatVersion || manifest.BinaryVersion != binaryVersion ||
-		manifest.SchemaVersion != 3 || manifest.DatabaseFile != filepath.Base(backupPath) ||
+		manifest.SchemaVersion != 4 || manifest.DatabaseFile != filepath.Base(backupPath) ||
 		!manifest.CreatedAt.Equal(createdAt) {
 		t.Fatalf("manifest metadata = %#v", manifest)
 	}

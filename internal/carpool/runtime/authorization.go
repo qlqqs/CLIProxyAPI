@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
@@ -31,6 +33,14 @@ type AuthorizationSnapshot struct {
 	callerScope  string
 	accounts     map[string]AccountSnapshot
 	prices       *pricing.Snapshot
+	release      func()
+	lifecycle    *authorizationLifecycle
+}
+
+// authorizationLifecycle is shared by snapshot copies but never by requests.
+type authorizationLifecycle struct {
+	completion        sync.Once
+	executionPossible atomic.Bool
 }
 
 // NewAuthorizationSnapshot copies all values so later assignment changes cannot expand a request.
@@ -50,6 +60,7 @@ func NewAuthorizationSnapshot(requestID, userID, apiKeyID, carID, membershipID, 
 	}
 	return &AuthorizationSnapshot{
 		prices:       frozen,
+		lifecycle:    &authorizationLifecycle{},
 		requestID:    strings.TrimSpace(requestID),
 		userID:       strings.TrimSpace(userID),
 		apiKeyID:     strings.TrimSpace(apiKeyID),
@@ -137,13 +148,20 @@ func WithAuthorization(ctx context.Context, snapshot *AuthorizationSnapshot) con
 	}
 	ctx = context.WithValue(ctx, authorizationContextKey{}, snapshot)
 	if snapshot.prices != nil {
-		ctx = executor.WithRequestValidator(ctx, func(_ context.Context, provider string, req executor.Request) error {
+		validatedCtx := executor.WithRequestValidator(ctx, func(_ context.Context, provider string, req executor.Request) error {
 			model := thinking.ParseSuffix(req.Model).ModelName
 			if _, ok := snapshot.prices.Lookup(model); !ok {
 				return &executor.RequestValidationError{Code: "model_price_not_configured", Message: "Model price is not configured", HTTPStatus: 422}
 			}
+			snapshot.lifecycle.executionPossible.Store(true)
 			return nil
 		})
+		if validatedCtx == ctx {
+			// A preexisting server validator owns this context; absence of our
+			// callback can no longer prove that execution has not started.
+			snapshot.lifecycle.executionPossible.Store(true)
+		}
+		ctx = validatedCtx
 	}
 	return ctx
 }
@@ -163,4 +181,41 @@ func (s *AuthorizationSnapshot) Prices() *pricing.Snapshot {
 		return nil
 	}
 	return s.prices
+}
+
+// WithRelease returns a snapshot with a request-owned, idempotent resource release.
+func (s *AuthorizationSnapshot) WithRelease(release func()) *AuthorizationSnapshot {
+	if s == nil {
+		return nil
+	}
+	copied := *s
+	var once sync.Once
+	copied.release = func() {
+		once.Do(func() {
+			if release != nil {
+				release()
+			}
+		})
+	}
+	return &copied
+}
+
+// Release ends this request's concurrency ownership. HTTP callers use the guard middleware.
+func (s *AuthorizationSnapshot) Release() {
+	if s != nil && s.release != nil {
+		s.release()
+	}
+}
+
+// CompleteOnce serializes terminal observers, including while accounting retries.
+func (s *AuthorizationSnapshot) CompleteOnce(complete func()) {
+	if s != nil && s.lifecycle != nil && complete != nil {
+		s.lifecycle.completion.Do(complete)
+	}
+}
+
+// ExecutionMayHaveStarted is conservative: passing the server-side validator
+// permits execution, but does not prove an upstream attempt actually occurred.
+func (s *AuthorizationSnapshot) ExecutionMayHaveStarted() bool {
+	return s == nil || s.lifecycle == nil || s.prices == nil || s.lifecycle.executionPossible.Load()
 }

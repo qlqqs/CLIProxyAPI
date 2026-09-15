@@ -37,7 +37,7 @@ test('light entrypoint preserves external CSP-compatible resources', () => {
   const html = readFileSync(new URL('../internal/carpool/web/assets/index.html', import.meta.url), 'utf8');
   assert.match(html, /name="color-scheme" content="light"/);
   assert.match(html, /name="theme-color" content="#f5f4ed"/);
-  assert.match(html, /src="\/carpool\/assets\/app\.js"/);
+  assert.match(html, /src="\/assets\/app\.js"/);
   assert.doesNotMatch(html, /<style>|<script>|https?:\/\//);
 });
 

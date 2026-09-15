@@ -49,6 +49,9 @@ carpool:
   report-timezone: "UTC"
   usage-retention-days: 90
   audit-retention-days: 180
+  # Total waiting generation requests across carpool users/accounts; excludes active requests.
+  # Must be positive. Waits end on client cancellation or shutdown, with no extra queue timeout.
+  concurrency-queue-capacity: 10
   pricing:
     # Remote LiteLLM-compatible price catalog; the bundled snapshot is used if unavailable.
     catalog-url: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"

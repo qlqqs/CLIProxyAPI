@@ -1,0 +1,21 @@
+{
+  "transport": "Node http.request agent:false, independent sockets",
+  "requests": 12,
+  "activeWhileHeld": 1,
+  "queueCapacity": 10,
+  "statuses": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    429,
+    200,
+    200
+  ],
+  "fullCode": "concurrency_queue_full"
+}

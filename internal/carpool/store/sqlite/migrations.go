@@ -26,6 +26,8 @@ const migration001Checksum = "4b670ee5af0ce8f92992a23c2d3d78a888c2aff34a7431e520
 const migration002Checksum = "60df97c5bb326f4e2216e54f47910e5654dd56bdd83cac0cfd0802efe1a77423"
 const migration003Checksum = "eb1af0994dc20b154360ccbe69b9365c50a9f3c7a9a71ac5a2382882015fb8d5"
 
+const migration004Checksum = "9d5cfedf1bbaab5240f9dd5e4522f6ed69c44f6502240ee8dfc149e978f04134"
+
 var embeddedMigrationDefinitions = []migration{
 	{
 		version:  1,
@@ -42,6 +44,7 @@ var embeddedMigrationDefinitions = []migration{
 		name:     "retention",
 		checksum: migration003Checksum,
 	},
+	{version: 4, name: "quota", checksum: migration004Checksum},
 }
 
 func loadEmbeddedMigrations() ([]migration, error) {

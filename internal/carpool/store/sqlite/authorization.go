@@ -86,6 +86,10 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 		return domain.AuthorizationSnapshot{}, rollback(tx, fmt.Errorf("sqlite store: authorize membership: %w", errMembership))
 	}
 
+	if reasonCode == "" && input.ExpectedMembershipID != "" && (result.Membership == nil || result.Membership.ID != input.ExpectedMembershipID) {
+		reasonCode = "membership_changed"
+	}
+
 	if result.Membership != nil {
 		car, errCar := scanCar(tx.QueryRowContext(ctx, `
 			SELECT id, car_ref, name, description, seat_limit, status, version,
@@ -142,6 +146,26 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 		}
 	}
 
+	if reasonCode == "" && input.ExpectedAuthID != "" && (len(result.Scopes) != 1 || result.Scopes[0].AuthID != input.ExpectedAuthID) {
+		reasonCode = "account_changed"
+	}
+	if reasonCode == "" && !input.NonBillable && result.Membership != nil && len(result.Scopes) == 1 {
+		windows, errWindows := memberQuotaWindowsTx(ctx, tx, result.Membership.ID, result.Scopes[0].AuthID, input.StartedAt)
+		if errWindows != nil {
+			return domain.AuthorizationSnapshot{}, rollback(tx, errWindows)
+		}
+		for _, window := range windows {
+			if !window.PendingSync && window.LimitNanoUSD != nil && window.ConfirmedNanoUSD >= *window.LimitNanoUSD {
+				if window.Kind == domain.QuotaWindowFiveHour {
+					reasonCode = "five_hour_quota_exhausted"
+				} else {
+					reasonCode = "weekly_quota_exhausted"
+				}
+				break
+			}
+		}
+	}
+
 	request := domain.ProxyRequest{
 		RequestID:      input.RequestID,
 		UserID:         user.ID,
@@ -178,6 +202,14 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 		request.Outcome = domain.RequestOutcomeInProgress
 		request.ScopeSize = len(result.Scopes)
 		request.ScopeHash = authorizationScopeHash(result.Scopes)
+	}
+	if input.CheckOnly {
+		result.Request = request
+		var checkErr error
+		if reasonCode != "" {
+			checkErr = fmt.Errorf("%w: %s", domain.ErrAuthorizationRejected, reasonCode)
+		}
+		return result, rollback(tx, checkErr)
 	}
 	if errInsert := insertProxyRequestWithScopes(ctx, tx, request, result.Scopes); errInsert != nil {
 		return domain.AuthorizationSnapshot{}, rollback(tx, errInsert)
@@ -303,7 +335,7 @@ func authorizationScopeHash(scopes []domain.ProxyRequestAuthScope) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func insertProxyRequestWithScopes(ctx context.Context, target execer, request domain.ProxyRequest, scopes []domain.ProxyRequestAuthScope) error {
+func insertProxyRequestWithScopes(ctx context.Context, target *sql.Tx, request domain.ProxyRequest, scopes []domain.ProxyRequestAuthScope) error {
 	if request.BillingStatus == "" {
 		request.BillingStatus = "pending"
 	}
@@ -341,6 +373,11 @@ func insertProxyRequestWithScopes(ctx context.Context, target execer, request do
 		`, request.RequestID, scope.AuthID, scope.AssignmentID, scope.AccountRefSnapshot,
 			scope.SafeLabelSnapshot, scope.ProviderSnapshot); errScope != nil {
 			return fmt.Errorf("sqlite store: insert proxy request scope: %w", classifyError(errScope))
+		}
+		if request.Outcome == domain.RequestOutcomeInProgress && request.BillingStatus != "not_billable" {
+			if errFee := ensureQuotaRequestFeeTx(ctx, target, request.RequestID, scope.AuthID); errFee != nil {
+				return errFee
+			}
 		}
 	}
 	return nil

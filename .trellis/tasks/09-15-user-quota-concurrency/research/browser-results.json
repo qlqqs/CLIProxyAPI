@@ -1,0 +1,65 @@
+{
+  "statuses": [
+    200,
+    200,
+    403
+  ],
+  "code": "five_hour_quota_exhausted",
+  "monthly": "0.09",
+  "five": {
+    "coverage_from": "2026-09-15T11:57:54.167794Z",
+    "data_complete": false,
+    "kind": "5h",
+    "limit_usd": "0.05",
+    "overage_usd": "0.04",
+    "period_from": "2026-09-15T09:57:54Z",
+    "remaining_usd": "0",
+    "reset_at": "2026-09-15T14:57:54Z",
+    "status": "overage",
+    "unknown_cost_events": 0,
+    "used_usd": "0.09"
+  },
+  "week": {
+    "coverage_from": "2026-09-15T11:57:54.167794Z",
+    "data_complete": false,
+    "kind": "7d",
+    "limit_usd": "0.1",
+    "overage_usd": "0",
+    "period_from": "2026-09-11T11:57:54Z",
+    "remaining_usd": "0.01",
+    "reset_at": "2026-09-18T11:57:54Z",
+    "status": "active",
+    "unknown_cost_events": 0,
+    "used_usd": "0.09"
+  },
+  "pending": [
+    {
+      "coverage_from": "2026-09-15T11:57:54.257281Z",
+      "data_complete": false,
+      "kind": "5h",
+      "limit_usd": "0",
+      "overage_usd": null,
+      "period_from": null,
+      "remaining_usd": null,
+      "reset_at": null,
+      "status": "pending_sync",
+      "unknown_cost_events": 0,
+      "used_usd": null
+    },
+    {
+      "coverage_from": "2026-09-15T11:57:54.257281Z",
+      "data_complete": false,
+      "kind": "7d",
+      "limit_usd": "1",
+      "overage_usd": null,
+      "period_from": null,
+      "remaining_usd": null,
+      "reset_at": null,
+      "status": "pending_sync",
+      "unknown_cost_events": 0,
+      "used_usd": null
+    }
+  ],
+  "consoleErrors": [],
+  "mobileOverflow": false
+}

@@ -179,6 +179,28 @@ func (w *Writer) HandleRequestCompletion(_ context.Context, completion pluginapi
 	if !ok {
 		return
 	}
+	w.handleMappedRequestCompletion(mapped)
+}
+
+// HandleHTTPFallbackCompletion records only the HTTP fallback chosen by the
+// request owner. Unjoined execution is incomplete, never fabricated as finished.
+func (w *Writer) HandleHTTPFallbackCompletion(_ context.Context, completion pluginapi.RequestCompletion, executionPossible bool) {
+	if w == nil || completion.RequestID == "" {
+		return
+	}
+	mapped, ok := requestCompletion(completion, w.now().UTC())
+	if !ok {
+		return
+	}
+	mapped.UpstreamAttempted = executionPossible
+	if executionPossible {
+		mapped.Outcome = domain.RequestOutcomeIncomplete
+		mapped.ReasonCode = "http_ended_before_completion"
+	}
+	w.handleMappedRequestCompletion(mapped)
+}
+
+func (w *Writer) handleMappedRequestCompletion(mapped domain.RequestCompletion) {
 	if _, billed := w.repository.(billedRepository); billed {
 		w.mu.RLock()
 		defer w.mu.RUnlock()

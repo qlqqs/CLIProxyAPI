@@ -342,12 +342,30 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .quota-more summary { padding: 5px 0; color: var(--accent); font-size: 12px; cursor: pointer; }
 .quota-more > div { display: grid; gap: 8px; margin-top: 8px; }
 
+/* User USD windows stay separate from upstream percentage quota meters. */
+.member-quota-windows { display: grid; gap: 16px; min-width: 0; }
+.member-quota-window { display: grid; gap: 5px; min-width: 0; padding-bottom: 16px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.member-quota-window:last-child { padding-bottom: 0; border-bottom: 0; }
+.member-quota-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.member-quota-heading strong { min-width: 0; font-weight: 500; font-variant-numeric: tabular-nums; }
+.member-quota-amounts { color: var(--ink); font-variant-numeric: tabular-nums; }
+.member-quota-window small { color: var(--muted); font-size: 13px; }
+.member-quota-window .quota-policy-warning { color: var(--warning); }
+.compact-quota-windows { gap: 8px; margin-top: 10px; font-size: 13px; }
+.compact-quota-windows .member-quota-window { gap: 3px; padding-bottom: 8px; }
+.compact-quota-windows .member-quota-window:last-child { padding-bottom: 0; }
+.policy-concurrency { display: block; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.member-policy { display: grid; gap: 6px; }
+.member-policy .quota-nums { white-space: normal; overflow-wrap: anywhere; }
+.member-policy-list > div { grid-template-columns: minmax(80px, .7fr) minmax(0, 2fr) minmax(75px, .65fr) auto; align-items: start; padding-block: 14px; }
+.member-policy-list .inline-actions { grid-column: 4; }
+
 /* Status colors supplement labels instead of replacing them. */
 .status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
 .status::before { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #827c70; }
 .status.healthy::before, .status.active::before, .status.allowed::before, .status.succeeded::before { background: var(--success); }
-.status.degraded::before, .status.observed::before, .status.incomplete::before { background: var(--warning); }
-.status.unavailable::before, .status.disabled::before, .status.retired::before, .status.revoked::before, .status.expired::before, .status.rejected::before, .status.exceeded::before, .status.failed::before { background: var(--danger); }
+.status.pending_sync::before, .status.degraded::before, .status.observed::before, .status.incomplete::before { background: var(--warning); }
+.status.exhausted::before, .status.overage::before, .status.unavailable::before, .status.disabled::before, .status.retired::before, .status.revoked::before, .status.expired::before, .status.rejected::before, .status.exceeded::before, .status.failed::before { background: var(--danger); }
 .tag { display: inline-block; padding: 3px 8px; border-radius: 7px; background: var(--work); color: var(--muted); font-size: 12px; }
 .empty { padding: 34px 24px; border: 1px solid var(--border); border-radius: var(--panel-radius); background: var(--surface); color: var(--muted); text-align: center; }
 .compact-empty { padding: 14px 12px; font-size: 13px; }
@@ -393,7 +411,7 @@ dialog::backdrop { background: rgb(42 36 26 / 32%); }
   .report-toolbar, .request-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .entity-workspace { grid-template-columns: 280px minmax(0, 1fr); gap: 16px; }
   .entity-panel .form-row, .entity-panel .form-row-4, .entity-panel .inline-editor { grid-template-columns: minmax(0, 1fr); }
-  .compact-list > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .compact-list > div, .member-policy-list > div { grid-template-columns: minmax(0, 1fr) auto; }
   .compact-list .compact-meta { grid-column: 1; }
   .compact-list .inline-actions { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
   .entity-panel .form-row { gap: 0; }
@@ -485,6 +503,8 @@ dialog::backdrop { background: rgb(42 36 26 / 32%); }
   .request-amount { grid-column: auto; }
   .request-status { justify-self: start; }
   .form-actions > .button { flex: 1 1 auto; }
+  .member-policy-list > div { grid-template-columns: minmax(0, 1fr); }
+  .member-policy-list .inline-actions { grid-column: 1; grid-row: auto; justify-self: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

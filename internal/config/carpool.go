@@ -8,30 +8,61 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	CarpoolAPIKeyPrefix              = "cpk_v1_"
-	DefaultCarpoolDatabasePath       = "./data/carpool.db"
-	DefaultCarpoolReportTimezone     = "UTC"
-	DefaultCarpoolUsageRetention     = 90
-	DefaultCarpoolAuditRetention     = 180
-	DefaultCarpoolPricingCatalogURL  = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-	DefaultCarpoolSessionAbsoluteTTL = "24h"
-	DefaultCarpoolSessionIdleTTL     = "2h"
+	CarpoolAPIKeyPrefix                    = "cpk_v1_"
+	DefaultCarpoolDatabasePath             = "./data/carpool.db"
+	DefaultCarpoolReportTimezone           = "UTC"
+	DefaultCarpoolUsageRetention           = 90
+	DefaultCarpoolConcurrencyQueueCapacity = 10
+	DefaultCarpoolAuditRetention           = 180
+	DefaultCarpoolPricingCatalogURL        = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+	DefaultCarpoolSessionAbsoluteTTL       = "24h"
+	DefaultCarpoolSessionIdleTTL           = "2h"
 )
 
 // CarpoolConfig configures the optional carpool user-management module.
 type CarpoolConfig struct {
-	Enabled            bool                 `yaml:"enabled" json:"enabled"`
-	DatabasePath       string               `yaml:"database-path" json:"database-path"`
-	ReportTimezone     string               `yaml:"report-timezone" json:"report-timezone"`
-	UsageRetentionDays int                  `yaml:"usage-retention-days" json:"usage-retention-days"`
-	AuditRetentionDays int                  `yaml:"audit-retention-days" json:"audit-retention-days"`
-	Pricing            CarpoolPricingConfig `yaml:"pricing" json:"pricing"`
-	Session            CarpoolSessionConfig `yaml:"session" json:"session"`
-	TrustedOrigins     []string             `yaml:"trusted-origins" json:"trusted-origins"`
-	TrustedProxyCIDRs  []string             `yaml:"trusted-proxy-cidrs" json:"trusted-proxy-cidrs"`
+	Enabled                  bool                 `yaml:"enabled" json:"enabled"`
+	DatabasePath             string               `yaml:"database-path" json:"database-path"`
+	ReportTimezone           string               `yaml:"report-timezone" json:"report-timezone"`
+	UsageRetentionDays       int                  `yaml:"usage-retention-days" json:"usage-retention-days"`
+	AuditRetentionDays       int                  `yaml:"audit-retention-days" json:"audit-retention-days"`
+	ConcurrencyQueueCapacity int                  `yaml:"concurrency-queue-capacity" json:"concurrency-queue-capacity"`
+	Pricing                  CarpoolPricingConfig `yaml:"pricing" json:"pricing"`
+	Session                  CarpoolSessionConfig `yaml:"session" json:"session"`
+	TrustedOrigins           []string             `yaml:"trusted-origins" json:"trusted-origins"`
+	TrustedProxyCIDRs        []string             `yaml:"trusted-proxy-cidrs" json:"trusted-proxy-cidrs"`
+}
+
+// UnmarshalYAML preserves defaults and rejects fractional queue capacities instead
+// of allowing the YAML decoder to silently truncate them to an integer.
+func (cfg *CarpoolConfig) UnmarshalYAML(value *yaml.Node) error {
+	type plain CarpoolConfig
+	decoded := plain(*cfg)
+	if errDecode := value.Decode(&decoded); errDecode != nil {
+		return errDecode
+	}
+	if decoded.Enabled {
+		// A second typed projection lets the decoder resolve aliases and merges
+		// rather than inspecting only directly written mapping entries.
+		var fields struct {
+			Capacity any `yaml:"concurrency-queue-capacity"`
+		}
+		if errDecode := value.Decode(&fields); errDecode != nil {
+			return errDecode
+		}
+		switch fields.Capacity.(type) {
+		case nil, int:
+		default:
+			return fmt.Errorf("carpool: concurrency-queue-capacity must be an integer")
+		}
+	}
+	*cfg = CarpoolConfig(decoded)
+	return nil
 }
 
 // CarpoolPricingConfig configures the optional remote model price snapshot.
@@ -49,12 +80,13 @@ type CarpoolSessionConfig struct {
 // DefaultCarpoolConfig returns the documented carpool defaults.
 func DefaultCarpoolConfig() CarpoolConfig {
 	return CarpoolConfig{
-		Enabled:            true,
-		DatabasePath:       DefaultCarpoolDatabasePath,
-		ReportTimezone:     DefaultCarpoolReportTimezone,
-		UsageRetentionDays: DefaultCarpoolUsageRetention,
-		AuditRetentionDays: DefaultCarpoolAuditRetention,
-		Pricing:            CarpoolPricingConfig{CatalogURL: DefaultCarpoolPricingCatalogURL},
+		Enabled:                  true,
+		DatabasePath:             DefaultCarpoolDatabasePath,
+		ReportTimezone:           DefaultCarpoolReportTimezone,
+		UsageRetentionDays:       DefaultCarpoolUsageRetention,
+		AuditRetentionDays:       DefaultCarpoolAuditRetention,
+		ConcurrencyQueueCapacity: DefaultCarpoolConcurrencyQueueCapacity,
+		Pricing:                  CarpoolPricingConfig{CatalogURL: DefaultCarpoolPricingCatalogURL},
 		Session: CarpoolSessionConfig{
 			AbsoluteTTL:  DefaultCarpoolSessionAbsoluteTTL,
 			IdleTTL:      DefaultCarpoolSessionIdleTTL,
@@ -98,6 +130,9 @@ func (cfg CarpoolConfig) Validate() error {
 	}
 	if cfg.AuditRetentionDays <= 0 {
 		return fmt.Errorf("carpool: audit-retention-days must be positive")
+	}
+	if cfg.ConcurrencyQueueCapacity <= 0 {
+		return fmt.Errorf("carpool: concurrency-queue-capacity must be positive")
 	}
 	if errPricing := validateCarpoolPricingURL(cfg.Pricing.CatalogURL); errPricing != nil {
 		return errPricing

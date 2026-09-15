@@ -11,6 +11,7 @@ import (
 	carpoolaccess "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
+	carpoolservice "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/service"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -20,6 +21,13 @@ import (
 // ProxyCredentialGuard rejects ambiguous credentials before any access provider is evaluated.
 func (a *API) ProxyCredentialGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		defer func() {
+			if c != nil && c.Request != nil {
+				if snapshot, ok := carpoolruntime.AuthorizationFromContext(c.Request.Context()); ok {
+					snapshot.Release()
+				}
+			}
+		}()
 		if c == nil {
 			return
 		}
@@ -36,6 +44,39 @@ func (a *API) ProxyCredentialGuard() gin.HandlerFunc {
 			return
 		}
 		c.Next()
+	}
+}
+
+// ScopedFailedRequestCompletion covers billable HTTP failures before an executor
+// completion callback. It never treats an arbitrary successful HTTP close as final.
+func (a *API) ScopedFailedRequestCompletion(observer func(context.Context, pluginapi.RequestCompletion)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		if observer == nil || c.Request == nil || c.Request.URL == nil || c.Request.Method == http.MethodGet {
+			return
+		}
+		ctx := c.Request.Context()
+		snapshot, ok := carpoolruntime.AuthorizationFromContext(ctx)
+		if !ok {
+			return
+		}
+		policy := carpoolruntime.CarpoolProxyRoutePolicy(c.Request.Method, c.Request.URL.Path, false)
+		if !policy.Allowed {
+			return
+		}
+		status := c.Writer.Status()
+		outcome := pluginapi.RequestCompletionRejected
+		if ctx.Err() != nil {
+			outcome = pluginapi.RequestCompletionCanceled
+			status = 0
+		} else if status < http.StatusBadRequest {
+			return
+		}
+		completedAt := time.Now().UTC()
+		if a != nil && a.now != nil {
+			completedAt = a.now().UTC()
+		}
+		observer(ctx, pluginapi.RequestCompletion{RequestID: snapshot.RequestID(), SourceFormat: policy.SourceFormat, Outcome: outcome, StatusCode: status, CompletedAt: completedAt})
 	}
 }
 
@@ -103,6 +144,19 @@ func (a *API) AuthenticatedRequestHook(ctx context.Context, request *http.Reques
 	upgrade := headerContainsToken(request.Header, "Connection", "upgrade") || strings.TrimSpace(request.Header.Get("Upgrade")) != ""
 	snapshot, errAuthorize := a.control.AuthorizeProxy(ctx, userID, apiKeyID, result.Principal, request.Method, request.URL.Path, upgrade)
 	if errAuthorize != nil {
+		if errors.Is(errAuthorize, carpoolruntime.ErrConcurrencyQueueFull) {
+			return &sdkaccess.AuthError{Code: "concurrency_queue_full", Message: "Concurrency queue is full", StatusCode: http.StatusTooManyRequests}
+		}
+		if errors.Is(errAuthorize, carpoolruntime.ErrConcurrencyClosed) {
+			return &sdkaccess.AuthError{Code: "concurrency_closed", Message: "Concurrency admission is closed", StatusCode: http.StatusServiceUnavailable}
+		}
+		if errors.Is(errAuthorize, context.Canceled) {
+			return sdkaccess.NewForbiddenError("Request canceled", nil)
+		}
+		var admission *carpoolservice.ProxyAdmissionError
+		if errors.As(errAuthorize, &admission) && (admission.Reason == "five_hour_quota_exhausted" || admission.Reason == "weekly_quota_exhausted") {
+			return &sdkaccess.AuthError{Code: sdkaccess.AuthErrorCode(admission.Reason), Message: "User quota limit reached", StatusCode: http.StatusForbidden}
+		}
 		if errors.Is(errAuthorize, domain.ErrAccountingUnavailable) {
 			return sdkaccess.NewAccountingUnavailableError()
 		}

@@ -51,6 +51,7 @@ Before writing or reviewing backend code:
 | [拼车模块开发规范](./carpool-guidelines.md) | 用户、车辆、SQLite、凭据隔离、用量与前端契约 | 完成 |
 | [拼车同步记账规范](./carpool-accounting-guidelines.md) | 请求侧同步观察、失败门禁、重试与关停契约 | 完成 |
 | [拼车明细与清理确认规范](./carpool-retention-guidelines.md) | 固定范围分页、确认引用、重复确认、策略读取及真实事件展开 | 完成 |
+| [拼车额度与并发排队规范](./carpool-quota-concurrency-guidelines.md) | 账号同步窗口、可靠短周期账本、双维并发与有界队列 | 完成 |
 | [服务生命周期规范](./lifecycle-guidelines.md) | 关停顺序、超时预算与回归测试 | 完成 |
 
 ---

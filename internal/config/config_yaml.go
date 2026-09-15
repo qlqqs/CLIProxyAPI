@@ -371,6 +371,8 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 			return node.Value == "90"
 		case "carpool.audit-retention-days":
 			return node.Value == "180"
+		case "carpool.concurrency-queue-capacity":
+			return node.Value == "10"
 		case "error-logs-max-files":
 			return node.Value == "10"
 		}

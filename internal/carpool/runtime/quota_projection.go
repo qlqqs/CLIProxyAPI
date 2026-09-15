@@ -57,10 +57,11 @@ func ProjectAccountQuota(auth *coreauth.Auth, now time.Time, maxAge time.Duratio
 }
 
 type quotaWindowBuilder struct {
-	usedPercent   *float64
-	resetAt       *time.Time
-	windowMinutes *int64
-	status        string
+	usedPercent     *float64
+	resetAt         *time.Time
+	relativeResetAt *time.Time
+	windowMinutes   *int64
+	status          string
 }
 
 func projectClaudeWindows(signals map[string]string) []QuotaWindow {
@@ -132,7 +133,7 @@ func projectCodexWindows(signals map[string]string, observedAt time.Time) []Quot
 		case "reset-after-seconds":
 			if seconds, errParse := strconv.ParseInt(strings.TrimSpace(value), 10, 64); errParse == nil && seconds >= 0 && seconds <= 366*24*60*60 && !observedAt.IsZero() {
 				reset := observedAt.Add(time.Duration(seconds) * time.Second)
-				builder.resetAt = &reset
+				builder.relativeResetAt = &reset
 			}
 		case "reset-at":
 			if reset, ok := parseUnixTime(value); ok {
@@ -151,7 +152,7 @@ func projectCodexWindows(signals map[string]string, observedAt time.Time) []Quot
 }
 
 func splitQuotaField(field string) (string, string) {
-	for _, marker := range []string{"-reset-after-seconds", "-window-minutes", "-used-percent", "-over-secondary-limit-percent", "-limit-reached", "-limit-name", "-allowed", "-status", "-utilization", "-reset"} {
+	for _, marker := range []string{"-reset-after-seconds", "-reset-at", "-window-minutes", "-used-percent", "-over-secondary-limit-percent", "-limit-reached", "-limit-name", "-allowed", "-status", "-utilization", "-reset"} {
 		if strings.HasSuffix(field, marker) {
 			return strings.TrimSuffix(field, marker), strings.TrimPrefix(marker, "-")
 		}
@@ -194,7 +195,12 @@ func buildQuotaWindows(builders map[string]*quotaWindowBuilder, _ map[string]str
 				status = "exceeded"
 			}
 		}
-		result = append(result, QuotaWindow{ID: id, Label: quotaWindowLabel(id), UsedPercent: builder.usedPercent, ResetAt: builder.resetAt, WindowMinutes: builder.windowMinutes, Status: status})
+		// Absolute upstream boundaries take precedence regardless of map iteration order.
+		resetAt := builder.resetAt
+		if resetAt == nil {
+			resetAt = builder.relativeResetAt
+		}
+		result = append(result, QuotaWindow{ID: id, Label: quotaWindowLabel(id), UsedPercent: builder.usedPercent, ResetAt: resetAt, WindowMinutes: builder.windowMinutes, Status: status})
 	}
 	return result
 }

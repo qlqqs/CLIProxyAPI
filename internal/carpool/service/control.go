@@ -13,6 +13,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
 	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 )
@@ -49,6 +51,14 @@ const (
 
 // Repository is the persistence contract used by the carpool business layer.
 type Repository interface {
+	GetMemberQuotaLimits(context.Context, string) (domain.MemberQuotaLimits, error)
+	SetMemberLimits(context.Context, string, domain.MemberLimitsUpdate, *domain.AuditEvent) error
+	GetUserConcurrency(context.Context, string) (*int, error)
+	GetAccountConcurrency(context.Context, string) (*int, error)
+	SetAccountConcurrency(context.Context, string, *int, *domain.AuditEvent) error
+	ObserveQuotaWindows(context.Context, []domain.QuotaWindowObservation) error
+	MemberQuotaWindows(context.Context, string, string, time.Time) ([]domain.MemberQuotaWindow, error)
+
 	BootstrapAdmin(context.Context, domain.User, *domain.AuditEvent) (domain.User, error)
 	CreateUser(context.Context, domain.User, ...*domain.AuditEvent) (domain.User, error)
 	GetUser(context.Context, string) (domain.User, error)
@@ -117,22 +127,25 @@ type AuthCatalog interface {
 
 // ControlConfig defines stable business behavior for one process lifetime.
 type ControlConfig struct {
-	SessionAbsoluteTTL  time.Duration
-	SessionIdleTTL      time.Duration
-	ReportLocation      *time.Location
-	UsageRetention      time.Duration
-	HomeEnabled         bool
-	Now                 func() time.Time
-	Random              io.Reader
-	PasswordHasher      PasswordHasher
-	LoginLimiter        *LoginLimiter
-	CandidateRefKey     []byte
-	AccountingAdmission func(context.Context) error
-	PricingProvider     interface{ Current() *pricing.Catalog }
+	ConcurrencyQueueCapacity int
+	SessionAbsoluteTTL       time.Duration
+	SessionIdleTTL           time.Duration
+	ReportLocation           *time.Location
+	UsageRetention           time.Duration
+	HomeEnabled              bool
+	Now                      func() time.Time
+	Random                   io.Reader
+	PasswordHasher           PasswordHasher
+	LoginLimiter             *LoginLimiter
+	CandidateRefKey          []byte
+	AccountingAdmission      func(context.Context) error
+	PricingProvider          interface{ Current() *pricing.Catalog }
 }
 
 // Control coordinates carpool identity, assignment, authorization, and reporting.
 type Control struct {
+	policyMu            sync.Mutex
+	concurrency         *carpoolruntime.ConcurrencyLimiter
 	repository          Repository
 	authCatalog         AuthCatalog
 	absoluteTTL         time.Duration
@@ -192,18 +205,21 @@ type CarUpdate struct {
 
 // MemberView joins the immutable reporting identity with aggregate usage.
 type MemberView struct {
-	Membership domain.Membership
-	Usage      domain.MemberUsageAggregate
-	Billing    domain.BillingSnapshot
-	Left       bool
+	Limits       domain.MemberQuotaLimits
+	QuotaWindows []domain.MemberQuotaWindow
+	Membership   domain.Membership
+	Usage        domain.MemberUsageAggregate
+	Billing      domain.BillingSnapshot
+	Left         bool
 }
 
 // AccountView is a safe assignment, health, quota, and usage projection.
 type AccountView struct {
-	Assignment domain.AuthAssignment
-	Health     carpoolruntime.AccountHealth
-	Quota      carpoolruntime.AccountQuota
-	Usage      domain.AccountUsageAggregate
+	ConcurrencyLimit *int
+	Assignment       domain.AuthAssignment
+	Health           carpoolruntime.AccountHealth
+	Quota            carpoolruntime.AccountQuota
+	Usage            domain.AccountUsageAggregate
 }
 
 // AccountCandidate is the safe browser projection of a runtime credential.
@@ -301,7 +317,15 @@ func NewControl(repository Repository, authCatalog AuthCatalog, cfg ControlConfi
 	if len(candidateRefKey) < sha256.Size {
 		return nil, fmt.Errorf("carpool control: account candidate reference key must be at least %d bytes", sha256.Size)
 	}
+	if cfg.ConcurrencyQueueCapacity == 0 {
+		cfg.ConcurrencyQueueCapacity = internalconfig.DefaultCarpoolConcurrencyQueueCapacity
+	}
+	limiter, errLimiter := carpoolruntime.NewConcurrencyLimiter(cfg.ConcurrencyQueueCapacity)
+	if errLimiter != nil {
+		return nil, errLimiter
+	}
 	return &Control{
+		concurrency:         limiter,
 		repository:          repository,
 		authCatalog:         authCatalog,
 		absoluteTTL:         cfg.SessionAbsoluteTTL,
@@ -918,7 +942,11 @@ func (c *Control) ListMembersWithBilling(ctx context.Context, actor domain.User,
 		if errBilling != nil {
 			return nil, errBilling
 		}
-		views = append(views, MemberView{Membership: member, Billing: billing})
+		limits, windows, errLimits := c.memberLimitsView(ctx, member)
+		if errLimits != nil {
+			return nil, errLimits
+		}
+		views = append(views, MemberView{Membership: member, Billing: billing, Limits: limits, QuotaWindows: windows})
 	}
 	return views, nil
 }
@@ -1133,7 +1161,11 @@ func (c *Control) PassengerMembers(ctx context.Context, user domain.User, period
 		if errBilling != nil {
 			return ReportPeriod{}, nil, errBilling
 		}
-		views = append(views, MemberView{Membership: member, Usage: aggregate, Billing: billingSnapshot})
+		limits, windows, errLimits := c.memberLimitsView(ctx, member)
+		if errLimits != nil {
+			return ReportPeriod{}, nil, errLimits
+		}
+		views = append(views, MemberView{Membership: member, Usage: aggregate, Billing: billingSnapshot, Limits: limits, QuotaWindows: windows})
 		seen[member.ID] = struct{}{}
 	}
 	for _, aggregate := range aggregates {
@@ -1213,11 +1245,16 @@ func (c *Control) PassengerAccounts(ctx context.Context, user domain.User, perio
 		if c.authCatalog != nil {
 			auth, _ = c.authCatalog.GetByID(assignment.AuthID)
 		}
+		limit, errLimit := c.repository.GetAccountConcurrency(ctx, assignment.AuthID)
+		if errLimit != nil {
+			return ReportPeriod{}, nil, errLimit
+		}
 		views = append(views, AccountView{
-			Assignment: assignment,
-			Health:     carpoolruntime.ProjectAccountHealth(auth, now, defaultStatusMaxAge),
-			Quota:      carpoolruntime.ProjectAccountQuota(auth, now, defaultStatusMaxAge),
-			Usage:      usageByAssignment[assignment.ID],
+			ConcurrencyLimit: limit,
+			Assignment:       assignment,
+			Health:           carpoolruntime.ProjectAccountHealth(auth, now, defaultStatusMaxAge),
+			Quota:            carpoolruntime.ProjectAccountQuota(auth, now, defaultStatusMaxAge),
+			Usage:            usageByAssignment[assignment.ID],
 		})
 	}
 	return period, views, nil
@@ -1516,7 +1553,8 @@ func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 	if c.homeEnabled {
 		reasonCode = "home_not_supported"
 	}
-	if reasonCode == "" && !strings.EqualFold(strings.TrimSpace(method), "GET") && c.accountingAdmission != nil {
+	nonBillable := policy.Allowed && strings.EqualFold(strings.TrimSpace(method), "GET")
+	if reasonCode == "" && !nonBillable && c.accountingAdmission != nil {
 		if errAccounting := c.accountingAdmission(ctx); errAccounting != nil {
 			return nil, errAccounting
 		}
@@ -1524,33 +1562,149 @@ func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 	runtimeAuthIDs := make([]string, 0)
 	if reasonCode == "" && c.authCatalog != nil {
 		for _, auth := range c.authCatalog.List() {
-			if auth == nil || auth.ID == "" || auth.Disabled || auth.Status == coreauth.StatusDisabled {
-				continue
+			if auth != nil && auth.ID != "" && !auth.Disabled && auth.Status != coreauth.StatusDisabled {
+				runtimeAuthIDs = append(runtimeAuthIDs, auth.ID)
 			}
-			runtimeAuthIDs = append(runtimeAuthIDs, auth.ID)
 		}
 	}
-	requestID := uuid.NewString()
-	var catalogHash string
-	var coverageFrom *time.Time
+	input := domain.ProxyAuthorization{CheckOnly: true, NonBillable: nonBillable, RequestID: uuid.NewString(), UserID: userID, APIKeyID: apiKeyID, SourceFormat: policy.SourceFormat, RequestedModel: strings.TrimSpace(model), StartedAt: c.currentTime(), RuntimeAuthIDs: runtimeAuthIDs, PreflightReasonCode: reasonCode}
+	preliminary, errCheck := c.repository.AuthorizeAndBeginProxyRequest(ctx, input)
+	recordRejection := func(reason string) {
+		// A failed precheck without a rejection reason must never become a new
+		// successful authorization when the storage failure was transient.
+		if reason == "" {
+			return
+		}
+		rejected := input
+		rejected.CheckOnly = false
+		rejected.PreflightReasonCode = reason
+		if _, errRecord := c.repository.AuthorizeAndBeginProxyRequest(context.WithoutCancel(ctx), rejected); errRecord != nil && !errors.Is(errRecord, domain.ErrAuthorizationRejected) {
+			log.WithError(errRecord).Warn("carpool rejected request could not be recorded")
+		}
+	}
+	if errCheck != nil {
+		recordRejection(preliminary.Request.ReasonCode)
+		return nil, admissionResult(preliminary, errCheck)
+	}
+	authID := ""
+	if len(preliminary.Scopes) == 1 {
+		authID = preliminary.Scopes[0].AuthID
+	}
+	if !nonBillable {
+		if errPolicy := c.checkMultiAccountConcurrency(ctx, preliminary.Scopes); errPolicy != nil {
+			var admission *ProxyAdmissionError
+			if errors.As(errPolicy, &admission) {
+				recordRejection(admission.Reason)
+			}
+			return nil, errPolicy
+		}
+	}
+	if authID != "" {
+		if errSync := c.SyncQuotaWindows(ctx, authID); errSync != nil {
+			return nil, errSync
+		}
+		preliminary, errCheck = c.repository.AuthorizeAndBeginProxyRequest(ctx, input)
+		if errCheck != nil {
+			recordRejection(preliminary.Request.ReasonCode)
+			return nil, admissionResult(preliminary, errCheck)
+		}
+	}
+	var permit *carpoolruntime.ConcurrencyPermit
+	if !nonBillable {
+		if errPolicy := c.loadConcurrencyPolicy(ctx, userID, authID); errPolicy != nil {
+			return nil, errPolicy
+		}
+		var errAcquire error
+		permit, errAcquire = c.concurrency.Acquire(ctx, userID, authID)
+		if errAcquire != nil {
+			reason := "request_canceled"
+			if errors.Is(errAcquire, carpoolruntime.ErrConcurrencyQueueFull) {
+				reason = "concurrency_queue_full"
+			}
+			if errors.Is(errAcquire, carpoolruntime.ErrConcurrencyClosed) {
+				reason = "concurrency_closed"
+			}
+			recordRejection(reason)
+			return nil, errAcquire
+		}
+	}
+	admitted := false
+	defer func() {
+		if !admitted && permit != nil {
+			permit.Release()
+		}
+	}()
+	if errCanceled := ctx.Err(); errCanceled != nil {
+		recordRejection("request_canceled")
+		return nil, errCanceled
+	}
+	if !nonBillable && c.accountingAdmission != nil {
+		if errAccounting := c.accountingAdmission(ctx); errAccounting != nil {
+			recordRejection("accounting_unavailable")
+			return nil, errAccounting
+		}
+	}
+	if authID != "" {
+		if errSync := c.SyncQuotaWindows(ctx, authID); errSync != nil {
+			return nil, errSync
+		}
+	}
+	// Freeze prices and billing time only when the waiting request is admitted.
 	catalog := c.capturePricing()
 	if catalog != nil {
-		catalogHash = catalog.Hash()
+		input.PricingCatalogHash = catalog.Hash()
 		if loadedAt, errLoaded := time.Parse(time.RFC3339, catalog.LoadedAt()); errLoaded == nil {
 			loadedAt = loadedAt.UTC()
-			coverageFrom = &loadedAt
+			input.PricingCoverageFrom = &loadedAt
 		}
 	}
-	snapshot, errAuthorize := c.repository.AuthorizeAndBeginProxyRequest(ctx, domain.ProxyAuthorization{NonBillable: policy.Allowed && strings.EqualFold(strings.TrimSpace(method), "GET"), RequestID: requestID, UserID: userID, APIKeyID: apiKeyID, SourceFormat: policy.SourceFormat, RequestedModel: strings.TrimSpace(model), StartedAt: c.currentTime(), RuntimeAuthIDs: runtimeAuthIDs, PreflightReasonCode: reasonCode, PricingCatalogHash: catalogHash, PricingCoverageFrom: coverageFrom})
+	input.CheckOnly = false
+	input.StartedAt = c.currentTime()
+	input.ExpectedMembershipID = preliminary.Membership.ID
+	input.ExpectedAuthID = authID
+	// The current runtime catalog can revoke, but must not expand, the original scope.
+	allowed := make(map[string]struct{}, len(preliminary.Scopes))
+	for _, scope := range preliminary.Scopes {
+		allowed[scope.AuthID] = struct{}{}
+	}
+	input.RuntimeAuthIDs = nil
+	if c.authCatalog != nil {
+		for _, auth := range c.authCatalog.List() {
+			if auth != nil && !auth.Disabled && auth.Status != coreauth.StatusDisabled {
+				if _, ok := allowed[auth.ID]; ok {
+					input.RuntimeAuthIDs = append(input.RuntimeAuthIDs, auth.ID)
+				}
+			}
+		}
+	}
+	if !nonBillable && len(preliminary.Scopes) > 1 {
+		// A queued user-only permit must not bypass an account cap added while
+		// waiting. Serialize the final check and admission against policy writes.
+		c.policyMu.Lock()
+		defer c.policyMu.Unlock()
+		if errPolicy := c.checkMultiAccountConcurrency(ctx, preliminary.Scopes); errPolicy != nil {
+			var admission *ProxyAdmissionError
+			if errors.As(errPolicy, &admission) {
+				recordRejection(admission.Reason)
+			}
+			return nil, errPolicy
+		}
+	}
+	snapshot, errAuthorize := c.repository.AuthorizeAndBeginProxyRequest(ctx, input)
 	if errAuthorize != nil {
-		return nil, errAuthorize
+		return nil, admissionResult(snapshot, errAuthorize)
 	}
 	accounts := make(map[string]carpoolruntime.AccountSnapshot, len(snapshot.Scopes))
 	for _, scope := range snapshot.Scopes {
 		accounts[scope.AuthID] = carpoolruntime.AccountSnapshot{AuthID: scope.AuthID, AssignmentID: scope.AssignmentID, AccountRef: scope.AccountRefSnapshot, SafeLabel: scope.SafeLabelSnapshot, Provider: scope.ProviderSnapshot}
 	}
 	_, _ = c.repository.TouchAPIKeyLastUsed(ctx, apiKeyID, c.currentTime(), lastSeenTouchPeriod)
-	return carpoolruntime.NewAuthorizationSnapshot(snapshot.Request.RequestID, snapshot.User.ID, snapshot.APIKey.KeyID, snapshot.Car.ID, snapshot.Membership.ID, callerScope, accounts, catalog), nil
+	result := carpoolruntime.NewAuthorizationSnapshot(snapshot.Request.RequestID, snapshot.User.ID, snapshot.APIKey.KeyID, snapshot.Car.ID, snapshot.Membership.ID, callerScope, accounts, catalog)
+	if permit != nil {
+		result = result.WithRelease(permit.Release)
+	}
+	admitted = true
+	return result, nil
 }
 
 func (c *Control) ReportLocationName() string { return c.reportLocation.String() }

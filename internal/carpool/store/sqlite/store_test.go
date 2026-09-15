@@ -35,8 +35,8 @@ func TestOpenAppliesMigrationAndConnectionSettings(t *testing.T) {
 	if errVersion != nil {
 		t.Fatalf("SchemaVersion() error = %v", errVersion)
 	}
-	if version != 3 {
-		t.Fatalf("SchemaVersion() = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("SchemaVersion() = %d, want 4", version)
 	}
 	var recordedChecksum string
 	if errQuery := store.db.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE version = 1").Scan(&recordedChecksum); errQuery != nil {
@@ -67,8 +67,8 @@ func TestOpenAppliesMigrationAndConnectionSettings(t *testing.T) {
 	}
 
 	wantTables := []string{
-		"audit_events", "billing_periods", "car_auth_assignments", "carpool_billing_settings", "cars", "memberships", "pricing_catalogs", "proxy_request_auth_scopes",
-		"proxy_requests", "retention_jobs", "schema_migrations", "sessions", "usage_events", "user_api_keys", "users",
+		"account_concurrency_limits", "audit_events", "billed_event_receipts", "billing_periods", "car_auth_assignments", "carpool_billing_settings", "cars", "memberships", "pricing_catalogs", "proxy_request_auth_scopes",
+		"proxy_requests", "quota_request_fees", "quota_windows", "retention_jobs", "schema_migrations", "sessions", "usage_events", "user_api_keys", "user_concurrency_limits", "users",
 	}
 	rows, errQuery := connections[0].QueryContext(ctx, `
 		SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name
@@ -120,8 +120,8 @@ func TestMigrationValidationRejectsChangedAndNewerHistory(t *testing.T) {
 		store := openTestStore(t, path, nil)
 		if _, errExec := store.db.ExecContext(ctx, `
 			INSERT INTO schema_migrations(version, name, checksum, applied_at)
-			VALUES (4, 'future', 'future', ?)
-		`, toDatabaseTime(time.Now())); errExec != nil {
+			VALUES (?, 'future', 'future', ?)
+		`, len(embeddedMigrationDefinitions)+1, toDatabaseTime(time.Now())); errExec != nil {
 			t.Fatalf("insert future migration: %v", errExec)
 		}
 		closeTestStore(t, store)
