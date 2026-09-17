@@ -134,6 +134,19 @@ func TestProxyGuardReleasesOnEarlyFailureAndStreamEnd(t *testing.T) {
 	}
 }
 
+func TestPendingWindowWithoutLimitStaysPending(t *testing.T) {
+	windows := memberQuotaWindowsResponse([]domain.MemberQuotaWindow{
+		{Kind: domain.QuotaWindowFiveHour, PendingSync: true},
+		{Kind: domain.QuotaWindowWeekly, ConfirmedNanoUSD: 5, From: time.Unix(0, 0).UTC(), ResetAt: time.Unix(3600, 0).UTC()},
+	})
+	if windows[0]["status"] != "pending_sync" || windows[0]["limit_usd"] != nil || windows[0]["used_usd"] != nil {
+		t.Fatalf("pending window without limit=%#v", windows[0])
+	}
+	if windows[1]["status"] != "unlimited" || windows[1]["used_usd"] == nil {
+		t.Fatalf("synced window without limit=%#v", windows[1])
+	}
+}
+
 func TestMemberLimitsRequestNullAndOmitted(t *testing.T) {
 	var request memberLimitsRequest
 	if err := json.Unmarshal([]byte(`{"five_hour_limit_usd":"0","weekly_limit_usd":null}`), &request); err != nil {

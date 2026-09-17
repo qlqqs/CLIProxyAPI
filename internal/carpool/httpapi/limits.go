@@ -86,7 +86,7 @@ func memberQuotaWindowsResponse(windows []domain.MemberQuotaWindow) []gin.H {
 				remaining = &left
 			}
 		}
-		if window.LimitNanoUSD == nil {
+		if window.LimitNanoUSD == nil && !window.PendingSync {
 			status = "unlimited"
 		}
 		complete := !window.PendingSync && window.UnknownCostEvents == 0 && !window.CoverageFrom.After(window.From)

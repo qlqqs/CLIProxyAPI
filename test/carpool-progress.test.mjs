@@ -66,32 +66,77 @@ test("over-limit billing clamps the meter, not the real amount or accessible per
 
 const shortWindow = { kind: "5h", limit_usd: "2", used_usd: "1.25", remaining_usd: "0.75", overage_usd: "0", status: "active", period_from: "2026-09-15T00:00:00Z", reset_at: "2026-09-15T05:00:00Z", coverage_from: "2026-09-15T01:00:00Z", unknown_cost_events: 2, data_complete: false };
 
-test("short USD windows display real amounts, reset, coverage and incomplete cost", () => {
+test("short USD windows display real usage percent, amounts, reset, coverage and incomplete cost", () => {
   const markup = context.memberQuotaMarkup({ quota_windows: [shortWindow] });
   for (const text of ["5 小时", "$2", "$1.25", "$0.75", "重置：", "周期起点：", "统计覆盖起点：", "2 条费用未知", "统计覆盖不完整"]) assert.ok(markup.includes(text), text);
-  assert.doesNotMatch(markup, /<progress|style=/);
+  assert.match(markup, /<progress [^>]*aria-valuenow="62.5"[^>]*value="62.5"/);
+  assert.match(markup, /<b>62.5%<\/b>/);
+  assert.doesNotMatch(markup, /style=/);
 });
 
-test("pending short window never fabricates zero amounts or dates", () => {
+test("synced short windows without a configured limit never render a meter", () => {
+  const markup = context.memberQuotaMarkup({ quota_windows: [{ ...shortWindow, limit_usd: null, status: "unlimited" }] });
+  assert.match(markup, /5 小时 · 不限额/);
+  assert.match(markup, /已确认 \$1\.25/);
+  assert.doesNotMatch(markup, /<progress|progressbar/);
+});
+
+test("zero-limit short windows show amounts without a meaningless meter", () => {
+  const markup = context.memberQuotaMarkup({ quota_windows: [{ ...shortWindow, limit_usd: "0", status: "exhausted" }] });
+  assert.match(markup, /5 小时 · \$0/);
+  assert.match(markup, /额度已用尽/);
+  assert.doesNotMatch(markup, /<progress|progressbar/);
+});
+
+test("pending short window renders a fixed zero meter with sync details only in the tooltip", () => {
   const markup = context.memberQuotaMarkup({ five_hour_limit_usd: "2", quota_windows: [{ ...shortWindow, status: "pending_sync", used_usd: null, remaining_usd: null, period_from: null, reset_at: null, coverage_from: null }] });
-  assert.match(markup, /周期待同步/);
-  assert.match(markup, /暂不执行此项短周期限制；月额度与并发限制仍生效/);
-  assert.match(markup, /重置：待同步/);
-  assert.match(markup, /统计覆盖起点：未提供/);
-  assert.doesNotMatch(markup, /\$0|<progress|1970/);
+  assert.match(markup, /<progress [^>]*aria-valuenow="0"[^>]*value="0"/);
+  assert.match(markup, /aria-valuetext="周期待同步"/);
+  assert.match(markup, /<b>0%<\/b>/);
+  assert.match(markup, /title="周期待同步\n已确认 待同步\n重置：待同步\n统计覆盖起点：未提供\n暂不执行此项短周期限制；月额度与并发限制仍生效。"/);
+  assert.doesNotMatch(markup, />周期待同步<|>已确认 待同步<|>暂不执行此|class="status pending_sync"/);
+  assert.match(markup, /2 条费用未知/);
+  assert.doesNotMatch(markup, /已确认 \$|\$0|1970/);
+});
+
+test("pending window without a configured limit still renders the fixed zero meter", () => {
+  const markup = context.memberQuotaMarkup({ weekly_limit_usd: "10", quota_windows: [{ ...shortWindow, limit_usd: null, status: "pending_sync", used_usd: null, remaining_usd: null, period_from: null, reset_at: null, coverage_from: null }] });
+  assert.match(markup, /5 小时 · 不限额/);
+  assert.equal((markup.match(/<progress /g) || []).length, 2);
+  assert.match(markup, /<progress [^>]*aria-valuenow="0"[^>]*value="0"/);
+  assert.match(markup, /title="周期待同步\n已确认 待同步/);
+  assert.doesNotMatch(markup, /已确认 未提供|统计覆盖不完整/);
 });
 
 test("configured short limit without a window is pending, not unlimited", () => {
   const markup = context.memberQuotaMarkup({ five_hour_limit_usd: "0", weekly_limit_usd: "10" });
   assert.match(markup, /5 小时 · \$0/);
   assert.match(markup, /7 天 · \$10/);
-  assert.equal((markup.match(/class="status pending_sync"/g) || []).length, 2);
+  assert.equal((markup.match(/aria-valuetext="周期待同步"/g) || []).length, 2);
+  assert.equal((markup.match(/<progress /g) || []).length, 2);
+});
+
+test("member quota row keeps the monthly meter and pending short windows on one row", () => {
+  const markup = context.memberQuotaRow({ display_name: "乘客", monthly_limit_usd: "500", five_hour_limit_usd: "20", weekly_limit_usd: "100", billing: { status: "active", limit_usd: "500", used_usd: "0", remaining_usd: "500", usage_percent: 0 }, quota_windows: [] });
+  assert.match(markup, /^<div class="member-quota-row">/);
+  assert.equal((markup.match(/member-quota-window/g) || []).length, 3);
+  assert.equal((markup.match(/<progress /g) || []).length, 3);
+  assert.match(markup, /本月 · \$500<\/strong><span class="status active">额度可用<\/span>/);
+  assert.match(markup, /已确认 \$0 · 剩余 \$500/);
+  assert.equal((markup.match(/已确认 待同步/g) || []).length, 2);
+  assert.doesNotMatch(markup, />已确认 待同步</);
+});
+
+test("member quota row keeps an unconfigured monthly column without fabricating a meter", () => {
+  const markup = context.memberQuotaRow({ display_name: "乘客", monthly_limit_usd: "500", five_hour_limit_usd: null, weekly_limit_usd: null, billing: { status: "not_configured" }, quota_windows: [] });
+  assert.match(markup, /待设置/);
+  assert.doesNotMatch(markup, /<progress/);
 });
 
 test("unlimited windows and user concurrency remain explicitly unlimited", () => {
   const markup = context.memberQuotaMarkup({ five_hour_limit_usd: null, weekly_limit_usd: null });
   assert.equal((markup.match(/不限额/g) || []).length, 2);
-  assert.doesNotMatch(markup, /\$0/);
+  assert.doesNotMatch(markup, /\$0|<progress/);
   assert.equal(context.concurrencyMarkup(null), "不限");
   assert.equal(context.concurrencyMarkup(1), "1 个请求");
 });

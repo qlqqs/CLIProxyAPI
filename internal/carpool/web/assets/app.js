@@ -564,7 +564,7 @@ function usageCoverage(coverage) {
 function memberTable(items) {
   if (!items.length) return `<div class="empty">该周期暂无成员用量</div>`;
   return `<div class="table-wrap"><table><thead><tr><th>成员</th><th>个人额度 · USD</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td><span class="muted">月额度</span>${billingMarkup(item.billing)}${!item.left ? `${memberQuotaMarkup(item, true)}<small class="policy-concurrency">用户并发：${concurrencyMarkup(item.concurrency_limit)}</small>` : ""}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
+    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${item.left ? `<span class="muted">月额度</span>${billingMarkup(item.billing)}` : `${memberQuotaRow(item)}<small class="policy-concurrency">用户并发：${concurrencyMarkup(item.concurrency_limit)}</small>`}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
@@ -578,23 +578,74 @@ function concurrencyMarkup(value) {
   return value == null ? "不限" : `${escapeHTML(value)} 个请求`;
 }
 
+const memberQuotaStatusLabels = { unlimited: "不限", pending_sync: "周期待同步", active: "额度可用", exhausted: "额度已用尽", overage: "已超额", not_configured: "待设置" };
+
+// One shared card template for every member quota window: heading, meter,
+// amounts, details and warnings always sit in the same slots.
+function memberQuotaStatusMarkup(status) {
+  return `<span class="status ${status}">${memberQuotaStatusLabels[status] || "额度状态未知"}</span>`;
+}
+
+function memberQuotaWindowCard(title, statusMarkup, meter, amounts, details, warning) {
+  return `<div class="member-quota-window"><div class="member-quota-heading"><strong>${title}</strong>${statusMarkup}</div>${meter}${amounts}${details}${warning}</div>`;
+}
+
+const memberShortWindowSpecs = [["5h", "5 小时", "five_hour_limit_usd"], ["7d", "7 天", "weekly_limit_usd"]];
+
+function memberShortWindow(member, windows, kind, label, field, compact) {
+  const window = windows.find(item => item.kind === kind);
+  const limit = window ? window.limit_usd : member[field];
+  const status = window?.status || (limit == null ? "unlimited" : "pending_sync");
+  const knownStatus = Object.hasOwn(memberQuotaStatusLabels, status) ? status : "unknown";
+  const pending = knownStatus === "pending_sync";
+  // Pending windows have no real percentage: they render a fixed zero meter
+  // and the pending-sync text moves into that meter's hover tooltip. Only a
+  // synced window with a positive limit renders a real meter.
+  const pendingTip = [
+    memberQuotaStatusLabels.pending_sync,
+    "已确认 待同步",
+    `重置：${window?.reset_at ? formatTime(window.reset_at) : "待同步"}`,
+    window?.period_from ? `周期起点：${formatTime(window.period_from)}` : "",
+    `统计覆盖起点：${window?.coverage_from ? formatTime(window.coverage_from) : "未提供"}`,
+    compact ? "暂不执行此周期限制" : "暂不执行此项短周期限制；月额度与并发限制仍生效。",
+  ].filter(Boolean).join("\n");
+  const usedValue = Number.parseFloat(window?.used_usd);
+  const limitValue = Number.parseFloat(limit);
+  const usedPercent = !pending && Number.isFinite(usedValue) && Number.isFinite(limitValue) && limitValue > 0 ? (usedValue / limitValue) * 100 : null;
+  const meter = pending
+    ? `<div class="quota-meter" title="${escapeHTML(pendingTip)}"><progress class="quota-meter-track" role="progressbar" aria-label="${escapeHTML(`${label} ${memberQuotaStatusLabels.pending_sync}`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="${memberQuotaStatusLabels.pending_sync}" max="100" value="0">0%</progress><b>0%</b></div>`
+    : usedPercent != null ? `<div class="quota-meter">${percentageMeter(usedPercent, `${label} 已用比例`)}<b>${escapeHTML(formatQuotaPercent(usedPercent))}</b></div>` : "";
+  const amounts = pending ? "" : `<span class="member-quota-amounts">已确认 ${moneyMarkup(window?.used_usd)}${limit != null ? ` · 剩余 ${moneyMarkup(window?.remaining_usd)}` : ""}${status === "overage" ? ` · 超额 ${moneyMarkup(window?.overage_usd)}` : ""}</span>`;
+  const details = compact || pending ? "" : `<small>重置：${!window?.reset_at ? "待同步" : escapeHTML(formatTime(window.reset_at))}${window?.period_from ? ` · 周期起点：${escapeHTML(formatTime(window.period_from))}` : ""}</small><small>统计覆盖起点：${window?.coverage_from ? escapeHTML(formatTime(window.coverage_from)) : "未提供"}</small>`;
+  const unknown = window?.unknown_cost_events ? `${formatNumber(window.unknown_cost_events)} 条费用未知` : "";
+  const incomplete = window?.data_complete === false && !pending ? "统计覆盖不完整，金额仅为已确认小计" : "";
+  const warning = unknown || incomplete ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : "";
+  return memberQuotaWindowCard(`${label} · ${limit == null ? "不限额" : moneyMarkup(limit)}`, pending ? "" : memberQuotaStatusMarkup(knownStatus), meter, amounts, details, warning);
+}
+
+function memberMonthlyWindow(item, compact) {
+  const billing = item.billing || {};
+  const limit = billing.limit_usd ?? item.monthly_limit_usd;
+  const configured = billing.status && billing.status !== "not_configured" && limit != null && limit !== "";
+  const knownStatus = configured && Object.hasOwn(memberQuotaStatusLabels, billing.status) ? billing.status : configured ? "unknown" : "not_configured";
+  const meter = configured && Number.isFinite(billing.usage_percent) ? `<div class="quota-meter">${percentageMeter(billing.usage_percent, `${item.display_name} 本月已用`)}<b>${escapeHTML(formatQuotaPercent(billing.usage_percent))}</b></div>` : "";
+  const amounts = configured ? `<span class="member-quota-amounts">已确认 ${moneyMarkup(billing.used_usd)} · 剩余 ${moneyMarkup(billing.remaining_usd)}${billing.status === "overage" ? ` · 超额 ${moneyMarkup(billing.overage_usd)}` : ""}</span>` : `<small class="quota-policy-warning">待管理员设置额度</small>`;
+  const details = compact || !configured ? "" : `<small>重置：${billing.period_to ? escapeHTML(formatTime(billing.period_to)) : "待同步"}${billing.period_from ? ` · 周期起点：${escapeHTML(formatTime(billing.period_from))}` : ""}</small><small>统计覆盖起点：${billing.coverage_from ? escapeHTML(formatTime(billing.coverage_from)) : "未提供"}</small>`;
+  const unknown = configured && billing.unknown_cost_events ? `${formatNumber(billing.unknown_cost_events)} 条费用未知` : "";
+  const incomplete = configured && billing.data_complete === false ? "统计覆盖不完整，金额仅为已确认小计" : "";
+  const warning = unknown || incomplete ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : "";
+  return memberQuotaWindowCard(`本月 · ${limit == null ? "不限额" : moneyMarkup(limit)}`, memberQuotaStatusMarkup(knownStatus), meter, amounts, details, warning);
+}
+
 function memberQuotaMarkup(member, compact = false) {
   const windows = Array.isArray(member.quota_windows) ? member.quota_windows : [];
-  return `<div class="member-quota-windows${compact ? " compact-quota-windows" : ""}">${[
-    ["5h", "5 小时", "five_hour_limit_usd"], ["7d", "7 天", "weekly_limit_usd"],
-  ].map(([kind, label, field]) => {
-    const window = windows.find(item => item.kind === kind);
-    const limit = window ? window.limit_usd : member[field];
-    const status = window?.status || (limit == null ? "unlimited" : "pending_sync");
-    const labels = { unlimited: "不限", pending_sync: "周期待同步", active: "额度可用", exhausted: "额度已用尽", overage: "已超额" };
-    const knownStatus = Object.hasOwn(labels, status) ? status : "unknown";
-    const pending = knownStatus === "pending_sync";
-    const amounts = pending ? "已确认未提供 · 剩余未提供" : `已确认 ${moneyMarkup(window?.used_usd)}${limit != null ? ` · 剩余 ${moneyMarkup(window?.remaining_usd)}` : ""}${status === "overage" ? ` · 超额 ${moneyMarkup(window?.overage_usd)}` : ""}`;
-    const details = compact ? "" : `<small>重置：${pending || !window?.reset_at ? "待同步" : escapeHTML(formatTime(window.reset_at))}${window?.period_from ? ` · 周期起点：${escapeHTML(formatTime(window.period_from))}` : ""}</small><small>统计覆盖起点：${window?.coverage_from ? escapeHTML(formatTime(window.coverage_from)) : "未提供"}</small>`;
-    const unknown = window?.unknown_cost_events ? `${formatNumber(window.unknown_cost_events)} 条费用未知` : "";
-    const incomplete = window?.data_complete === false && !pending ? "统计覆盖不完整，金额仅为已确认小计" : "";
-    return `<div class="member-quota-window"><div class="member-quota-heading"><strong>${label} · ${limit == null ? "不限额" : moneyMarkup(limit)}</strong><span class="status ${knownStatus}">${labels[knownStatus] || "额度状态未知"}</span></div><span class="member-quota-amounts">${amounts}</span>${details}${pending ? `<small class="quota-policy-warning">${compact ? "暂不执行此周期限制" : "周期待同步，暂不执行此项短周期限制；月额度与并发限制仍生效。"}</small>` : ""}${unknown || incomplete ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : ""}</div>`;
-  }).join("")}</div>`;
+  return `<div class="member-quota-windows${compact ? " compact-quota-windows" : ""}">${memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(member, windows, kind, label, field, compact)).join("")}</div>`;
+}
+
+function memberQuotaRow(item) {
+  const windows = Array.isArray(item.quota_windows) ? item.quota_windows : [];
+  const shorts = memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(item, windows, kind, label, field, true)).join("");
+  return `<div class="member-quota-row">${shorts}${memberMonthlyWindow(item, true)}</div>`;
 }
 
 function optionalConcurrency(value) {
@@ -1003,7 +1054,7 @@ async function showCarManagement(car) {
       <div class="form-actions"><button class="button" type="submit">保存车辆</button></div>
     </form>
     <div class="subsection-head"><h3>成员<span class="subsection-count">${formatNumber(members.total)}</span></h3></div>
-    ${(members.items || []).length ? `<div class="compact-list member-policy-list">${members.items.map(item => `<div><strong>${escapeHTML(item.display_name)}</strong><div class="compact-meta member-policy"><span>月额度 · ${moneyMarkup(item.monthly_limit_usd)}</span>${item.billing && item.billing.status !== "not_configured" ? `<span class="quota-cell"><span class="quota-bar-wrap">${percentageMeter(item.billing.usage_percent, `${item.display_name} 本月已用`)}<span class="quota-pct">${escapeHTML(formatQuotaPercent(item.billing.usage_percent))}</span></span><span class="quota-nums">${moneyMarkup(item.billing.used_usd)} / ${moneyMarkup(item.billing.limit_usd)}</span></span>` : ""}${memberQuotaMarkup(item, true)}</div><span class="compact-meta">用户并发：${concurrencyMarkup(item.concurrency_limit)}<br>上车：${escapeHTML(formatTime(item.started_at))}</span><span class="inline-actions"><button class="button secondary compact" data-edit-member-limit="${escapeHTML(item.member_ref)}" data-member-name="${escapeHTML(item.display_name)}" aria-label="调整 ${escapeHTML(item.display_name)} 的额度与并发">调额 / 并发</button><button class="button danger compact" data-remove-member="${escapeHTML(item.member_ref)}">移除</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无成员</div>`}
+    ${(members.items || []).length ? `<div class="compact-list member-policy-list">${members.items.map(item => `<div><div><strong>${escapeHTML(item.display_name)}</strong><div class="compact-meta">用户并发：${concurrencyMarkup(item.concurrency_limit)}<br>上车：${escapeHTML(formatTime(item.started_at))}</div></div><div class="compact-meta member-policy">${memberQuotaRow(item)}</div><span class="inline-actions"><button class="button secondary compact" data-edit-member-limit="${escapeHTML(item.member_ref)}" data-member-name="${escapeHTML(item.display_name)}" aria-label="编辑 ${escapeHTML(item.display_name)} 的额度与并发">编辑</button><button class="button danger compact" data-remove-member="${escapeHTML(item.member_ref)}">移除</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无成员</div>`}
     ${passengerOptions && car.status !== "retired" ? `<details class="add-form"><summary>+ 添加成员</summary><form id="add-member" class="inline-editor"><div class="field"><label for="member-user">乘客</label><select id="member-user" name="user_ref" required><option value="">选择乘客</option>${passengerOptions}</select></div><div class="field"><label for="member-display-name">车内展示名</label><input id="member-display-name" name="display_name" required maxlength="64"></div><div class="field"><label for="member-limit">月度额度（USD）</label><input id="member-limit" name="monthly_limit_usd" inputmode="decimal" pattern="[0-9]+(\\.[0-9]{1,9})?" placeholder="例如 25.00" required><small>必须填写；输入 0 会暂时禁止新请求。加入后可通过“调额 / 并发”设置短周期额度与用户并发。</small></div><button class="button compact" type="submit">加入或换入</button></form></details>` : `<p class="muted section-note">${car.status === "retired" ? "退役车辆不能接收新成员" : "没有可分配的启用乘客"}</p>`}
     <div class="subsection-head"><h3>账号<span class="subsection-count">${formatNumber(accounts.total)}</span></h3></div>
     ${(accounts.items || []).length ? `<div class="compact-list">${accounts.items.map(item => `<div><strong>${escapeHTML(item.safe_label)}</strong><span class="compact-meta">${escapeHTML(item.provider)} · 并发 ${concurrencyMarkup(item.concurrency_limit)}</span><span class="compact-meta code-ref">${escapeHTML(item.account_ref)}</span><span class="inline-actions"><button class="button secondary compact" data-edit-account-concurrency="${escapeHTML(item.account_ref)}" aria-label="设置 ${escapeHTML(item.safe_label)} 的账号并发">设置并发</button><button class="button danger compact" data-remove-account="${escapeHTML(item.account_ref)}">撤销</button></span></div>`).join("")}</div>` : `<div class="empty compact-empty">暂无账号</div>`}
