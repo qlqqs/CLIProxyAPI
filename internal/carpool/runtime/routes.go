@@ -28,7 +28,7 @@ func CarpoolProxyRoutePolicy(method, path string, upgrade bool) ProxyRoutePolicy
 	switch {
 	case method == http.MethodGet && path == "/v1/models":
 		return ProxyRoutePolicy{Allowed: true, SourceFormat: "openai"}
-	case method == http.MethodPost && (path == "/v1/chat/completions" || path == "/v1/completions" || path == "/v1/responses"):
+	case method == http.MethodPost && (path == "/v1/chat/completions" || path == "/v1/completions" || path == "/v1/responses" || path == "/responses"):
 		return ProxyRoutePolicy{Allowed: true, SourceFormat: "openai"}
 	case method == http.MethodPost && path == "/v1/messages":
 		return ProxyRoutePolicy{Allowed: true, SourceFormat: "claude"}

@@ -414,3 +414,31 @@ func TestScopedModelRequestCompletion(t *testing.T) {
 		})
 	}
 }
+
+func TestRootResponsesProxyCredentialGuard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, path := range []string{"/responses", "/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			provider := &proxyGuardTestProvider{}
+			manager := sdkaccess.NewManager()
+			manager.SetProviders([]sdkaccess.Provider{provider})
+			engine := gin.New()
+			var api *API
+			engine.Use(api.ProxyCredentialGuard())
+			engine.POST(path, func(c *gin.Context) {
+				_, _ = manager.Authenticate(c.Request.Context(), c.Request)
+				c.Status(http.StatusNoContent)
+			})
+			request := httptest.NewRequest(http.MethodPost, path+"?key=query-key", nil)
+			request.Header.Set("Authorization", "Bearer header-key")
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized || provider.calls != 0 {
+				t.Fatalf("conflicting credentials reached authentication: status=%d calls=%d", response.Code, provider.calls)
+			}
+		})
+	}
+	if isProxyPath("/responses-extra") {
+		t.Fatal("lookalike path classified as proxy")
+	}
+}

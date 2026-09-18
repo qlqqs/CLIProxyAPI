@@ -48,6 +48,14 @@ func TestShouldSkipMethodForRequestLogging(t *testing.T) {
 			skip: true,
 		},
 		{
+			name: "root responses websocket upgrade should not skip",
+			req: &http.Request{
+				Method: http.MethodGet,
+				URL:    &url.URL{Path: "/responses"},
+				Header: http.Header{"Upgrade": []string{"websocket"}},
+			},
+			skip: false,
+		}, {
 			name: "responses websocket upgrade should not skip",
 			req: &http.Request{
 				Method: http.MethodGet,

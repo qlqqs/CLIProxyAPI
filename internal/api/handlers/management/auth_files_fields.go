@@ -107,7 +107,14 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 	}
 
 	applyAuthDisabledState(targetAuth, *req.Disabled)
+	if persistentAuthStatus(ctx) {
+		ctx = coreauth.WithStrictPersistence(ctx)
+	}
 	if _, err := h.authManager.Update(ctx, targetAuth); err != nil {
+		if errors.Is(err, coreauth.ErrStrictPersistenceConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "account changed; reload before retrying"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update auth: %v", err)})
 		return
 	}

@@ -44,6 +44,7 @@ type Config struct {
 
 // API exposes the isolated carpool browser API.
 type API struct {
+	accounts        accountManagement
 	control         *carpoolservice.Control
 	originValidator OriginValidator
 	cookieSecure    bool
@@ -110,6 +111,7 @@ func (a *API) RegisterRoutes(engine *gin.Engine) {
 
 	admin := authenticated.Group("/admin")
 	admin.Use(requireAdmin)
+	a.registerAccountManagement(admin)
 	admin.GET("/users", a.listUsers)
 	admin.POST("/users", a.requireMutation(), a.createUser)
 	admin.PATCH("/users/:user_ref", a.requireMutation(), a.updateUser)

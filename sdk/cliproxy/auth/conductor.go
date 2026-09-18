@@ -164,7 +164,8 @@ type Manager struct {
 	refreshCancel context.CancelFunc
 	refreshLoop   *authAutoRefreshLoop
 
-	requestPrepareLocks sync.Map
+	strictPersistenceLocks sync.Map
+	requestPrepareLocks    sync.Map
 	// refreshLocks serializes credential refresh per auth ID so concurrent
 	// 401 recoveries and auto-refresh workers do not race the same refresh_token.
 	refreshLocks sync.Map

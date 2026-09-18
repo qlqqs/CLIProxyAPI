@@ -18,7 +18,7 @@ function application(session) {
 
 test('admin rail retains all authorized pages', () => {
   const app = application({ role: 'carpool_admin' });
-  assert.deepEqual(Array.from(app.navigation(), entry => entry[0]), ['/', '/users', '/cars', '/usage', '/requests', '/pricing', '/retention', '/audit', '/password']);
+  assert.deepEqual(Array.from(app.navigation(), entry => entry[0]), ['/', '/cars', '/admin-accounts', '/users', '/usage', '/requests', '/pricing', '/retention', '/audit', '/password']);
 });
 
 test('passenger rail does not expose administrative pages', () => {

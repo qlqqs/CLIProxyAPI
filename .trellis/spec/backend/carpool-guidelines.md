@@ -43,6 +43,12 @@ carpool:
   `/carpool/api/v1/admin/*`。
 - 代理入口沿用现有协议路由；用户 Key 只开放
   `internal/carpool/runtime/routes.go` 显式列出的 HTTP 路由。
+- 根路径兼容入口 `POST /responses` 与 `/v1/responses` 使用相同 handler、鉴权、
+  账号范围、配额、并发与用量规则；流式请求不重定向，保持原请求体和 SSE。
+- `GET /responses` 和 `POST /responses/compact` 对旧全局 Key 沿用 `/v1` 行为，
+  对拼车用户 Key 仍按原白名单拒绝，不得通过别名扩大权限。
+- 新增代理别名时必须同时核对凭据冲突检查、路由策略、失败完成回调、并发释放、
+  日志路径分类以及计费集成测试，不能只注册 HTTP handler。
 - 未知 `/carpool/api/*` 必须返回 JSON `404`，不得回退到前端 HTML。
 
 ### 数据库

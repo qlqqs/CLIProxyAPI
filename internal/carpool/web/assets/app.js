@@ -38,6 +38,7 @@ const routeTitles = {
   "/": "概览",
   "/members": "成员用量",
   "/accounts": "账号状态",
+  "/admin-accounts": "账号管理",
   "/keys": "API Key",
   "/users": "用户管理",
   "/cars": "车辆管理",
@@ -51,16 +52,17 @@ const routeTitles = {
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (options.method && !["GET", "HEAD"].includes(options.method) && state.csrf) {
     headers.set("X-Carpool-CSRF", state.csrf);
   }
   const response = await fetch(apiBase + path, { credentials: "same-origin", ...options, headers });
   const data = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const error = new Error(data?.error?.message || "请求失败");
+    const error = new Error(data?.error?.message || (typeof data?.error === "string" ? data.error : "请求失败"));
     error.code = data?.error?.code || "request_failed";
     error.status = response.status;
+    error.data = data;
     throw error;
   }
   return data;
@@ -339,6 +341,7 @@ function showOneTimeSecret(dialog, title, secret, warning, onFinish) {
 }
 
 function loginView(message = "") {
+  closeAdminAccountDialogs();
   clearStatusRefresh();
   closeEntityPanels();
   document.querySelector("#app").innerHTML = `<main class="login-shell">
@@ -380,12 +383,13 @@ function navigation() {
     ["/", "概览"], ["/members", "成员用量"], ["/accounts", "账号状态"], ["/keys", "API Key"], ["/password", "修改密码"],
   ];
   const admin = [
-    ["/", "概览"], ["/users", "用户管理"], ["/cars", "车辆管理"], ["/usage", "用量报表"], ["/requests", "请求明细"], ["/pricing", "价格目录"], ["/retention", "数据保留"], ["/audit", "审计记录"], ["/password", "修改密码"],
+    ["/", "概览"], ["/cars", "车辆管理"], ["/admin-accounts", "账号管理"], ["/users", "用户管理"], ["/usage", "用量报表"], ["/requests", "请求明细"], ["/pricing", "价格目录"], ["/retention", "数据保留"], ["/audit", "审计记录"], ["/password", "修改密码"],
   ];
   return state.session?.role === "carpool_admin" ? admin : passenger;
 }
 
 function iconMarkup(route) {
+  if (route === "/admin-accounts") route = "/accounts";
   const paths = {
     "/": '<path d="m3 10 9-7 9 7v10H3Z M9 20v-7h6v7"/>',
     "/members": '<circle cx="9" cy="7" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M17 4a3 3 0 0 1 0 6m1 4a5 5 0 0 1 3 4v3"/>',
@@ -404,6 +408,7 @@ function iconMarkup(route) {
 }
 
 function renderShell() {
+  closeAdminAccountDialogs();
   if (!state.session) return loginView();
   closeEntityPanels();
   const navigationItems = navigation();
@@ -450,6 +455,7 @@ function renderShell() {
     }
   });
   document.querySelector("#logout").addEventListener("click", async event => {
+    closeAdminAccountDialogs();
     setButtonBusy(event.currentTarget, true);
     try { await request("/session", { method: "DELETE" }); } catch (_) { /* Local state still ends. */ }
     state.session = null;
@@ -463,6 +469,7 @@ function renderShell() {
 async function renderRoute() {
   if (!state.session) return;
   clearStatusRefresh();
+  closeAdminAccountDialogs();
   const allowed = new Set(navigation().map(([route]) => route));
   if (!allowed.has(state.route)) {
     location.hash = state.session.must_change_password ? "#/password" : "#/";
@@ -820,6 +827,7 @@ async function renderAdminRoute(content) {
     return;
   }
   if (state.route === "/users") return renderUsers(content, true);
+  if (state.route === "/admin-accounts") return renderAdminAccounts(content);
   if (state.route === "/cars") return renderCars(content, true);
   if (state.route === "/usage") return renderAdminUsage(content);
   if (state.route === "/requests") return renderAdminRequests(content);
@@ -1528,6 +1536,331 @@ async function renderAudit(content, reset) {
   content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
     setButtonBusy(event.currentTarget, true);
     try { await renderAudit(content, false); } catch (error) { toast(error.message); }
+  });
+}
+
+// Keep credential files and OAuth material out of persistent application state.
+const adminAccountDialogs = new Set();
+
+function closeAdminAccountDialogs() {
+  for (const dialog of adminAccountDialogs) {
+    dialog.dispatchEvent(new Event("account-cleanup"));
+    dialog.close();
+  }
+  adminAccountDialogs.clear();
+}
+
+function accountDialog(title, body, wide = false) {
+  const dialog = openDialog(title, body, wide);
+  adminAccountDialogs.add(dialog);
+  dialog.addEventListener("close", () => {
+    dialog.dispatchEvent(new Event("account-cleanup"));
+    adminAccountDialogs.delete(dialog);
+  }, { once: true });
+  return dialog;
+}
+
+function accountProvider(item) {
+  return String(item.provider || item.type || "").trim().toLowerCase();
+}
+
+function accountStatus(item) {
+  if (item.disabled === true || item.status === "disabled") return "disabled";
+  if (item.unavailable === true || ["error", "unavailable"].includes(item.status)) return "unavailable";
+  return item.status === "active" ? "active" : "unknown";
+}
+
+function accountSecondaryText(item) {
+  const primary = item.label || item.name;
+  return [item.name !== primary ? item.name : "", item.email !== primary ? item.email : ""].filter(Boolean).join(" · ");
+}
+
+function accountImportError(file) {
+  if (file?.type === "sub2api-data") {
+    if (file.version !== 1) return "仅支持 sub2api-data v1 导出文件";
+    if (!Array.isArray(file.accounts) || !file.accounts.length || file.accounts.length > 100) return "sub2api 文件须包含 1–100 个账号";
+    for (let index = 0; index < file.accounts.length; index++) {
+      const account = file.accounts[index];
+      if (account?.platform !== "openai" || account.type !== "oauth") return `第 ${index + 1} 个账号不是 OpenAI OAuth 账号，请单独导出支持的账号`;
+      if (typeof account.credentials?.access_token !== "string" || !account.credentials.access_token.trim()) return `第 ${index + 1} 个账号缺少 access_token，请重新导出完整凭据`;
+    }
+    return "";
+  }
+  if (!file || file.type !== "codex") return "仅支持 OpenAI / Codex OAuth JSON 或 sub2api-data v1；API Key 请使用原版管理配置";
+  if (typeof file.access_token !== "string" || !file.access_token.trim()) return "授权文件缺少 access_token，请重新导出完整的 Codex 授权 JSON";
+  return "";
+}
+
+function accountImportOutcome(result, originalName) {
+  if (result?.error || result?.errors?.length || !["ok", "partial"].includes(result?.status)) throw new Error(typeof result?.error === "string" ? result.error : "文件导入失败，请检查文件后重试");
+  const names = Array.isArray(result.files) ? result.files.filter(name => typeof name === "string") : result.status === "ok" ? [originalName] : [];
+  const failures = Array.isArray(result.failed) ? result.failed.filter(item => item && typeof item.name === "string") : [];
+  if (result.status === "partial" && !failures.length) throw new Error("导入结果不完整，请刷新账号列表后核对");
+  return { names, failures };
+}
+
+function safeOAuthURL(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname !== "auth.openai.com" || url.username || url.password || (url.port && url.port !== "443")) return "";
+    return url.href;
+  } catch (_) { return ""; }
+}
+
+function validCallbackURL(value, expectedState) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password &&
+      url.searchParams.get("state") === expectedState && Boolean(url.searchParams.get("code") || url.searchParams.get("error"));
+  } catch (_) { return false; }
+}
+
+async function renderAdminAccounts(content) {
+  const session = state.session;
+  const current = () => content.isConnected && state.session === session && state.route === "/admin-accounts";
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  let query = params.get("q") || "";
+  let filter = params.get("status") || "";
+  let files = [];
+  let loaded = false;
+  let loading = false;
+  let refreshQueued = false;
+  let message = "";
+  const busy = new Set();
+  content.innerHTML = `<div class="section-header"><div><h2>账号管理</h2><p>管理 OpenAI / Codex 上游账号；车辆分配仍在车辆管理中完成。</p></div><div class="form-actions"><button class="button secondary" data-account-import>导入 JSON</button><button class="button" data-account-oauth>添加 OAuth 账号</button></div></div>
+    <form class="request-filter account-filter" role="search"><div class="field"><label for="account-search">搜索账号</label><input id="account-search" name="q" type="search" maxlength="160" value="${escapeHTML(query)}" placeholder="名称、邮箱或标签"></div><div class="field account-provider-field"><label for="account-provider">提供商</label><input id="account-provider" value="OpenAI / Codex" readonly></div><div class="field"><label for="account-status">状态</label><select id="account-status" name="status"><option value="">全部状态</option>${["active", "disabled", "unavailable", "unknown"].map(value => `<option value="${value}"${filter === value ? " selected" : ""}>${statusText(value)}</option>`).join("")}</select></div><div class="form-actions"><button class="button secondary" type="submit">筛选</button><button class="button secondary" type="button" data-account-clear>清除</button></div></form>
+    <div class="toolbar"><span data-account-counts class="muted" aria-live="polite"></span><button class="button secondary compact" data-account-refresh>刷新</button></div><div data-account-error role="alert"></div><div data-account-results aria-live="polite"></div>`;
+  const draw = () => {
+    if (!current()) return;
+    content.querySelector("[data-account-error]").innerHTML = message ? `<div class="error-banner">${escapeHTML(message)} 请点击刷新重试。</div>` : "";
+    const refreshButton = content.querySelector("[data-account-refresh]");
+    refreshButton.disabled = loading;
+    refreshButton.textContent = loading ? "刷新中…" : "刷新";
+    content.querySelector("[data-account-counts]").textContent = loaded ? `共 ${files.length} 个 · 启用 ${files.filter(x => accountStatus(x) === "active").length} · 禁用 ${files.filter(x => accountStatus(x) === "disabled").length} · 不可用 ${files.filter(x => accountStatus(x) === "unavailable").length} · 未知 ${files.filter(x => accountStatus(x) === "unknown").length}` : "";
+    const results = content.querySelector("[data-account-results]");
+    results.setAttribute("aria-busy", String(loading));
+    if (!loaded) {
+      results.innerHTML = loading ? '<div class="loading" role="status">正在加载账号…</div>' : "";
+      return;
+    }
+    const shown = files.map((item, index) => ({ item, index })).filter(({ item }) => (!filter || accountStatus(item) === filter) && [item.name, item.email, item.label, item.auth_index].some(value => String(value || "").toLowerCase().includes(query.toLowerCase())));
+    results.innerHTML = shown.length ? `<div class="table-wrap"><table class="account-table"><thead><tr><th>账号</th><th>提供商</th><th>状态</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${shown.map(({ item, index }) => `<tr><td><strong>${escapeHTML(item.label || item.name || "未命名账号")}</strong><div class="muted">${escapeHTML(accountSecondaryText(item))}</div></td><td>OpenAI / Codex</td><td>${statusLabel(accountStatus(item))}</td><td>${escapeHTML(formatTime(item.updated_at || item.modtime))}</td><td><div class="form-actions"><button class="button secondary compact" data-account-detail="${index}">详情</button><button class="button secondary compact" data-account-toggle="${index}"${busy.has(item.name) || loading ? " disabled" : ""}>${busy.has(item.name) ? "保存中…" : accountStatus(item) === "disabled" ? "启用" : "禁用"}</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><h3>${files.length ? "没有匹配的账号" : "尚未添加账号"}</h3><p>${files.length ? "调整搜索或清除筛选后重试。" : "导入 OpenAI / Codex JSON 文件，或通过 OAuth 添加账号。"}</p></div>`;
+    results.querySelectorAll("[data-account-detail]").forEach(button => button.addEventListener("click", () => {
+      const item = files[Number(button.dataset.accountDetail)];
+      const fields = [["名称", item.name], ["标签", item.label], ["邮箱", item.email], ["提供商", "OpenAI / Codex"], ["账号索引", item.auth_index], ["套餐", item.plan_type], ["状态", statusText(accountStatus(item))], ["创建时间", formatTime(item.created_at)], ["更新时间", formatTime(item.updated_at || item.modtime)], ["最近刷新", formatTime(item.last_refresh)], ["下次重试", formatTime(item.next_retry_after)]];
+      accountDialog("账号详情", `<p class="muted">仅展示账号元数据，不展示令牌、凭据内容或文件路径。</p><dl class="account-metadata">${fields.map(([label, value]) => `<dt>${label}</dt><dd>${escapeHTML(value || "—")}</dd>`).join("")}</dl>`);
+    }));
+    results.querySelectorAll("[data-account-toggle]").forEach(button => button.addEventListener("click", async () => {
+      const item = files[Number(button.dataset.accountToggle)];
+      const disabled = accountStatus(item) !== "disabled";
+      if (disabled && !window.confirm(`禁用 ${item.label || item.name}？该账号将不再接收新请求，可随时重新启用。`)) return;
+      busy.add(item.name);
+      draw();
+      try {
+        await request("/admin/auth-files/status", { method: "PATCH", body: JSON.stringify({ name: item.name, auth_index: item.auth_index, disabled }) });
+        if (current()) { toast(disabled ? "账号已禁用" : "账号已启用"); await refresh(); }
+      } catch (error) { if (current()) message = error.message; }
+      finally { busy.delete(item.name); draw(); }
+    }));
+  };
+  const refresh = async () => {
+    if (!current()) return;
+    if (loading) { refreshQueued = true; return; }
+    do {
+      refreshQueued = false;
+      loading = true;
+      message = "";
+      draw();
+      try {
+        const data = await request("/admin/auth-files");
+        if (!current()) return;
+        if (!Array.isArray(data?.files)) throw new Error("账号列表响应无效");
+        // A mutation finishing during this request invalidates its snapshot.
+        if (!refreshQueued) {
+          files = data.files.filter(item => item && ["codex", "openai"].includes(accountProvider(item)));
+          loaded = true;
+        }
+      } catch (error) { if (current() && !refreshQueued) message = error.message; }
+      finally { loading = false; if (!refreshQueued) draw(); }
+    } while (refreshQueued && current());
+  };
+  const applyFilters = () => {
+    const form = content.querySelector("form");
+    query = form.elements.q.value.trim();
+    filter = form.elements.status.value;
+    const next = new URLSearchParams();
+    if (query) next.set("q", query);
+    if (filter) next.set("status", filter);
+    history.replaceState(null, "", `#/admin-accounts${next.size ? `?${next}` : ""}`);
+    draw();
+  };
+  content.querySelector("form").addEventListener("submit", event => { event.preventDefault(); applyFilters(); });
+  content.querySelector("[data-account-clear]").addEventListener("click", () => {
+    content.querySelector("form").elements.q.value = "";
+    content.querySelector("form").elements.status.value = "";
+    applyFilters();
+  });
+  content.querySelector("[data-account-refresh]").addEventListener("click", refresh);
+  content.querySelector("[data-account-import]").addEventListener("click", () => openAccountImport(refresh, files.map(item => item.name)));
+  content.querySelector("[data-account-oauth]").addEventListener("click", () => openAccountOAuth(refresh));
+  await refresh();
+}
+
+function openAccountImport(onSaved, existingNames = []) {
+  const dialog = accountDialog("导入 OpenAI / Codex 账号", `<p class="muted">支持原版 Codex OAuth JSON 和 sub2api-data v1 导出文件（仅 OpenAI OAuth）。sub2api 中的多个账号将分别导入；不导入密码、TOTP、恢复信息或代理配置。API Key 请使用原版管理配置。每个文件单独上传并显示结果；同名文件不会覆盖已有账号，请先重命名文件再导入。每个文件须小于 1 MiB（含上传封装）。</p><form data-import-form><div class="field"><label for="account-files">JSON 文件</label><input id="account-files" name="files" type="file" accept=".json,application/json" multiple required></div><div class="form-actions"><button class="button" type="submit">开始导入</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form><ul class="account-import-results" aria-live="polite"></ul>`);
+  const controller = new AbortController();
+  dialog.addEventListener("account-cleanup", () => controller.abort(), { once: true });
+  dialog.querySelector("form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const selected = Array.from(form.elements.files.files);
+    if (!selected.length) return;
+    const results = dialog.querySelector("ul");
+    results.replaceChildren();
+    form.querySelector("button[type=submit]").disabled = true;
+    form.elements.files.disabled = true;
+    let saved = false;
+    for (const file of selected) {
+      if (controller.signal.aborted) break;
+      const row = document.createElement("li");
+      row.textContent = `${file.name} · 导入中…`;
+      results.append(row);
+      try {
+        if (!file.name.toLowerCase().endsWith(".json")) throw new Error("请选择 .json 文件");
+        if (file.size > 1024 * 1024 - 4096) throw new Error("文件过大，请使用小于 1020 KiB 的 JSON 文件");
+        let parsed;
+        try { parsed = JSON.parse(await file.text()); } catch (_) { throw new Error("JSON 格式无效，请修正文件后重试"); }
+        const validationError = accountImportError(parsed);
+        if (validationError) throw new Error(validationError);
+        if (!(parsed.type === "sub2api-data" && parsed.accounts.length > 1) && existingNames.includes(file.name)) throw new Error("同名账号已存在，请重命名文件后再导入");
+        parsed = null;
+        if (controller.signal.aborted) break;
+        const body = new FormData();
+        body.append("file", file, file.name);
+        const result = await request("/admin/auth-files", { method: "POST", body, signal: controller.signal });
+        const outcome = accountImportOutcome(result, file.name);
+        row.textContent = outcome.failures.length
+          ? `${file.name} · 已导入 ${outcome.names.length} 个账号，失败 ${outcome.failures.length} 个`
+          : `${file.name} · 导入成功${outcome.names.length > 1 ? `（${outcome.names.length} 个账号）` : ""}`;
+        if (outcome.names.length > 1 || outcome.failures.length) {
+          const details = document.createElement("ul");
+          for (const name of outcome.names) {
+            const entry = document.createElement("li");
+            entry.textContent = `${name} · 导入成功`;
+            details.append(entry);
+          }
+          for (const failure of outcome.failures) {
+            const entry = document.createElement("li");
+            entry.textContent = `${failure.name} · ${typeof failure.error === "string" ? failure.error : "导入失败，请重试"}`;
+            details.append(entry);
+          }
+          row.append(details);
+        }
+        if (outcome.names.length) saved = true;
+        for (const name of outcome.names) if (!existingNames.includes(name)) existingNames.push(name);
+      } catch (error) {
+        if (controller.signal.aborted) break;
+        row.textContent = `${file.name} · ${error.message}`;
+        if (Array.isArray(error.data?.failed)) {
+          const details = document.createElement("ul");
+          for (const failure of error.data.failed) {
+            if (!failure || typeof failure.name !== "string") continue;
+            const entry = document.createElement("li");
+            entry.textContent = `${failure.name} · ${typeof failure.error === "string" ? failure.error : "导入失败，请重试"}`;
+            details.append(entry);
+          }
+          row.append(details);
+        }
+      }
+    }
+    if (saved && !controller.signal.aborted) await onSaved();
+    if (dialog.isConnected) {
+      form.elements.files.value = "";
+      form.elements.files.disabled = false;
+      form.querySelector("button[type=submit]").disabled = false;
+    }
+  });
+}
+
+function openAccountOAuth(onSaved) {
+  const dialog = accountDialog("添加 OpenAI / Codex 账号", `<p class="muted">在 OpenAI 授权页面完成登录后，必须复制地址栏中的完整 localhost 回调 URL 并在下方提交。即使浏览器显示无法连接，也请复制完整地址。关闭此窗口将停止查询。</p><div data-oauth-status role="status" aria-live="polite"></div><div data-oauth-link></div><form data-oauth-callback hidden><div class="field"><label for="oauth-callback-url">手动提交回调 URL</label><input id="oauth-callback-url" name="redirect_url" type="url" autocomplete="off" spellcheck="false" required placeholder="粘贴授权后浏览器地址栏中的完整 URL"></div><p class="muted">请粘贴完整 localhost 地址（包含 code 和 state 参数）。回调提交成功不代表登录完成，请等待授权成功提示。不要将回调链接分享给他人。</p><button class="button secondary" type="submit">提交回调</button></form><div class="form-actions"><button class="button" data-oauth-start>开始授权</button><button class="button secondary" data-dialog-close>取消</button></div>`);
+  let controller = null;
+  let timer = 0;
+  let generation = 0;
+  let oauthState = "";
+  const status = dialog.querySelector("[data-oauth-status]");
+  const start = dialog.querySelector("[data-oauth-start]");
+  const callback = dialog.querySelector("form");
+  const link = dialog.querySelector("[data-oauth-link]");
+  const stop = () => { generation++; window.clearTimeout(timer); controller?.abort(); oauthState = ""; callback.reset(); };
+  dialog.addEventListener("account-cleanup", stop, { once: true });
+  start.addEventListener("click", async () => {
+    stop();
+    const version = generation;
+    controller = new AbortController();
+    const active = () => version === generation && dialog.isConnected && dialog.open && !controller.signal.aborted;
+    start.disabled = true;
+    start.textContent = "重新授权";
+    callback.hidden = true;
+    link.replaceChildren();
+    status.textContent = "正在创建授权链接…";
+    const fail = message => {
+      if (!active()) return;
+      stop();
+      callback.hidden = true;
+      callback.reset();
+      link.replaceChildren();
+      oauthState = "";
+      status.textContent = `${message} 可点击重新授权重试。`;
+      start.disabled = false;
+    };
+    const poll = async () => {
+      if (!active()) return;
+      try {
+        const result = await request(`/admin/get-auth-status?state=${encodeURIComponent(oauthState)}`, { signal: controller.signal });
+        if (!active()) return;
+        if (result?.status === "ok") {
+          stop();
+          link.replaceChildren();
+          callback.hidden = true;
+          start.disabled = false;
+          start.textContent = "添加另一个账号";
+          status.textContent = "授权成功，账号已添加。";
+          await onSaved();
+        } else if (result?.status === "wait") {
+          status.textContent = "等待 OpenAI 授权完成…";
+          timer = window.setTimeout(poll, 2000);
+        } else fail(typeof result?.error === "string" ? result.error : "授权失败或已过期");
+      } catch (error) { fail(error.message); }
+    };
+    try {
+      const result = await request("/admin/codex-auth-url", { method: "POST", signal: controller.signal });
+      if (!active()) return;
+      const url = safeOAuthURL(result?.url);
+      if (result?.status !== "ok" || !url || typeof result.state !== "string" || !result.state) throw new Error("授权链接无效，请重试");
+      oauthState = result.state;
+      link.innerHTML = `<div class="form-actions"><a class="button" href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开 OpenAI 授权页</a><button class="button secondary" type="button" data-oauth-copy>复制链接</button></div><p class="muted">授权状态标识：<code>${escapeHTML(oauthState)}</code></p>`;
+      link.querySelector("button").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(url); if (active()) status.textContent = "链接已复制，等待授权完成…"; }
+        catch (_) { if (active()) status.textContent = "无法访问剪贴板，请使用打开授权页，或右键复制链接。"; }
+      });
+      callback.hidden = false;
+      start.disabled = false;
+      await poll();
+    } catch (error) { fail(error.message); }
+  });
+  callback.addEventListener("submit", async event => {
+    event.preventDefault();
+    const redirect = callback.elements.redirect_url.value.trim();
+    if (!oauthState || !validCallbackURL(redirect, oauthState)) { status.textContent = "回调 URL 无效或不属于本次授权，请复制完整地址。"; return; }
+    const version = generation;
+    const button = callback.querySelector("button");
+    button.disabled = true;
+    try {
+      await request("/admin/oauth-callback", { method: "POST", body: JSON.stringify({ provider: "codex", redirect_url: redirect }), signal: controller.signal });
+      if (version === generation && dialog.isConnected) { callback.reset(); status.textContent = "回调已提交，等待确认…"; }
+    } catch (error) { if (version === generation && dialog.isConnected) status.textContent = `${error.message} 请检查回调地址后重试。`; }
+    finally { button.disabled = false; }
   });
 }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	management "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
@@ -15,21 +16,22 @@ import (
 )
 
 type serverOptionConfig struct {
-	extraMiddleware       []gin.HandlerFunc
-	engineConfigurator    func(*gin.Engine)
-	routerConfigurators   []func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)
-	completionObservers   []func(context.Context, pluginapi.RequestCompletion)
-	noRouteHandlers       []func(*gin.Context) bool
-	requestLoggerFactory  func(*config.Config, string) logging.RequestLogger
-	localPassword         string
-	keepAliveEnabled      bool
-	keepAliveTimeout      time.Duration
-	keepAliveOnTimeout    func()
-	postAuthHook          auth.PostAuthHook
-	postAuthPersistHook   auth.PostAuthHook
-	pluginHost            *pluginhost.Host
-	configReloadHook      func(context.Context, *config.Config)
-	exampleAPIKeySafeMode bool
+	managementConfigurators []func(*management.Handler)
+	extraMiddleware         []gin.HandlerFunc
+	engineConfigurator      func(*gin.Engine)
+	routerConfigurators     []func(*gin.Engine, *handlers.BaseAPIHandler, *config.Config)
+	completionObservers     []func(context.Context, pluginapi.RequestCompletion)
+	noRouteHandlers         []func(*gin.Context) bool
+	requestLoggerFactory    func(*config.Config, string) logging.RequestLogger
+	localPassword           string
+	keepAliveEnabled        bool
+	keepAliveTimeout        time.Duration
+	keepAliveOnTimeout      func()
+	postAuthHook            auth.PostAuthHook
+	postAuthPersistHook     auth.PostAuthHook
+	pluginHost              *pluginhost.Host
+	configReloadHook        func(context.Context, *config.Config)
+	exampleAPIKeySafeMode   bool
 }
 
 // ServerOption customises HTTP server construction.
@@ -156,5 +158,14 @@ func WithConfigReloadHook(hook func(context.Context, *config.Config)) ServerOpti
 func WithExampleAPIKeySafeMode() ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.exampleAPIKeySafeMode = true
+	}
+}
+
+// WithManagementHandler shares the existing handler without changing management authentication.
+func WithManagementHandler(fn func(*management.Handler)) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		if fn != nil {
+			cfg.managementConfigurators = append(cfg.managementConfigurators, fn)
+		}
 	}
 }

@@ -282,7 +282,7 @@ func isResponsesWebsocketUpgrade(req *http.Request) bool {
 	if req == nil || req.URL == nil {
 		return false
 	}
-	if req.URL.Path != "/v1/responses" && req.URL.Path != "/backend-api/codex/responses" {
+	if req.URL.Path != "/responses" && req.URL.Path != "/v1/responses" && req.URL.Path != "/backend-api/codex/responses" {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(req.Header.Get("Upgrade")), "websocket")
@@ -459,7 +459,10 @@ func decodeCapturedZstdRequestBodyWithLimit(raw []byte, limit int64) ([]byte, bo
 // It skips management endpoints to avoid leaking secrets but allows
 // all other routes, including module-provided ones, to honor request-log.
 func shouldLogRequest(path string) bool {
-	if strings.HasPrefix(path, "/v0/management") || strings.HasPrefix(path, "/management") {
+	// Browser control APIs contain passwords, session cookies and uploaded tokens.
+	// Never capture their bodies, including unsuccessful requests.
+	if path == "/carpool/api" || strings.HasPrefix(path, "/carpool/api/") ||
+		strings.HasPrefix(path, "/v0/management") || strings.HasPrefix(path, "/management") {
 		return false
 	}
 

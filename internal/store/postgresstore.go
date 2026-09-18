@@ -224,7 +224,7 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
 		return "", fmt.Errorf("postgres store: missing file path attribute for %s", auth.ID)
 	}
 
-	if auth.Disabled {
+	if auth.Disabled && !cliproxyauth.StrictPersistenceRequired(ctx) {
 		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
 			return "", nil
 		}
@@ -256,7 +256,8 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
 			return "", fmt.Errorf("postgres store: marshal metadata: %w", errMarshal)
 		}
 		if existing, errRead := os.ReadFile(path); errRead == nil {
-			if jsonEqual(existing, raw) {
+			// A matching mirror does not acknowledge a previous remote write.
+			if jsonEqual(existing, raw) && !cliproxyauth.StrictPersistenceRequired(ctx) {
 				return path, nil
 			}
 		} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {

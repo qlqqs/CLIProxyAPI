@@ -61,8 +61,8 @@ func TestModuleStartsAndClosesIdempotently(t *testing.T) {
 	if module.Control() == nil {
 		t.Fatal("Control() = nil")
 	}
-	if options := module.ServerOptions(); len(options) != 6 {
-		t.Fatalf("ServerOptions() len = %d, want 6", len(options))
+	if options := module.ServerOptions(); len(options) != 7 {
+		t.Fatalf("ServerOptions() len = %d, want 7", len(options))
 	}
 	if _, errStat := os.Stat(databasePath); errStat != nil {
 		t.Fatalf("database stat error = %v", errStat)

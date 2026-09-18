@@ -122,6 +122,10 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		return
 	}
 	if err = h.writeAuthFile(ctx, filepath.Base(name), data); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			c.JSON(http.StatusConflict, gin.H{"error": "auth file already exists"})
+			return
+		}
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
@@ -269,7 +273,18 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
 	if err != nil {
 		return err
 	}
-	if errWrite := os.WriteFile(dst, data, 0o600); errWrite != nil {
+	if createOnlyAuthFile(ctx) {
+		file, errOpen := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errOpen != nil {
+			return fmt.Errorf("create auth file: %w", errOpen)
+		}
+		_, errWrite := file.Write(data)
+		errClose := file.Close()
+		if errWrite != nil || errClose != nil {
+			errRemove := os.Remove(dst)
+			return fmt.Errorf("write new auth file: %w", errors.Join(errWrite, errClose, errRemove))
+		}
+	} else if errWrite := os.WriteFile(dst, data, 0o600); errWrite != nil {
 		return fmt.Errorf("failed to write file: %w", errWrite)
 	}
 	if err := h.upsertAuthRecord(ctx, auth); err != nil {

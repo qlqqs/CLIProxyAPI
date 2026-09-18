@@ -363,7 +363,9 @@ func TestCarpoolServerRoutesAllowScopedHTTPProtocols(t *testing.T) {
 		{name: "OpenAI completions", path: "/v1/completions", body: `{"model":"` + serverRouteOpenAIModel + `","prompt":"test"}`},
 		{name: "OpenAI completions stream", path: "/v1/completions", body: `{"model":"` + serverRouteOpenAIModel + `","prompt":"test","stream":true}`, stream: true},
 		{name: "OpenAI responses", path: "/v1/responses", body: `{"model":"` + serverRouteOpenAIModel + `","input":"test"}`},
+		{name: "Root responses", path: "/responses", body: `{"model":"` + serverRouteOpenAIModel + `","input":"test"}`},
 		{name: "OpenAI responses stream", path: "/v1/responses", body: `{"model":"` + serverRouteOpenAIModel + `","input":"test","stream":true}`, stream: true},
+		{name: "Root responses stream", path: "/responses", body: `{"model":"` + serverRouteOpenAIModel + `","input":"test","stream":true}`, stream: true},
 		{name: "Claude messages", path: "/v1/messages", body: `{"model":"` + serverRouteClaudeModel + `","messages":[],"max_tokens":16}`},
 		{name: "Claude messages stream", path: "/v1/messages", body: `{"model":"` + serverRouteClaudeModel + `","messages":[],"max_tokens":16,"stream":true}`, stream: true},
 		{name: "Codex responses", path: "/backend-api/codex/responses", body: `{"model":"` + serverRouteCodexModel + `","input":"test"}`},
@@ -438,6 +440,7 @@ func TestCarpoolServerRoutesRejectUnsupportedSurfacesBeforeExecution(t *testing.
 		upgrade bool
 	}{
 		{name: "Responses websocket", method: http.MethodGet, path: "/v1/responses", upgrade: true},
+		{name: "Root responses websocket", method: http.MethodGet, path: "/responses", upgrade: true},
 		{name: "Realtime websocket", method: http.MethodGet, path: "/v1/realtime", upgrade: true},
 		{name: "Realtime HTTP", method: http.MethodPost, path: "/v1/realtime", body: `{}`},
 		{name: "Realtime calls", method: http.MethodPost, path: "/v1/realtime/calls", body: `{}`},
@@ -445,6 +448,7 @@ func TestCarpoolServerRoutesRejectUnsupportedSurfacesBeforeExecution(t *testing.
 		{name: "wsrelay", method: http.MethodGet, path: "/v1/ws", upgrade: true},
 		{name: "Claude count", method: http.MethodPost, path: "/v1/messages/count_tokens", body: `{"model":"` + serverRouteClaudeModel + `"}`},
 		{name: "Responses compact", method: http.MethodPost, path: "/v1/responses/compact", body: `{"model":"` + serverRouteOpenAIModel + `"}`},
+		{name: "Root responses compact", method: http.MethodPost, path: "/responses/compact", body: `{"model":"` + serverRouteOpenAIModel + `"}`},
 		{name: "Codex compact", method: http.MethodPost, path: "/backend-api/codex/responses/compact", body: `{"model":"` + serverRouteCodexModel + `"}`},
 		{name: "Codex search", method: http.MethodPost, path: "/v1/alpha/search", body: `{"model":"` + serverRouteCodexModel + `"}`},
 		{name: "Codex direct search", method: http.MethodPost, path: "/backend-api/codex/alpha/search", body: `{"model":"` + serverRouteCodexModel + `"}`},

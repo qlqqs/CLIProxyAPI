@@ -49,7 +49,7 @@ ConfigureLogOutput writes rotating logs/main.log files through lumberjack
 cleaner. Use the existing setup rather than replacing the global logger or
 writing ad-hoc files.
 
-AI API paths (/v1, /v1beta, /openai/v1, and /backend-api/codex) receive an
+AI API paths (/responses, /v1, /v1beta, /openai/v1, and /backend-api/codex) receive an
 8-character request ID. Other paths use the sentinel --------. Query
 strings are sanitized with util.MaskSensitiveQuery before the Gin request
 summary is emitted. GinLogrusRecovery submits the panic, stack, and path as

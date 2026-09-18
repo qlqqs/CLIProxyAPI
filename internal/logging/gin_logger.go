@@ -18,6 +18,7 @@ import (
 
 // aiAPIPrefixes defines path prefixes for AI API requests that should have request ID tracking.
 var aiAPIPrefixes = []string{
+	"/responses",
 	"/v1",
 	"/v1beta",
 	"/openai/v1",

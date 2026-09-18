@@ -42,6 +42,11 @@ func TestCarpoolProxyRoutePolicy(t *testing.T) {
 		allowed bool
 		reason  string
 	}{
+		{name: "root responses HTTP", method: http.MethodPost, path: "/responses", allowed: true},
+		{name: "root responses websocket", method: http.MethodGet, path: "/responses", upgrade: true, reason: RouteRejectionUpgrade},
+		{name: "root responses GET", method: http.MethodGet, path: "/responses", reason: RouteRejectionUnsupported},
+		{name: "root compact", method: http.MethodPost, path: "/responses/compact", reason: RouteRejectionUnsupported},
+		{name: "root lookalike", method: http.MethodPost, path: "/responses-extra", reason: RouteRejectionUnsupported},
 		{name: "chat", method: http.MethodPost, path: "/v1/chat/completions", allowed: true},
 		{name: "responses HTTP", method: http.MethodPost, path: "/v1/responses", allowed: true},
 		{name: "responses websocket", method: http.MethodGet, path: "/v1/responses", upgrade: true, reason: RouteRejectionUpgrade},

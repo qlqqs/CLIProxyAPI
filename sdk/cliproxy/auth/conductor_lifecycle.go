@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -129,11 +130,27 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	if errWeight := ValidateAuthWeight(auth); errWeight != nil {
 		return nil, fmt.Errorf("update auth: %w", errWeight)
 	}
+	var unlockStrict func()
+	if StrictPersistenceRequired(ctx) {
+		unlockStrict = m.lockStrictPersistence(auth.ID)
+		defer func() {
+			if unlockStrict != nil {
+				unlockStrict()
+			}
+		}()
+	}
 	m.mu.Lock()
 	existing, ok := m.auths[auth.ID]
 	if !ok || existing == nil {
 		m.mu.Unlock()
+		if StrictPersistenceRequired(ctx) {
+			return nil, ErrStrictPersistenceConflict
+		}
 		return nil, nil
+	}
+	if StrictPersistenceRequired(ctx) && (auth.Generation != existing.Generation || auth.RegistrationEpoch != existing.RegistrationEpoch) {
+		m.mu.Unlock()
+		return nil, ErrStrictPersistenceConflict
 	}
 	if m.authEpochs == nil {
 		m.authEpochs = make(map[string]uint64)
@@ -182,6 +199,27 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
 	}
 	auth.EnsureIndex()
+	if strictPersistenceRequired(ctx) {
+		if m.store == nil || shouldSkipPersist(ctx) || auth.Metadata == nil || IsConfigAPIKeyAuth(auth) || IsPluginVirtualAuth(auth) || strings.EqualFold(auth.Attributes["runtime_only"], "true") {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("update auth: persistent storage unavailable")
+		}
+		// Remote storage must never hold the global manager lock. The captured
+		// epoch/generation prevents a delayed save from replacing fresher runtime state.
+		store := m.store
+		epoch, generation := existing.RegistrationEpoch, existing.Generation
+		m.mu.Unlock()
+		if _, errPersist := store.Save(ctx, auth.Clone()); errPersist != nil {
+			return nil, fmt.Errorf("update auth: persist before publication: %w", errPersist)
+		}
+		m.mu.Lock()
+		current := m.auths[auth.ID]
+		if current == nil || current.RegistrationEpoch != epoch || current.Generation != generation {
+			m.mu.Unlock()
+			errReconcile := m.reconcileStrictPersistence(ctx, store, auth.ID)
+			return nil, errors.Join(ErrStrictPersistenceConflict, errReconcile)
+		}
+	}
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
@@ -192,7 +230,13 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 		m.scheduler.upsertAuth(authClone.Clone())
 	}
 	m.queueRefreshReschedule(auth.ID)
-	_ = m.persist(ctx, auth)
+	if !strictPersistenceRequired(ctx) {
+		_ = m.persist(ctx, auth)
+	}
+	if unlockStrict != nil {
+		unlockStrict()
+		unlockStrict = nil
+	}
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
 	if cooldownStateChanged {
 		m.persistCooldownStates(context.Background())

@@ -41,3 +41,26 @@ func shouldDeferAPIKeyModelAliasRebuild(ctx context.Context) bool {
 	enabled, ok := v.(bool)
 	return ok && enabled
 }
+
+// WithStrictPersistence makes Update persist before publishing runtime state.
+// It is intended for explicitly acknowledged management writes, not refresh or
+// watcher updates.
+func WithStrictPersistence(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, strictPersistenceContextKey{}, true)
+}
+
+type strictPersistenceContextKey struct{}
+
+// StrictPersistenceRequired reports whether a write requires acknowledged persistence.
+func StrictPersistenceRequired(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(strictPersistenceContextKey{}).(bool)
+	return enabled
+}
+
+func strictPersistenceRequired(ctx context.Context) bool { return StrictPersistenceRequired(ctx) }

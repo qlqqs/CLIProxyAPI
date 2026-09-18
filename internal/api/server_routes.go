@@ -82,6 +82,11 @@ func (s *Server) setupRoutes() {
 		v1.GET("/live/:call_id", s.codexLiveHandler.HandleSideband)
 	}
 
+	// Root Responses aliases use the same authentication and handlers as /v1.
+	s.engine.GET("/responses", AuthMiddleware(s.accessManager), openaiResponsesHandlers.ResponsesWebsocket)
+	s.engine.POST("/responses", AuthMiddleware(s.accessManager), openaiResponsesHandlers.Responses)
+	s.engine.POST("/responses/compact", AuthMiddleware(s.accessManager), openaiResponsesHandlers.Compact)
+
 	realtimeAuth := realtimeAuthMiddleware(s.accessManager, s.codexLiveHandler)
 	standardAuth := realtimeStandardAuthMiddleware(s.accessManager)
 	s.engine.GET("/v1/realtime", realtimeAuth, s.codexLiveHandler.HandleRealtimeWebsocket)

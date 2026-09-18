@@ -508,3 +508,34 @@ dialog::backdrop { background: rgb(42 36 26 / 32%); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Account management reuses the existing warm workspace and form controls. */
+.account-filter .field { margin-bottom: 0; }
+.account-table td:first-child { max-width: 320px; overflow-wrap: anywhere; }
+.account-table .form-actions { margin-top: 0; flex-wrap: wrap; }
+.account-metadata { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 2fr); gap: 12px 20px; }
+.account-metadata dt { color: var(--muted); }
+.account-metadata dd { margin: 0; overflow-wrap: anywhere; }
+.account-import-results { padding-left: 22px; overflow-wrap: anywhere; }
+.account-import-results li { padding-block: 8px; }
+[data-oauth-status] { margin-block: 16px; overflow-wrap: anywhere; }
+[data-oauth-link] { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .account-filter .form-actions { flex-wrap: wrap; }
+  .account-metadata { grid-template-columns: minmax(75px, 1fr) minmax(0, 2fr); gap: 12px; }
+}
+
+
+@media (max-width: 760px) {
+  .account-filter { grid-template-columns: minmax(0, 1fr) minmax(120px, 1fr); padding: 16px; gap: 14px; }
+  .account-filter .field:first-child { grid-column: 1 / -1; }
+  .account-filter .account-provider-field { display: none; }
+  .account-filter .form-actions { margin-top: 0; gap: 8px; }
+  table.account-table { min-width: 0; table-layout: fixed; }
+  table.account-table th, table.account-table td { padding: 12px 8px; }
+  table.account-table th:first-child { width: 48%; }
+  table.account-table th:nth-child(2), table.account-table td:nth-child(2),
+  table.account-table th:nth-child(4), table.account-table td:nth-child(4) { display: none; }
+  table.account-table .form-actions { flex-direction: column; gap: 8px; }
+  table.account-table .button { min-height: 40px; padding-inline: 8px; }
+}

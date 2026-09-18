@@ -24,6 +24,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
@@ -151,6 +152,14 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 			}
 		}
 	}
+	// Mirror service bootstrap for real account uploads without persisting the
+	// pre-seeded synthetic runtime accounts.
+	if errMkdir := os.MkdirAll(cfg.AuthDir, 0o700); errMkdir != nil {
+		t.Fatal(errMkdir)
+	}
+	tokenStore := sdkauth.NewFileTokenStore()
+	tokenStore.SetBaseDir(cfg.AuthDir)
+	manager.SetStore(tokenStore)
 	accessManager := sdkaccess.NewManager()
 	var engine *gin.Engine
 	options := append(module.ServerOptions(), api.WithEngineConfigurator(func(e *gin.Engine) { engine = e }), api.WithRequestLoggerFactory(nil))
@@ -174,7 +183,7 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 			t.Error(errShutdown)
 		}
 	})
-	ready, errMarshal := json.Marshal(map[string]any{"url": origin, "admin": login{"qa-admin", adminPassword}, "passengers": passengers, "synthetic": true, "model": "gpt-4o", "missing_model": "qa-price-missing", "input_tokens": 10000, "output_tokens": 2000})
+	ready, errMarshal := json.Marshal(map[string]any{"url": origin, "auth_dir": cfg.AuthDir, "admin": login{"qa-admin", adminPassword}, "passengers": passengers, "synthetic": true, "model": "gpt-4o", "missing_model": "qa-price-missing", "input_tokens": 10000, "output_tokens": 2000})
 	if errMarshal != nil {
 		t.Fatal(errMarshal)
 	}

@@ -125,7 +125,8 @@ func (a *API) ScopedModelRequestCompletion(observer func(context.Context, plugin
 
 func isProxyPath(path string) bool {
 	path = strings.TrimSpace(path)
-	return path == "/v1" || strings.HasPrefix(path, "/v1/") ||
+	return path == "/responses" || strings.HasPrefix(path, "/responses/") ||
+		path == "/v1" || strings.HasPrefix(path, "/v1/") ||
 		path == "/v1beta" || strings.HasPrefix(path, "/v1beta/") ||
 		path == "/openai/v1" || strings.HasPrefix(path, "/openai/v1/") ||
 		path == "/backend-api/codex" || strings.HasPrefix(path, "/backend-api/codex/")

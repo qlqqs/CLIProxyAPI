@@ -61,6 +61,8 @@ func TestGinLogrusRecoveryHandlesRegularPanic(t *testing.T) {
 
 func TestIsAIAPIPathIncludesPublicAPIGroups(t *testing.T) {
 	for _, path := range []string{
+		"/responses",
+		"/responses/compact",
 		"/v1",
 		"/v1/models",
 		"/v1/alpha/search",
@@ -74,6 +76,7 @@ func TestIsAIAPIPathIncludesPublicAPIGroups(t *testing.T) {
 	}
 	for _, path := range []string{
 		"/v0/management/config",
+		"/responses-extra",
 		"/v10/models",
 		"/openai/v10/videos",
 		"/backend-api/codex-status",

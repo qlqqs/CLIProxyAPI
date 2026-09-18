@@ -188,6 +188,7 @@ func (m *Module) ServerOptions() []api.ServerOption {
 		return nil
 	}
 	return []api.ServerOption{
+		api.WithManagementHandler(m.httpAPI.SetAccountManagement),
 		api.WithMiddleware(m.httpAPI.ProxyCredentialGuard()),
 		api.WithMiddleware(m.httpAPI.ScopedFailedRequestCompletion(m.observeHTTPFallbackCompletion)),
 		api.WithMiddleware(m.httpAPI.ScopedModelRequestCompletion(m.observeModelRequestCompletion)),
