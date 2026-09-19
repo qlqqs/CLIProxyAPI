@@ -539,3 +539,15 @@ dialog::backdrop { background: rgb(42 36 26 / 32%); }
   table.account-table .form-actions { flex-direction: column; gap: 8px; }
   table.account-table .button { min-height: 40px; padding-inline: 8px; }
 }
+
+/* Account connection tests stay compact and expose only safe execution metadata. */
+.account-test-summary { display: grid; grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr); gap: 12px; padding: 14px 16px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--work); }
+.account-test-summary > div { display: grid; gap: 4px; min-width: 0; }
+.account-test-summary span:first-child { color: var(--muted); font-size: 12px; }
+.account-test-summary strong { font-weight: 500; overflow-wrap: anywhere; }
+.account-test-terminal { min-height: 116px; padding: 16px; margin-top: 18px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: #27251f; color: rgba(255, 255, 255, .85); font-family: var(--mono); font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.account-test-terminal[data-state="success"] { border-color: #718067; }
+.account-test-terminal[data-state="error"] { border-color: #a76f5c; }
+@media (max-width: 600px) {
+  .account-test-summary { grid-template-columns: minmax(0, 1fr); }
+}

@@ -181,3 +181,31 @@ test("batch results preserve individual success and failure instead of claiming 
   assert.throws(() => c.accountImportOutcome({status: "partial"}, "export.json"));
   assert.throws(() => c.accountImportOutcome({status: "error"}, "export.json"));
 });
+
+test("account rows expose a disabled-aware connection test action", () => {
+  const section = source.slice(source.indexOf("async function renderAdminAccounts"), source.indexOf("function accountTestFailureMessage"));
+  assert.match(section, /data-account-test=/);
+  assert.match(section, /accountStatus\(item\) === "disabled"[^\n]+disabled/);
+  assert.match(section, /openAccountTest\(item\)/);
+});
+
+test("account connection test aborts on dialog cleanup and prevents duplicate submission", () => {
+  const section = source.slice(source.indexOf("function openAccountTest"), source.indexOf("function openAccountImport"));
+  assert.match(section, /new AbortController\(\)/);
+  assert.match(section, /account-cleanup[^\n]+controller\.abort\(\)/);
+  assert.match(section, /if \(running\) return/);
+  assert.match(section, /setButtonBusy\(submit, true\)/);
+  assert.match(section, /signal: controller\.signal/);
+  assert.match(section, /submit\.textContent = "重试"/);
+});
+
+test("account connection output uses safe classifications without dangerous fields", () => {
+  const c = harness();
+  assert.equal(c.accountTestFailureMessage({status: 401, message: "SECRET_TOKEN /private/path raw body"}), "账号授权已失效，请重新授权后重试。");
+  assert.equal(c.accountTestFailureMessage({status: 429}), "账号额度或速率受限，请稍后重试。");
+  assert.equal(c.accountTestFailureMessage({status: 503}), "上游暂不可用，请稍后重试。");
+  const section = source.slice(source.indexOf("function openAccountTest"), source.indexOf("function openAccountImport"));
+  assert.doesNotMatch(section, /error\.message|access_token|refresh_token|id_token|\.path|raw_body|response\.body/);
+  assert.match(section, /status\.textContent/);
+  assert.match(section, /response_bytes/);
+});

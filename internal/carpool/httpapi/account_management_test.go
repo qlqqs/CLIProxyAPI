@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,9 +20,12 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 	service "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/service"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
 func TestAccountManagement(t *testing.T) {
@@ -161,7 +165,7 @@ func TestAccountManagement(t *testing.T) {
 	if !okMultipart || multipartAuth.ProxyURL != "socks5://proxy.example:1080" {
 		t.Fatalf("multipart proxy URL = %q, found=%t", multipartAuth.ProxyURL, okMultipart)
 	}
-	for _, route := range []struct{ method, path, body string }{{"GET", "/auth-files", ""}, {"POST", "/auth-files?name=x.json", credential}, {"PATCH", "/auth-files/status", `{"name":"good.json","disabled":false}`}, {"POST", "/codex-auth-url", ""}, {"GET", "/get-auth-status?state=foreign", ""}, {"POST", "/oauth-callback", `{"state":"foreign","code":"secret"}`}} {
+	for _, route := range []struct{ method, path, body string }{{"GET", "/auth-files", ""}, {"POST", "/auth-files?name=x.json", credential}, {"PATCH", "/auth-files/status", `{"name":"good.json","disabled":false}`}, {"POST", "/auth-files/test", `{"name":"good.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`}, {"POST", "/codex-auth-url", ""}, {"GET", "/get-auth-status?state=foreign", ""}, {"POST", "/oauth-callback", `{"state":"foreign","code":"secret"}`}} {
 		if route.method != "GET" {
 			assertHTTPStatus(t, request(route.method, route.path, route.body, "application/json", false), 403)
 		}
@@ -249,7 +253,7 @@ func TestAccountManagement(t *testing.T) {
 
 func TestAccountRoutesRequireSession(t *testing.T) {
 	fixture := newCarpoolHTTPFlowFixture(t)
-	for _, route := range []struct{ method, path string }{{"GET", "auth-files"}, {"POST", "auth-files"}, {"PATCH", "auth-files/status"}, {"POST", "codex-auth-url"}, {"GET", "get-auth-status"}, {"POST", "oauth-callback"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "auth-files"}, {"POST", "auth-files"}, {"PATCH", "auth-files/status"}, {"POST", "auth-files/test"}, {"POST", "codex-auth-url"}, {"GET", "get-auth-status"}, {"POST", "oauth-callback"}} {
 		assertHTTPStatus(t, fixture.request(t, route.method, "/carpool/api/v1/admin/"+route.path, nil, nil, "", true), http.StatusUnauthorized)
 	}
 }
@@ -261,3 +265,228 @@ func (failingAccountStore) Save(context.Context, *coreauth.Auth) (string, error)
 	return "", errors.New("synthetic storage failure")
 }
 func (failingAccountStore) Delete(context.Context, string) error { return nil }
+
+type accountTestExecutor struct {
+	mu       sync.Mutex
+	authID   string
+	authIDs  []string
+	request  coreexecutor.Request
+	options  coreexecutor.Options
+	response coreexecutor.Response
+	err      error
+	started  chan struct{}
+}
+
+func (*accountTestExecutor) Identifier() string { return "codex" }
+func (e *accountTestExecutor) Execute(ctx context.Context, auth *coreauth.Auth, request coreexecutor.Request, options coreexecutor.Options) (coreexecutor.Response, error) {
+	e.mu.Lock()
+	if auth != nil {
+		e.authID = auth.ID
+		e.authIDs = append(e.authIDs, auth.ID)
+	}
+	e.request = request
+	e.options = options
+	started := e.started
+	response := e.response
+	err := e.err
+	e.mu.Unlock()
+	if started != nil {
+		close(started)
+		<-ctx.Done()
+		return coreexecutor.Response{}, ctx.Err()
+	}
+	return response, err
+}
+func (*accountTestExecutor) ExecuteStream(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+	return nil, errors.New("unexpected stream execution")
+}
+func (*accountTestExecutor) Refresh(_ context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
+	return auth, nil
+}
+func (*accountTestExecutor) CountTokens(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+	return coreexecutor.Response{}, errors.New("unexpected count execution")
+}
+func (*accountTestExecutor) HttpRequest(context.Context, *coreauth.Auth, *http.Request) (*http.Response, error) {
+	return nil, errors.New("unexpected HTTP execution")
+}
+
+func TestAccountConnection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newFixture := func(t *testing.T, executeErr error) (*gin.Engine, *accountTestExecutor, *service.SessionIdentity, func(string, string, bool) *httptest.ResponseRecorder) {
+		t.Helper()
+		manager := coreauth.NewManager(nil, nil, nil)
+		executor := &accountTestExecutor{response: coreexecutor.Response{Payload: []byte(`{"id":"resp_test","status":"completed","output":[]}`)}, err: executeErr}
+		manager.RegisterExecutor(executor)
+		for _, auth := range []*coreauth.Auth{
+			{ID: "target-auth", FileName: "target.json", Provider: "codex", Status: coreauth.StatusActive},
+			{ID: "other-auth", FileName: "other.json", Provider: "codex", Status: coreauth.StatusActive},
+			{ID: "disabled-auth", FileName: "disabled.json", Provider: "codex", Status: coreauth.StatusDisabled, Disabled: true},
+			{ID: "ambiguous-a", FileName: "ambiguous.json", Provider: "codex", Status: coreauth.StatusActive},
+			{ID: "ambiguous-b", FileName: "ambiguous.json", Provider: "codex", Status: coreauth.StatusActive},
+		} {
+			if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+				t.Fatal(errRegister)
+			}
+		}
+		pluginAuth := &coreauth.Auth{ID: "plugin-auth", FileName: "plugin.json", Provider: "codex", Status: coreauth.StatusActive}
+		coreauth.MarkPluginVirtualAuth(pluginAuth, "source.json", 0)
+		if _, errRegister := manager.Register(context.Background(), pluginAuth); errRegister != nil {
+			t.Fatal(errRegister)
+		}
+		for _, authID := range []string{"target-auth", "other-auth", "disabled-auth", "ambiguous-a", "ambiguous-b", "plugin-auth"} {
+			registry.GetGlobalRegistry().RegisterClient(authID, "codex", []*registry.ModelInfo{{ID: "gpt-5.4", Object: "model", OwnedBy: "openai"}})
+			t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(authID) })
+		}
+		handler := management.NewHandler(&config.Config{}, "", manager)
+		api := &API{}
+		api.originValidator, _ = NewOriginValidator(nil)
+		api.SetAccountManagement(handler)
+		identity := &service.SessionIdentity{User: domain.User{Role: domain.UserRoleAdmin}, Session: domain.Session{ID: "owner", CSRFToken: "csrf"}}
+		engine := gin.New()
+		group := engine.Group("/admin", func(c *gin.Context) { c.Set(identityContextKey, *identity) }, requireChangedPassword, requireAdmin)
+		api.registerAccountManagement(group)
+		request := func(body, csrf string, origin bool) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodPost, "http://test/admin/auth-files/test", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if origin {
+				req.Header.Set("Origin", "http://test")
+			}
+			if csrf != "" {
+				req.Header.Set(csrfHeaderName, csrf)
+			}
+			rec := httptest.NewRecorder()
+			engine.ServeHTTP(rec, req)
+			return rec
+		}
+		return engine, executor, identity, request
+	}
+
+	t.Run("locks exact account and returns safe metadata", func(t *testing.T) {
+		_, executor, _, request := newFixture(t, nil)
+		// An empty index is valid when the filename already identifies one runtime auth.
+		body := `{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"请只回复 OK。"}`
+		response := request(body, "csrf", true)
+		assertHTTPStatus(t, response, http.StatusOK)
+		if strings.Contains(response.Body.String(), "resp_test") || strings.Contains(response.Body.String(), "OK") {
+			t.Fatalf("response leaked upstream content: %s", response.Body)
+		}
+		var result map[string]any
+		if errDecode := json.Unmarshal(response.Body.Bytes(), &result); errDecode != nil {
+			t.Fatal(errDecode)
+		}
+		if result["status"] != "ok" || result["model"] != "gpt-5.4" || result["response_bytes"].(float64) <= 0 {
+			t.Fatalf("unexpected result: %v", result)
+		}
+		executor.mu.Lock()
+		defer executor.mu.Unlock()
+		if executor.authID != "target-auth" || executor.request.Model != "gpt-5.4" || executor.request.Format != sdktranslator.FormatOpenAIResponse {
+			t.Fatalf("unexpected execution target: auth=%q request=%+v", executor.authID, executor.request)
+		}
+		if !executor.options.CredentialScope.Allows("target-auth") || executor.options.CredentialScope.Allows("other-auth") || executor.options.Metadata[coreexecutor.PinnedAuthMetadataKey] != "target-auth" {
+			t.Fatalf("execution was not pinned: %+v", executor.options)
+		}
+		if executor.options.SourceFormat != sdktranslator.FormatOpenAIResponse || executor.options.ResponseFormat != sdktranslator.FormatOpenAIResponse {
+			t.Fatalf("unexpected formats: %+v", executor.options)
+		}
+	})
+
+	t.Run("rejects invalid disabled missing and ambiguous targets", func(t *testing.T) {
+		_, _, _, request := newFixture(t, nil)
+		cases := []struct {
+			body string
+			want int
+		}{
+			{`{"name":"disabled.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`, http.StatusForbidden},
+			{`{"name":"missing.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`, http.StatusNotFound},
+			{`{"name":"ambiguous.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`, http.StatusConflict},
+			{`{"name":"plugin.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`, http.StatusForbidden},
+			{`{"name":"target.json","auth_index":"wrong","model":"gpt-5.4","prompt":"OK"}`, http.StatusNotFound},
+			{`{"name":"target.json","auth_index":"","model":"","prompt":"OK"}`, http.StatusUnprocessableEntity},
+			{`{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":null}`, http.StatusUnprocessableEntity},
+			{`{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"OK","token":"secret"}`, http.StatusUnprocessableEntity},
+			{`{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}` + strings.Repeat(" ", accountTestBodyLimit), http.StatusUnprocessableEntity},
+		}
+		for _, tc := range cases {
+			assertHTTPStatus(t, request(tc.body, "csrf", true), tc.want)
+		}
+	})
+
+	t.Run("rejects error-shaped successful payload", func(t *testing.T) {
+		// Replace the default response through the executor returned by the fixture.
+		_, executor, _, request := newFixture(t, nil)
+		executor.response = coreexecutor.Response{Payload: []byte(`{"error":{"message":"SECRET_TOKEN raw upstream body"}}`)}
+		response := request(`{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`, "csrf", true)
+		assertHTTPStatus(t, response, http.StatusBadGateway)
+		if strings.Contains(response.Body.String(), "SECRET_TOKEN") || strings.Contains(response.Body.String(), "raw upstream") {
+			t.Fatalf("unsafe response: %s", response.Body)
+		}
+	})
+
+	t.Run("requires origin csrf admin and changed password", func(t *testing.T) {
+		_, _, identity, request := newFixture(t, nil)
+		body := `{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`
+		assertHTTPStatus(t, request(body, "csrf", false), http.StatusForbidden)
+		assertHTTPStatus(t, request(body, "", true), http.StatusForbidden)
+		identity.User.Role = domain.UserRolePassenger
+		assertHTTPStatus(t, request(body, "csrf", true), http.StatusForbidden)
+		identity.User.Role = domain.UserRoleAdmin
+		identity.User.MustChangePassword = true
+		assertHTTPStatus(t, request(body, "csrf", true), http.StatusForbidden)
+	})
+
+	t.Run("propagates client cancellation", func(t *testing.T) {
+		engine, executor, _, _ := newFixture(t, nil)
+		executor.mu.Lock()
+		executor.started = make(chan struct{})
+		started := executor.started
+		executor.mu.Unlock()
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodPost, "http://test/admin/auth-files/test", strings.NewReader(`{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`)).WithContext(ctx)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://test")
+		req.Header.Set(csrfHeaderName, "csrf")
+		done := make(chan struct{})
+		go func() {
+			engine.ServeHTTP(httptest.NewRecorder(), req)
+			close(done)
+		}()
+		<-started
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("canceled request did not return")
+		}
+	})
+
+	t.Run("classifies upstream errors without leaking them", func(t *testing.T) {
+		for _, tc := range []struct {
+			upstreamStatus int
+			responseStatus int
+			message        string
+		}{
+			{http.StatusUnauthorized, http.StatusUnauthorized, "账号授权已失效"},
+			{http.StatusForbidden, http.StatusForbidden, "上游拒绝访问"},
+			{http.StatusTooManyRequests, http.StatusTooManyRequests, "额度或速率受限"},
+			{http.StatusServiceUnavailable, http.StatusBadGateway, "上游暂不可用"},
+		} {
+			_, executor, _, request := newFixture(t, &coreauth.Error{HTTPStatus: tc.upstreamStatus, Message: "SECRET_TOKEN raw upstream body"})
+			response := request(`{"name":"target.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`, "csrf", true)
+			assertHTTPStatus(t, response, tc.responseStatus)
+			if strings.Contains(response.Body.String(), "SECRET_TOKEN") || strings.Contains(response.Body.String(), "raw upstream") {
+				t.Fatalf("unsafe error response: %s", response.Body)
+			}
+			if !strings.Contains(response.Body.String(), tc.message) {
+				t.Fatalf("missing safe classification %q: %s", tc.message, response.Body)
+			}
+			executor.mu.Lock()
+			for _, authID := range executor.authIDs {
+				if authID != "target-auth" {
+					executor.mu.Unlock()
+					t.Fatalf("execution fell back to %q: %v", authID, executor.authIDs)
+				}
+			}
+			executor.mu.Unlock()
+		}
+	})
+}

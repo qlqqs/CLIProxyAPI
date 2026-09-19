@@ -22,7 +22,7 @@ func TestCarpoolControlAPIsNeverCaptureCredentials(t *testing.T) {
 				logger := logging.NewFileRequestLogger(enabled, logsDir, "", 10)
 				engine := gin.New()
 				engine.Use(RequestLoggingMiddleware(logger))
-				paths := []string{"/carpool/api/v1/session", "/carpool/api/v1/admin/auth-files", "/carpool/api/v1/admin/auth-files/status", "/carpool/api/v1/admin/codex-auth-url", "/carpool/api/v1/admin/oauth-callback"}
+				paths := []string{"/carpool/api/v1/session", "/carpool/api/v1/admin/auth-files", "/carpool/api/v1/admin/auth-files/status", "/carpool/api/v1/admin/auth-files/test", "/carpool/api/v1/admin/codex-auth-url", "/carpool/api/v1/admin/oauth-callback"}
 				const payload = `{"access_token":"synthetic-upload-secret","password":"synthetic-password"}`
 				for _, path := range paths {
 					engine.POST(path, func(c *gin.Context) {

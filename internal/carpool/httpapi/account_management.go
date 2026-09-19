@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -75,6 +77,7 @@ func (a *API) registerAccountManagement(admin *gin.RouterGroup) {
 	})
 	group.GET("/auth-files", a.accountFiles)
 	group.POST("/auth-files", a.requireMutation(), a.importAccountFile)
+	group.POST("/auth-files/test", a.requireMutation(), a.testAccountConnection)
 	group.PATCH("/auth-files/status", a.requireMutation(), a.accountStatus)
 	group.POST("/codex-auth-url", a.requireMutation(), a.startAccountOAuth)
 	group.GET("/get-auth-status", a.accountOAuthStatus)
@@ -132,6 +135,86 @@ func applyAccountProxy(body []byte, proxyURL string) ([]byte, error) {
 	encodedProxy, _ := json.Marshal(proxyURL)
 	metadata["proxy_url"] = encodedProxy
 	return json.Marshal(metadata)
+}
+
+const (
+	accountTestBodyLimit = 8 << 10
+	accountTestModelMax  = 128
+	accountTestPromptMax = 2000
+)
+
+type accountTestRequest struct {
+	Name      *string `json:"name"`
+	AuthIndex *string `json:"auth_index"`
+	Model     *string `json:"model"`
+	Prompt    *string `json:"prompt"`
+}
+
+func (a *API) testAccountConnection(c *gin.Context) {
+	body, errRead := io.ReadAll(io.LimitReader(c.Request.Body, accountTestBodyLimit+1))
+	if errRead != nil || len(body) > accountTestBodyLimit {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_test_request", "测试参数格式无效")
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var input accountTestRequest
+	if errDecode := decoder.Decode(&input); errDecode != nil {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_test_request", "测试参数格式无效")
+		return
+	}
+	if errTrailing := decoder.Decode(&struct{}{}); errTrailing != io.EOF {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_test_request", "测试参数格式无效")
+		return
+	}
+	if input.Name == nil || input.AuthIndex == nil || input.Model == nil || input.Prompt == nil {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_test_request", "测试参数不完整")
+		return
+	}
+	name := *input.Name
+	index := *input.AuthIndex
+	model := strings.TrimSpace(*input.Model)
+	prompt := strings.TrimSpace(*input.Prompt)
+	if !safeAccountTargetName(name) || utf8.RuneCountInString(index) > 256 || !utf8.ValidString(index) || strings.TrimSpace(index) != index ||
+		model == "" || utf8.RuneCountInString(model) > accountTestModelMax || !utf8.ValidString(model) ||
+		prompt == "" || utf8.RuneCountInString(prompt) > accountTestPromptMax || !utf8.ValidString(prompt) {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_test_request", "测试参数超出允许范围")
+		return
+	}
+
+	result, errTest := a.accounts.handler.TestCarpoolAccountConnection(c.Request.Context(), name, index, model, prompt)
+	if errTest == nil {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "model": result.Model, "duration_ms": result.DurationMS, "response_bytes": result.ResponseBytes})
+		return
+	}
+	if errors.Is(errTest, context.Canceled) || errors.Is(errTest, context.DeadlineExceeded) {
+		return
+	}
+	var failure *management.CarpoolAccountTestError
+	if !errors.As(errTest, &failure) || failure == nil {
+		writeAPIError(c, http.StatusBadGateway, "account_test_failed", "账号连接测试失败，请稍后重试")
+		return
+	}
+	message := "账号连接测试失败，请稍后重试"
+	switch failure.Code {
+	case "account_not_found":
+		message = "未找到指定账号，请刷新列表后重试"
+	case "account_ambiguous":
+		message = "账号标识不唯一，请刷新列表后重试"
+	case "account_disabled":
+		message = "账号已禁用，无法测试"
+	case "account_not_testable":
+		message = "该账号不支持连接测试"
+	case "authorization_expired":
+		message = "账号授权已失效，请重新授权后重试"
+	case "upstream_forbidden":
+		message = "上游拒绝访问，请检查账号权限"
+	case "rate_limited":
+		message = "账号额度或速率受限，请稍后重试"
+	case "upstream_unavailable", "invalid_upstream_response", "accounts_unavailable":
+		message = "上游暂不可用，请稍后重试"
+	}
+	writeAPIError(c, failure.Status, failure.Code, message)
 }
 
 func (a *API) accountEntries(c *gin.Context) ([]map[string]json.RawMessage, bool) {

@@ -1,15 +1,137 @@
 package management
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
+
+// CarpoolAccountTestResult contains only bounded, non-sensitive execution metadata.
+type CarpoolAccountTestResult struct {
+	Model         string `json:"model"`
+	DurationMS    int64  `json:"duration_ms"`
+	ResponseBytes int    `json:"response_bytes"`
+}
+
+// CarpoolAccountTestError identifies a safe failure category for the Carpool facade.
+type CarpoolAccountTestError struct {
+	Status int
+	Code   string
+}
+
+func (e *CarpoolAccountTestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+
+// TestCarpoolAccountConnection executes a minimal Responses request against one
+// exact credential. The response body and upstream error text never leave this boundary.
+func (h *Handler) TestCarpoolAccountConnection(ctx context.Context, name, index, model, prompt string) (CarpoolAccountTestResult, error) {
+	h.mu.Lock()
+	manager := h.authManager
+	h.mu.Unlock()
+	if manager == nil {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusServiceUnavailable, Code: "accounts_unavailable"}
+	}
+
+	var target *coreauth.Auth
+	for _, auth := range manager.List() {
+		if auth == nil || (auth.ID != name && auth.FileName != name) || (index != "" && lockedAuthIndex(auth) != index) {
+			continue
+		}
+		if target != nil {
+			return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusConflict, Code: "account_ambiguous"}
+		}
+		target = auth
+	}
+	if target == nil {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusNotFound, Code: "account_not_found"}
+	}
+	if target.Provider != "codex" && target.Provider != "openai" || coreauth.IsPluginVirtualAuth(target) {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusForbidden, Code: "account_not_testable"}
+	}
+	if target.Disabled || target.Status == coreauth.StatusDisabled {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusForbidden, Code: "account_disabled"}
+	}
+
+	payload, errMarshal := json.Marshal(map[string]any{
+		"model":             model,
+		"stream":            false,
+		"store":             false,
+		"max_output_tokens": 16,
+		"input": []map[string]any{{
+			"type":    "message",
+			"role":    "user",
+			"content": []map[string]string{{"type": "input_text", "text": prompt}},
+		}},
+	})
+	if errMarshal != nil {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusInternalServerError, Code: "test_failed"}
+	}
+
+	started := time.Now()
+	response, errExecute := manager.Execute(ctx, []string{target.Provider}, coreexecutor.Request{
+		Model: model, Payload: payload, Format: sdktranslator.FormatOpenAIResponse,
+	}, coreexecutor.Options{
+		CredentialScope: coreexecutor.NewCredentialScope(target.ID),
+		SourceFormat:    sdktranslator.FormatOpenAIResponse,
+		ResponseFormat:  sdktranslator.FormatOpenAIResponse,
+		OriginalRequest: payload,
+		Metadata:        map[string]any{coreexecutor.PinnedAuthMetadataKey: target.ID},
+	})
+	duration := time.Since(started).Milliseconds()
+	if errExecute != nil {
+		if errors.Is(errExecute, context.Canceled) || errors.Is(errExecute, context.DeadlineExceeded) {
+			return CarpoolAccountTestResult{}, errExecute
+		}
+		return CarpoolAccountTestResult{}, classifyCarpoolAccountTestError(errExecute)
+	}
+	trimmed := bytes.TrimSpace(response.Payload)
+	var responseObject struct {
+		ID     json.RawMessage `json:"id"`
+		Object json.RawMessage `json:"object"`
+		Output json.RawMessage `json:"output"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) || json.Unmarshal(trimmed, &responseObject) != nil ||
+		len(responseObject.Error) != 0 || (len(responseObject.ID) == 0 && len(responseObject.Object) == 0 && len(responseObject.Output) == 0) {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusBadGateway, Code: "invalid_upstream_response"}
+	}
+	return CarpoolAccountTestResult{Model: model, DurationMS: duration, ResponseBytes: len(response.Payload)}, nil
+}
+
+func classifyCarpoolAccountTestError(err error) error {
+	status := 0
+	var statusErr interface{ StatusCode() int }
+	if errors.As(err, &statusErr) {
+		status = statusErr.StatusCode()
+	}
+	switch {
+	case status == http.StatusUnauthorized:
+		return &CarpoolAccountTestError{Status: http.StatusUnauthorized, Code: "authorization_expired"}
+	case status == http.StatusForbidden:
+		return &CarpoolAccountTestError{Status: http.StatusForbidden, Code: "upstream_forbidden"}
+	case status == http.StatusTooManyRequests:
+		return &CarpoolAccountTestError{Status: http.StatusTooManyRequests, Code: "rate_limited"}
+	case status >= 500 && status <= 599:
+		return &CarpoolAccountTestError{Status: http.StatusBadGateway, Code: "upstream_unavailable"}
+	default:
+		return &CarpoolAccountTestError{Status: http.StatusBadGateway, Code: "test_failed"}
+	}
+}
 
 // ValidateCarpoolAccountTarget checks the unfiltered catalog, including hidden
 // disabled credentials, before the restricted carpool facade delegates a write.

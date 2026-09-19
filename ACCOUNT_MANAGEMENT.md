@@ -138,3 +138,21 @@ CARPOOL_BROWSER_READY_FILE=/tmp/carpool-accounts-ready.json \
 - 备份目录：`backups/sub2api-20260918T080645Z/`，含旧程序、配置、SQLite 一致性快照和账号目录。
 - 已验证首页 `200`、线上 JS/CSS 与当前源码一致、未登录访问会话/账号/OAuth 状态接口均为 `401`；原配置保持不变。
 - 二进制 SHA-256 与检查摘要存于备份目录的 `deployment.json`。未自动导入用户上传的真实账号。
+
+## 账号连接测试（2026-09-19）
+
+账号管理列表为每个启用的 OpenAI/Codex 账号提供“测试”操作。测试弹层默认使用
+`gpt-5.4` 和“请只回复 OK。”，管理员可以在长度限制内修改模型与提示词。关闭弹层会取消
+当前请求；测试期间禁止重复提交。界面只展示模型、耗时、响应字节数和安全分类结果，不展示
+令牌、服务器路径、原始上游响应或原始错误。
+
+新增管理员接口：
+
+| 方法与路径 | 契约 |
+| --- | --- |
+| `POST /auth-files/test` | `{name, auth_index, model, prompt}`；要求已改初始密码的拼车管理员、可信 Origin 与有效 CSRF。严格校验字段类型和长度，拒绝禁用账号、插件虚拟账号、非 OpenAI/Codex 账号、缺失目标和歧义目标。成功仅返回 `{status:"ok", model, duration_ms, response_bytes}`。 |
+
+服务端通过 `management.Handler` 锁定唯一运行时账号，并同时设置仅包含该 `auth.ID` 的
+`CredentialScope` 与 `PinnedAuthMetadataKey`。请求采用最小非流式 OpenAI Responses 格式，
+不增加 wall-clock timeout；浏览器取消通过请求 context 传播。错误只按授权失效、无权访问、
+额度或速率受限、上游暂不可用和一般失败返回固定中文文案。
