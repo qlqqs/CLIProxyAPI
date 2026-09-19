@@ -131,7 +131,7 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 curl -fsSL https://raw.githubusercontent.com/qlqqs/CLIProxyAPI/main/install.sh | sudo bash
 ```
 
-脚本会自动下载本项目源码、构建本地镜像 `cli-proxy-api:local` 并启动服务。默认安装到 `/opt/cli-proxy-api`，配置文件位于 `/opt/cli-proxy-api/config.yaml`。
+脚本会自动下载本项目源码、构建本地镜像 `cli-proxy-api:local` 并启动服务。默认安装到 `/opt/cpa-carpool`，配置文件位于 `/opt/cpa-carpool/config.yaml`。
 
 也可以先克隆源码再部署：
 
@@ -146,7 +146,7 @@ sudo ./install.sh
 ```bash
 cd CLIProxyAPI
 git pull
-cd /opt/cli-proxy-api
+cd /opt/cpa-carpool
 sudo ./update.sh
 ```
 

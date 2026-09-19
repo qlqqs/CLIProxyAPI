@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-DEFAULT_DIR="/opt/cli-proxy-api"
+DEFAULT_DIR="/opt/cpa-carpool"
 SOURCE_REPOSITORY="${CLIPROXY_SOURCE_REPOSITORY:-https://github.com/qlqqs/CLIProxyAPI}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
@@ -13,7 +13,7 @@ usage() {
   ./install.sh [选项]
 
 选项：
-  --dir DIR       安装目录（默认：/opt/cli-proxy-api）
+  --dir DIR       安装目录（默认：/opt/cpa-carpool）
   --ref REF       远程源码引用（默认：main；仅从 curl 执行时使用）
   -h, --help      显示帮助
 
