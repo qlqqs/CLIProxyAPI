@@ -251,6 +251,36 @@ func TestAccountManagement(t *testing.T) {
 	assertHTTPStatus(t, request("GET", "/get-auth-status?state=owned-state", "", "application/json", true), 404)
 }
 
+func TestAccountQuotaResponseProjectsPassiveCodexObservation(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	entry := map[string]json.RawMessage{
+		"quota": json.RawMessage(`{"observed_at":"2026-09-19T11:59:00Z","signals":{"X-Codex-Primary-Used-Percent":"37","X-Codex-Primary-Reset-At":"1789826400","Authorization":"must-not-leak"}}`),
+	}
+	response := accountQuotaResponse(entry, "codex", now)
+	encoded, errMarshal := json.Marshal(response)
+	if errMarshal != nil {
+		t.Fatal(errMarshal)
+	}
+	body := string(encoded)
+	if !strings.Contains(body, `"used_percent":37`) || !strings.Contains(body, `"supported":true`) {
+		t.Fatalf("quota projection missing passive observation: %s", body)
+	}
+	for _, forbidden := range []string{"X-Codex", "Authorization", "must-not-leak"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("quota projection leaked %q: %s", forbidden, body)
+		}
+	}
+
+	missing := accountQuotaResponse(map[string]json.RawMessage{}, "codex", now)
+	encodedMissing, errMissing := json.Marshal(missing)
+	if errMissing != nil {
+		t.Fatal(errMissing)
+	}
+	if !strings.Contains(string(encodedMissing), `"supported":true`) || !strings.Contains(string(encodedMissing), `"windows":[]`) {
+		t.Fatalf("missing quota projection = %s", encodedMissing)
+	}
+}
+
 func TestAccountRoutesRequireSession(t *testing.T) {
 	fixture := newCarpoolHTTPFlowFixture(t)
 	for _, route := range []struct{ method, path string }{{"GET", "auth-files"}, {"POST", "auth-files"}, {"PATCH", "auth-files/status"}, {"POST", "auth-files/test"}, {"POST", "codex-auth-url"}, {"GET", "get-auth-status"}, {"POST", "oauth-callback"}} {

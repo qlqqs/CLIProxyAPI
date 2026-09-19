@@ -746,7 +746,7 @@ function quotaWindowMarkup(window) {
 
 function quotaMarkup(quota) {
   if (!quota || !quota.supported || !Array.isArray(quota.windows) || quota.windows.length === 0) {
-    return `<span class="quota-missing">上游未提供</span>`;
+    return `<div class="quota-stack"><div class="quota-window quota-window-empty"><div class="quota-window-head"><strong>暂无配额数据</strong><span>被动更新</span></div><div class="quota-meter">${percentageMeter(0, "配额数据暂无，当前显示 0%")}<b>0%</b></div><small>账号产生请求且上游返回配额后更新</small></div></div>`;
   }
   const windows = quota.windows;
   const visible = windows.slice(0, 2).map(quotaWindowMarkup).join("");
@@ -1656,7 +1656,7 @@ async function renderAdminAccounts(content) {
       return;
     }
     const shown = files.map((item, index) => ({ item, index })).filter(({ item }) => (!filter || accountStatus(item) === filter) && [item.name, item.email, item.label, item.auth_index].some(value => String(value || "").toLowerCase().includes(query.toLowerCase())));
-    results.innerHTML = shown.length ? `<div class="table-wrap"><table class="account-table"><thead><tr><th>账号</th><th>提供商</th><th>状态</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${shown.map(({ item, index }) => `<tr><td><strong>${escapeHTML(item.label || item.name || "未命名账号")}</strong><div class="muted">${escapeHTML(accountSecondaryText(item))}</div></td><td>OpenAI / Codex</td><td>${statusLabel(accountStatus(item))}</td><td>${escapeHTML(formatTime(item.updated_at || item.modtime))}</td><td><div class="form-actions"><button class="button secondary compact" data-account-detail="${index}">详情</button><button class="button secondary compact" data-account-test="${index}"${accountStatus(item) === "disabled" || busy.has(item.name) || loading ? " disabled" : ""}${accountStatus(item) === "disabled" ? ' title="禁用账号不能测试"' : ""}>测试</button><button class="button secondary compact" data-account-toggle="${index}"${busy.has(item.name) || loading ? " disabled" : ""}>${busy.has(item.name) ? "保存中…" : accountStatus(item) === "disabled" ? "启用" : "禁用"}</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><h3>${files.length ? "没有匹配的账号" : "尚未添加账号"}</h3><p>${files.length ? "调整搜索或清除筛选后重试。" : "导入 OpenAI / Codex JSON 文件，或通过 OAuth 添加账号。"}</p></div>`;
+    results.innerHTML = shown.length ? `<div class="table-wrap"><table class="account-table"><thead><tr><th>账号</th><th>提供商</th><th>状态</th><th>账号配额</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${shown.map(({ item, index }) => `<tr><td><strong>${escapeHTML(item.label || item.name || "未命名账号")}</strong><div class="muted">${escapeHTML(accountSecondaryText(item))}</div></td><td>OpenAI / Codex</td><td>${statusLabel(accountStatus(item))}</td><td>${quotaMarkup(item.quota)}</td><td>${escapeHTML(formatTime(item.updated_at || item.modtime))}</td><td><div class="form-actions"><button class="button secondary compact" data-account-detail="${index}">详情</button><button class="button secondary compact" data-account-test="${index}"${accountStatus(item) === "disabled" || busy.has(item.name) || loading ? " disabled" : ""}${accountStatus(item) === "disabled" ? ' title="禁用账号不能测试"' : ""}>测试</button><button class="button secondary compact" data-account-toggle="${index}"${busy.has(item.name) || loading ? " disabled" : ""}>${busy.has(item.name) ? "保存中…" : accountStatus(item) === "disabled" ? "启用" : "禁用"}</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><h3>${files.length ? "没有匹配的账号" : "尚未添加账号"}</h3><p>${files.length ? "调整搜索或清除筛选后重试。" : "导入 OpenAI / Codex JSON 文件，或通过 OAuth 添加账号。"}</p></div>`;
     results.querySelectorAll("[data-account-detail]").forEach(button => button.addEventListener("click", () => {
       const item = files[Number(button.dataset.accountDetail)];
       const fields = [["名称", item.name], ["标签", item.label], ["邮箱", item.email], ["提供商", "OpenAI / Codex"], ["账号索引", item.auth_index], ["套餐", item.plan_type], ["状态", statusText(accountStatus(item))], ["创建时间", formatTime(item.created_at)], ["更新时间", formatTime(item.updated_at || item.modtime)], ["最近刷新", formatTime(item.last_refresh)], ["下次重试", formatTime(item.next_retry_after)]];
@@ -1664,7 +1664,7 @@ async function renderAdminAccounts(content) {
     }));
     results.querySelectorAll("[data-account-test]").forEach(button => button.addEventListener("click", () => {
       const item = files[Number(button.dataset.accountTest)];
-      if (accountStatus(item) !== "disabled") openAccountTest(item);
+      if (accountStatus(item) !== "disabled") openAccountTest(item, refresh);
     }));
     results.querySelectorAll("[data-account-toggle]").forEach(button => button.addEventListener("click", async () => {
       const item = files[Number(button.dataset.accountToggle)];
@@ -1744,7 +1744,7 @@ function accountTestFailureMessage(error) {
   return "账号连接测试失败，请检查输入后重试。";
 }
 
-function openAccountTest(item) {
+function openAccountTest(item, onUpdated) {
   if (!item || accountStatus(item) === "disabled") return null;
   const displayName = item.label || item.name || "未命名账号";
   const dialog = accountDialog("测试账号连接", `<div class="account-test-summary"><div><span>账号</span><strong>${escapeHTML(displayName)}</strong></div><div><span>状态</span>${statusLabel(accountStatus(item))}</div></div><form data-account-test-form><div class="field"><label for="account-test-model">模型</label><input id="account-test-model" name="model" value="gpt-5.4" required maxlength="128" autocomplete="off" spellcheck="false"><small>请输入该账号可访问的模型，最多 128 个字符。</small></div><div class="field"><label for="account-test-prompt">提示词</label><textarea id="account-test-prompt" name="prompt" required maxlength="2000" rows="3">请只回复 OK。</textarea><small>仅用于本次连接测试，最多 2000 个字符。</small></div><div class="account-test-terminal" data-account-test-status role="status" aria-live="polite">等待开始测试…</div><div class="form-actions"><button class="button" type="submit" data-account-test-submit>开始测试</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form>`);
@@ -1779,6 +1779,7 @@ function openAccountTest(item) {
       status.dataset.state = "success";
       status.textContent = `连接成功\n模型：${result.model}\n耗时：${formatNumber(result.duration_ms)} 毫秒\n已收到有效响应（${formatNumber(result.response_bytes)} 字节）`;
       submit.textContent = "再次测试";
+      if (onUpdated) onUpdated();
     } catch (error) {
       if (controller.signal.aborted || error?.name === "AbortError" || !dialog.isConnected) return;
       status.dataset.state = "error";

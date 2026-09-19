@@ -202,7 +202,7 @@ func (h *Handler) CarpoolHiddenAccountEntries() []gin.H {
 		if name == "" {
 			name = auth.ID
 		}
-		entries = append(entries, gin.H{"name": name, "provider": auth.Provider, "auth_index": lockedAuthIndex(auth), "disabled": auth.Disabled, "status": auth.Status, "created_at": auth.CreatedAt, "updated_at": auth.UpdatedAt})
+		entries = append(entries, gin.H{"name": name, "provider": auth.Provider, "auth_index": lockedAuthIndex(auth), "disabled": auth.Disabled, "status": auth.Status, "created_at": auth.CreatedAt, "updated_at": auth.UpdatedAt, "quota": quotaObservationPayloadForProvider(auth.Provider, auth.Quota)})
 	}
 	return entries
 }

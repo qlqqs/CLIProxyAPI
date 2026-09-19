@@ -186,7 +186,7 @@ test("account rows expose a disabled-aware connection test action", () => {
   const section = source.slice(source.indexOf("async function renderAdminAccounts"), source.indexOf("function accountTestFailureMessage"));
   assert.match(section, /data-account-test=/);
   assert.match(section, /accountStatus\(item\) === "disabled"[^\n]+disabled/);
-  assert.match(section, /openAccountTest\(item\)/);
+  assert.match(section, /openAccountTest\(item, refresh\)/);
 });
 
 test("account connection test aborts on dialog cleanup and prevents duplicate submission", () => {
@@ -208,4 +208,24 @@ test("account connection output uses safe classifications without dangerous fiel
   assert.doesNotMatch(section, /error\.message|access_token|refresh_token|id_token|\.path|raw_body|response\.body/);
   assert.match(section, /status\.textContent/);
   assert.match(section, /response_bytes/);
+  assert.match(section, /if \(onUpdated\) onUpdated\(\)/);
+});
+
+
+test("account quota renders passive observations and a zero meter before data exists", () => {
+  const c = harness();
+  const missing = c.quotaMarkup(null);
+  assert.match(missing, /暂无配额数据/);
+  assert.match(missing, /value="0"/);
+  assert.match(missing, />0%<\/b>/);
+  assert.match(missing, /账号产生请求且上游返回配额后更新/);
+
+  const observed = c.quotaMarkup({supported: true, stale: false, windows: [{id: "primary", label: "主窗口", used_percent: 37, status: "observed"}]});
+  assert.match(observed, /value="37"/);
+  assert.match(observed, />37%<\/b>/);
+  assert.doesNotMatch(observed, /暂无配额数据/);
+
+  const section = source.slice(source.indexOf("async function renderAdminAccounts"), source.indexOf("function accountTestFailureMessage"));
+  assert.match(section, /账号配额/);
+  assert.match(section, /quotaMarkup\(item\.quota\)/);
 });

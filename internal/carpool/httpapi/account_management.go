@@ -20,6 +20,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	management "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
+	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 )
 
@@ -256,7 +258,11 @@ func (a *API) accountFiles(c *gin.Context) {
 		default:
 			status = "unknown"
 		}
-		file := gin.H{"name": name, "auth_index": accountString(entry, "auth_index"), "provider": provider, "type": provider, "disabled": disabled, "status": status}
+		now := time.Now()
+		if a.now != nil {
+			now = a.now()
+		}
+		file := gin.H{"name": name, "auth_index": accountString(entry, "auth_index"), "provider": provider, "type": provider, "disabled": disabled, "status": status, "quota": accountQuotaResponse(entry, provider, now)}
 		// Labels and email are display fields; never expose AccountInfo's raw account value.
 		for _, key := range []string{"label", "email"} {
 			if value := accountString(entry, key); len(value) <= 256 {
@@ -280,6 +286,20 @@ func (a *API) accountFiles(c *gin.Context) {
 	}
 	c.JSON(200, gin.H{"files": files})
 }
+
+func accountQuotaResponse(entry map[string]json.RawMessage, provider string, now time.Time) gin.H {
+	type quotaObservation struct {
+		ObservedAt time.Time         `json:"observed_at"`
+		Signals    map[string]string `json:"signals"`
+	}
+	var observation quotaObservation
+	if errUnmarshal := json.Unmarshal(entry["quota"], &observation); errUnmarshal != nil {
+		observation = quotaObservation{}
+	}
+	auth := &coreauth.Auth{Provider: provider, Quota: coreauth.QuotaState{ObservedAt: observation.ObservedAt, Signals: observation.Signals}}
+	return quotaResponse(carpoolruntime.ProjectAccountQuota(auth, now, carpoolruntime.DefaultAccountObservationMaxAge))
+}
+
 func (a *API) accountNameAllowed(c *gin.Context, name, index string, mustExist bool) bool {
 	if (!mustExist && !safeAccountFileName(name)) || (mustExist && !safeAccountTargetName(name)) {
 		accountFailure(c, 422)
