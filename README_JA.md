@@ -1,4 +1,4 @@
-# CLI Proxy API
+# CPA Carpool
 
 [English](README.md) | [中文](README_CN.md) | 日本語
 

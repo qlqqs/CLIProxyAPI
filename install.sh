@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install CLIProxyAPI by building the current fork's source with Docker Compose.
+# Install CPA Carpool by building the current fork's source with Docker Compose.
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ usage() {
   --ref REF       远程源码引用（默认：main；仅从 curl 执行时使用）
   -h, --help      显示帮助
 
-脚本始终从源码构建本地镜像，不会拉取 CLIProxyAPI 的远程应用镜像。
+脚本始终从源码构建本地镜像，不会拉取 CPA Carpool 的远程应用镜像。
 USAGE
 }
 
@@ -126,18 +126,28 @@ if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
 fi
 fetch_file update.sh "$INSTALL_DIR/update.sh"
 chmod +x "$INSTALL_DIR/update.sh"
+cat > "$INSTALL_DIR/docker-compose.cpa.yml" <<'COMPOSE'
+name: cpa-carpool
+
+services:
+  cli-proxy-api:
+    image: cpa-carpool:local
+    container_name: cpa-carpool
+COMPOSE
 
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
-  printf 'CLI_PROXY_IMAGE=cli-proxy-api:local\nCLI_PROXY_BUILD_CONTEXT=%s\n' "$SOURCE_DIR" > "$INSTALL_DIR/.env"
+  printf 'COMPOSE_PROJECT_NAME=cpa-carpool\nCLI_PROXY_IMAGE=cpa-carpool:local\nCLI_PROXY_BUILD_CONTEXT=%s\n' "$SOURCE_DIR" > "$INSTALL_DIR/.env"
 else
   tmp_file=$(mktemp)
   awk -v context="$SOURCE_DIR" '
-    BEGIN { image_found = 0; context_found = 0 }
-    /^CLI_PROXY_IMAGE=/ { print "CLI_PROXY_IMAGE=cli-proxy-api:local"; image_found = 1; next }
+    BEGIN { project_found = 0; image_found = 0; context_found = 0 }
+    /^COMPOSE_PROJECT_NAME=/ { print "COMPOSE_PROJECT_NAME=cpa-carpool"; project_found = 1; next }
+    /^CLI_PROXY_IMAGE=/ { print "CLI_PROXY_IMAGE=cpa-carpool:local"; image_found = 1; next }
     /^CLI_PROXY_BUILD_CONTEXT=/ { print "CLI_PROXY_BUILD_CONTEXT=" context; context_found = 1; next }
     { print }
     END {
-      if (!image_found) print "CLI_PROXY_IMAGE=cli-proxy-api:local"
+      if (!project_found) print "COMPOSE_PROJECT_NAME=cpa-carpool"
+      if (!image_found) print "CLI_PROXY_IMAGE=cpa-carpool:local"
       if (!context_found) print "CLI_PROXY_BUILD_CONTEXT=" context
     }
   ' "$INSTALL_DIR/.env" > "$tmp_file"
@@ -146,18 +156,20 @@ fi
 
 printf '安装目录：%s\n源码目录：%s\n' "$INSTALL_DIR" "$SOURCE_DIR"
 printf '正在编译本地镜像并启动服务...\n'
-docker compose --project-directory "$INSTALL_DIR" build
+docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" build
 
-# Replace a container left by an older deployment that used the same fixed name.
-existing_container=$(docker ps -aq --filter 'name=^/cli-proxy-api$')
-container_workdir=""
-if [[ -n "$existing_container" ]]; then
-  container_workdir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$existing_container" 2>/dev/null || true)
-fi
-if [[ -n "$existing_container" && "$container_workdir" != "$INSTALL_DIR" ]]; then
-  printf '检测到旧的 cli-proxy-api 容器，正在替换...\n'
-  docker rm -f "$existing_container" >/dev/null
-fi
+# Replace legacy or foreign containers that would conflict with this deployment.
+for container_name in cli-proxy-api cpa-carpool; do
+  existing_container=$(docker ps -aq --filter "name=^/${container_name}$")
+  container_workdir=""
+  if [[ -n "$existing_container" ]]; then
+    container_workdir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$existing_container" 2>/dev/null || true)
+  fi
+  if [[ -n "$existing_container" && ( "$container_name" == "cli-proxy-api" || "$container_workdir" != "$INSTALL_DIR" ) ]]; then
+    printf '检测到冲突容器 %s，正在替换...\n' "$container_name"
+    docker rm -f "$existing_container" >/dev/null
+  fi
+done
 
-docker compose --project-directory "$INSTALL_DIR" up -d --remove-orphans --pull never
-printf '\n安装完成。\n配置文件：%s/config.yaml\n查看日志：cd %q && docker compose logs -f\n' "$INSTALL_DIR" "$INSTALL_DIR"
+docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" up -d --remove-orphans --pull never
+printf '\n安装完成。\n配置文件：%s/config.yaml\n查看日志：cd %q && docker compose -f docker-compose.yml -f docker-compose.cpa.yml logs -f\n' "$INSTALL_DIR" "$INSTALL_DIR"

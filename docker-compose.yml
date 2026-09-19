@@ -1,6 +1,8 @@
+name: cpa-carpool
+
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-cli-proxy-api:local}
+    image: ${CLI_PROXY_IMAGE:-cpa-carpool:local}
     build:
       context: ${CLI_PROXY_BUILD_CONTEXT:-.}
       dockerfile: Dockerfile
@@ -8,7 +10,7 @@ services:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
         BUILD_DATE: ${BUILD_DATE:-unknown}
-    container_name: cli-proxy-api
+    container_name: cpa-carpool
     # env_file:
     #   - .env
     environment:
