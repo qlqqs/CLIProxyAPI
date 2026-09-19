@@ -1,9 +1,8 @@
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
-    pull_policy: always
+    image: ${CLI_PROXY_IMAGE:-cli-proxy-api:local}
     build:
-      context: .
+      context: ${CLI_PROXY_BUILD_CONTEXT:-.}
       dockerfile: Dockerfile
       args:
         VERSION: ${VERSION:-dev}
