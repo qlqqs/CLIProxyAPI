@@ -533,7 +533,6 @@ async function renderPassengerRoute(content) {
         ${exhausted ? `<div class="warning-banner">本月额度已用尽，新的请求将被拒绝。请联系管理员调整额度，或等待下一账期。</div>` : ""}
         ${data.car.status !== "active" ? `<div class="warning-banner">车辆当前${escapeHTML(statusText(data.car.status))}，请联系管理员确认车辆状态。</div>` : ""}
         ${billing && (billing.data_complete === false || billing.unknown_cost_events) ? `<div class="warning-banner">${billing.unknown_cost_events ? `${formatNumber(billing.unknown_cost_events)} 条费用未知；` : ""}费用数据不完整，已用金额仅为已确认小计。</div>` : ""}
-        ${usageCoverage(data.coverage)}
         <section class="workspace-panel"><div class="panel-heading"><h3>我的短周期额度 · USD</h3></div>${memberQuotaMarkup(data)}<p class="muted section-note">跟随车辆账号实际的 5 小时 / 7 天周期，与账号原生百分比配额分开计算。已开始的请求仍会结算，可能产生超额。</p></section>
         <section class="workspace-panel"><div class="panel-heading"><h3>当前车辆</h3><a href="#/accounts">查看账号状态</a></div>
           <dl class="overview-stats"><div><dt>当前成员</dt><dd>${formatNumber(data.car.member_count)}</dd></div><div><dt>可用账号</dt><dd>${formatNumber(data.car.available_account_count)}</dd></div><div><dt>席位上限</dt><dd>${data.car.seat_limit ? formatNumber(data.car.seat_limit) : "不限"}</dd></div></dl>
@@ -549,7 +548,7 @@ async function renderPassengerRoute(content) {
   if (state.route === "/members") {
     const data = await request(`/me/members/usage?period=${encodeURIComponent(state.period)}`);
     content.innerHTML = `<div class="section-header"><div><h2>成员用量</h2><p>${escapeHTML(formatTime(data.data_from))} 至 ${escapeHTML(formatTime(data.data_to))}</p></div>${periodControl()}</div>
-      ${usageCoverage(data.coverage)}${memberTable(data.items || [])}`;
+      ${memberTable(data.items || [])}`;
     bindPeriod(content);
     return;
   }
@@ -561,11 +560,6 @@ async function renderPassengerRoute(content) {
     return;
   }
   if (state.route === "/keys") return renderKeys(content, true);
-}
-
-function usageCoverage(coverage) {
-  if (!coverage || (!coverage.unknown_usage_events && !coverage.incomplete_requests)) return "";
-  return `<div class="warning-banner">存在 ${formatNumber(coverage.unknown_usage_events)} 条未知用量事件和 ${formatNumber(coverage.incomplete_requests)} 个不完整请求。</div>`;
 }
 
 function memberTable(items) {
@@ -1248,7 +1242,7 @@ async function renderAdminUsage(content) {
       <button class="button" type="submit">查询</button>
     </form>
     <div class="section-header report-heading"><div><h2>聚合用量</h2><p>${escapeHTML(formatTime(data.data_from))} 至 ${escapeHTML(formatTime(data.data_to))}</p></div><div class="report-meta">数据保留起点 ${escapeHTML(formatTime(data.retention_cutoff))}</div></div>
-    ${usageCoverage(data.coverage)}${adminUsageTable(data)}`;
+    ${adminUsageTable(data)}`;
   const rangeSelect = content.querySelector("#report-range");
   rangeSelect.addEventListener("change", () => {
     const custom = rangeSelect.value === "custom";
