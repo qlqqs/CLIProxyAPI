@@ -1569,9 +1569,16 @@ function accountSecondaryText(item) {
   return [item.name !== primary ? item.name : "", item.email !== primary ? item.email : ""].filter(Boolean).join(" · ");
 }
 
+function isSub2APIEnvelope(file) {
+  if (!file || Array.isArray(file) || typeof file !== "object" || !Object.hasOwn(file, "accounts")) return false;
+  const hasType = Object.hasOwn(file, "type");
+  const hasVersion = Object.hasOwn(file, "version");
+  if (!hasType && !hasVersion) return true;
+  return hasType && hasVersion && file.type === "sub2api-data" && file.version === 1;
+}
+
 function accountImportError(file) {
-  if (file?.type === "sub2api-data") {
-    if (file.version !== 1) return "仅支持 sub2api-data v1 导出文件";
+  if (isSub2APIEnvelope(file)) {
     if (!Array.isArray(file.accounts) || !file.accounts.length || file.accounts.length > 100) return "sub2api 文件须包含 1–100 个账号";
     for (let index = 0; index < file.accounts.length; index++) {
       const account = file.accounts[index];
@@ -1580,7 +1587,8 @@ function accountImportError(file) {
     }
     return "";
   }
-  if (!file || file.type !== "codex") return "仅支持 OpenAI / Codex OAuth JSON 或 sub2api-data v1；API Key 请使用原版管理配置";
+  if (file && !Array.isArray(file) && typeof file === "object" && Object.hasOwn(file, "accounts")) return "sub2api 文件头无效，仅支持 v1 或同时缺少 type/version 的新版导出文件";
+  if (!file || file.type !== "codex") return "仅支持 OpenAI / Codex OAuth JSON 或兼容的 sub2api 导出文件；API Key 请使用原版管理配置";
   if (typeof file.access_token !== "string" || !file.access_token.trim()) return "授权文件缺少 access_token，请重新导出完整的 Codex 授权 JSON";
   return "";
 }
@@ -1711,7 +1719,7 @@ async function renderAdminAccounts(content) {
 }
 
 function openAccountImport(onSaved, existingNames = []) {
-  const dialog = accountDialog("导入 OpenAI / Codex 账号", `<p class="muted">支持原版 Codex OAuth JSON 和 sub2api-data v1 导出文件（仅 OpenAI OAuth）。sub2api 中的多个账号将分别导入；不会读取导出文件中的密码、TOTP、恢复信息或代理配置。填写代理后，导入账号的刷新及后续请求都会使用该代理。API Key 请使用原版管理配置。每个文件单独上传并显示结果；同名文件不会覆盖已有账号，请先重命名文件再导入。每个文件须小于 1 MiB（含上传封装）。</p><form data-import-form><div class="field"><label for="account-import-proxy">代理地址（可选）</label><input id="account-import-proxy" name="proxy_url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"><p class="muted">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H，可包含代理用户名和密码。</p></div><div class="field"><label for="account-files">JSON 文件</label><input id="account-files" name="files" type="file" accept=".json,application/json" multiple required></div><div class="form-actions"><button class="button" type="submit">开始导入</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form><ul class="account-import-results" aria-live="polite"></ul>`);
+  const dialog = accountDialog("导入 OpenAI / Codex 账号", `<p class="muted">支持原版 Codex OAuth JSON、sub2api-data v1 和新版无 type/version 头导出文件（仅 OpenAI OAuth）。sub2api 中的多个账号将分别导入；不会读取导出文件中的密码、TOTP、恢复信息或代理配置。填写代理后，导入账号的刷新及后续请求都会使用该代理。API Key 请使用原版管理配置。每个文件单独上传并显示结果；同名文件不会覆盖已有账号，请先重命名文件再导入。每个文件须小于 1 MiB（含上传封装）。</p><form data-import-form><div class="field"><label for="account-import-proxy">代理地址（可选）</label><input id="account-import-proxy" name="proxy_url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"><p class="muted">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H，可包含代理用户名和密码。</p></div><div class="field"><label for="account-files">JSON 文件</label><input id="account-files" name="files" type="file" accept=".json,application/json" multiple required></div><div class="form-actions"><button class="button" type="submit">开始导入</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form><ul class="account-import-results" aria-live="polite"></ul>`);
   const controller = new AbortController();
   dialog.addEventListener("account-cleanup", () => controller.abort(), { once: true });
   dialog.querySelector("form").addEventListener("submit", async event => {
@@ -1740,7 +1748,7 @@ function openAccountImport(onSaved, existingNames = []) {
         try { parsed = JSON.parse(await file.text()); } catch (_) { throw new Error("JSON 格式无效，请修正文件后重试"); }
         const validationError = accountImportError(parsed);
         if (validationError) throw new Error(validationError);
-        if (!(parsed.type === "sub2api-data" && parsed.accounts.length > 1) && existingNames.includes(file.name)) throw new Error("同名账号已存在，请重命名文件后再导入");
+        if (!(isSub2APIEnvelope(parsed) && parsed.accounts.length > 1) && existingNames.includes(file.name)) throw new Error("同名账号已存在，请重命名文件后再导入");
         parsed = null;
         if (controller.signal.aborted) break;
         const body = new FormData();

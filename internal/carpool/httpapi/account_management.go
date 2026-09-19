@@ -298,7 +298,14 @@ func (a *API) importAccountFile(c *gin.Context) {
 		return
 	}
 	var metadata map[string]json.RawMessage
-	if json.Unmarshal(body, &metadata) == nil && accountString(metadata, "type") == "sub2api-data" {
+	if json.Unmarshal(body, &metadata) == nil {
+		_, hasAccounts := metadata["accounts"]
+		if hasAccounts && !isSub2APIEnvelope(metadata) {
+			accountFailure(c, 422)
+			return
+		}
+	}
+	if isSub2APIEnvelope(metadata) {
 		files, errNormalize := normalizeSub2API(name, body)
 		if errNormalize != nil {
 			accountFailure(c, 422)

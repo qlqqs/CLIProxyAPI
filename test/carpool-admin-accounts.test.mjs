@@ -134,19 +134,40 @@ test("import accepts executable Codex OAuth files and rejects unsupported key-on
   }
 });
 
-test("sub2api v1 validates every OpenAI OAuth account before upload", () => {
+test("sub2api envelope recognition supports v1 and fully headerless exports only", () => {
   const c = harness();
   const account = {platform: "openai", type: "oauth", credentials: {access_token: "synthetic"}, extra: {recovery: {login_password: "not-for-import", totp_secret: "not-for-import"}}};
-  const envelope = {type: "sub2api-data", version: 1, accounts: [account]};
-  assert.equal(c.accountImportError(envelope), "");
-  assert.equal(c.accountImportError({...envelope, accounts: [account, account]}), "");
+  const versioned = {type: "sub2api-data", version: 1, exported_at: "synthetic", proxies: [], accounts: [account]};
+  const headerless = {exported_at: "synthetic", proxies: [], accounts: [account]};
+  assert.equal(c.isSub2APIEnvelope(versioned), true);
+  assert.equal(c.isSub2APIEnvelope(headerless), true);
+  assert.equal(c.accountImportError(versioned), "");
+  assert.equal(c.accountImportError(headerless), "");
+  assert.equal(c.accountImportError({...headerless, accounts: [account, account]}), "");
+  for (const invalidHeader of [
+    {type: "sub2api-data", accounts: [account]},
+    {version: 1, accounts: [account]},
+    {...versioned, type: "other"},
+    {...versioned, type: "codex", access_token: "native-looking"},
+    {...versioned, version: 2},
+    {...versioned, version: "1"},
+  ]) {
+    assert.equal(c.isSub2APIEnvelope(invalidHeader), false);
+    assert(c.accountImportError(invalidHeader));
+  }
   for (const invalid of [
-    {...envelope, version: 2}, {...envelope, version: "1"}, {...envelope, accounts: []},
-    {...envelope, accounts: {}}, {...envelope, accounts: Array(101).fill(account)},
-    {...envelope, accounts: [null]}, {...envelope, accounts: [account, {...account, platform: "claude"}]},
-    {...envelope, accounts: [{...account, type: "api_key"}]},
-    {...envelope, accounts: [{...account, credentials: {refresh_token: "synthetic"}}]},
+    {...versioned, accounts: []}, {...versioned, accounts: {}}, {...versioned, accounts: Array(101).fill(account)},
+    {...versioned, accounts: [null]}, {...versioned, accounts: [account, {...account, platform: "claude"}]},
+    {...versioned, accounts: [{...account, type: "api_key"}]},
+    {...versioned, accounts: [{...account, credentials: {refresh_token: "synthetic"}}]},
   ]) assert(c.accountImportError(invalid));
+});
+
+test("sub2api validation and duplicate-name handling share envelope recognition", () => {
+  const section = source.slice(source.indexOf("function openAccountImport"), source.indexOf("function openAccountOAuth"));
+  assert.match(section, /const validationError = accountImportError\(parsed\)/);
+  assert.match(section, /isSub2APIEnvelope\(parsed\) && parsed\.accounts\.length > 1/);
+  assert.doesNotMatch(section, /parsed\.type === "sub2api-data"/);
 });
 
 test("batch results preserve individual success and failure instead of claiming full success", () => {

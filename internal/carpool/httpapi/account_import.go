@@ -52,6 +52,27 @@ type sub2APIAccount struct {
 	PlanType           string  `json:"plan_type"`
 }
 
+// isSub2APIEnvelope accepts the original versioned export and the newer
+// headerless export only when both header fields are absent.
+func isSub2APIEnvelope(fields map[string]json.RawMessage) bool {
+	if fields == nil {
+		return false
+	}
+	_, hasAccounts := fields["accounts"]
+	typeValue, hasType := fields["type"]
+	versionValue, hasVersion := fields["version"]
+	if !hasType && !hasVersion {
+		return hasAccounts
+	}
+	if !hasType || !hasVersion || !hasAccounts {
+		return false
+	}
+	var exportType string
+	var version int
+	return json.Unmarshal(typeValue, &exportType) == nil && exportType == "sub2api-data" &&
+		json.Unmarshal(versionValue, &version) == nil && version == 1
+}
+
 // normalizeSub2API validates the entire export before producing any write work.
 // Only explicitly constructed credential fields can reach the original uploader.
 func normalizeSub2API(name string, body []byte) ([]normalizedAccountImport, error) {
@@ -65,7 +86,8 @@ func normalizeSub2API(name string, body []byte) ([]normalizedAccountImport, erro
 		Proxies    []json.RawMessage `json:"proxies"`
 		Accounts   []*sub2APIAccount `json:"accounts"`
 	}
-	if json.Unmarshal(body, &export) != nil || export.Type != "sub2api-data" || export.Version != 1 || len(export.Accounts) == 0 || len(export.Accounts) > maxAccountImportBatch {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || !isSub2APIEnvelope(fields) || json.Unmarshal(body, &export) != nil || len(export.Accounts) == 0 || len(export.Accounts) > maxAccountImportBatch {
 		return nil, errAccountImport
 	}
 	// Explicit null is not a valid typed field in this export schema. Unknown

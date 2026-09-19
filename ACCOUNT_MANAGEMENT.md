@@ -72,7 +72,7 @@
 | `GET /get-auth-status?state=` | 返回 `wait` / `ok` / `error`；拒绝其他会话或供应商的 state |
 | `POST /oauth-callback` | `{provider:"codex", redirect_url}`；暂存回调不等于完成登录，必须等待最终状态 |
 
-- 导入接收 `type: codex` 且 `access_token` 非空的 OAuth JSON，以及本文末尾说明的 `sub2api-data` v1 导出文件。只含 `api_key`、只含 `refresh_token` 或 `type: openai` 的文件不是原版文件执行器可直接使用的授权记录，返回 `422`；API Key 继续通过原版管理配置创建，已有 OpenAI/Codex 配置账号仍可在这里查看与启停。
+- 导入接收 `type: codex` 且 `access_token` 非空的 OAuth JSON，以及本文末尾说明的兼容 `sub2api` 导出文件。只含 `api_key`、只含 `refresh_token` 或 `type: openai` 的文件不是原版文件执行器可直接使用的授权记录，返回 `422`；API Key 继续通过原版管理配置创建，已有 OpenAI/Codex 配置账号仍可在这里查看与启停。
 - 同名文件返回 `409 account_file_exists`，提示重命名；通过原子创建避免并发覆盖。原版管理入口的覆盖行为保持不变。
 - 停用文件账号采用显式严格持久化；失败不发布新运行时状态。远程写入不持有全局账号锁；同一账号并发变化返回冲突，并协调存储与最新运行时状态。
 - PostgreSQL / 对象存储严格写入即使本地镜像相同也会重试远程保存，避免远程失败后被本地缓存错误确认。
@@ -118,7 +118,7 @@ CARPOOL_BROWSER_READY_FILE=/tmp/carpool-accounts-ready.json \
 
 本次仅扩展账号导入，不修改已有部署配置或自动导入上传的真实账号。
 
-- 接收 `type: sub2api-data`、`version: 1` 的导出文件，处理 `accounts` 中的 OpenAI OAuth 账号。
+- 接收 `type: sub2api-data`、`version: 1` 的旧版导出文件，也接收同时缺少 `type` 和 `version` 且包含 `accounts` 的新版无头导出文件；只缺一个头字段或显式错误的头值会被拒绝。两种格式均仅处理 `accounts` 中的 OpenAI OAuth 账号。
 - 转换成原版 Codex 文件后，仍调用原版上传与运行时注册逻辑；原版 Codex JSON 保持支持。
 - 使用字段白名单映射 access/refresh/id token、账号 ID、邮箱及绝对过期时间。丢弃恢复密码、TOTP、恢复信息、代理及其他系统专属调度设置。
 - 单文件多账号逐个生成安全文件名，不覆盖已有账号；非法账号在写入前校验，存储或同名错误逐项反馈，部分成功不显示为全部成功。

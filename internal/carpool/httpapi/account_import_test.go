@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -23,11 +24,43 @@ func syntheticSub2Export(accounts ...string) string {
 	return `{"type":"sub2api-data","version":1,"exported_at":"synthetic","proxies":[],"accounts":[` + strings.Join(accounts, ",") + `]}`
 }
 
+func syntheticHeaderlessSub2Export(accounts ...string) string {
+	return `{"exported_at":"synthetic","proxies":[],"accounts":[` + strings.Join(accounts, ",") + `]}`
+}
+
+func TestIsSub2APIEnvelope(t *testing.T) {
+	tests := []struct {
+		body string
+		want bool
+	}{
+		{syntheticSub2Export(syntheticSub2Account), true},
+		{syntheticHeaderlessSub2Export(syntheticSub2Account), true},
+		{`{"type":"sub2api-data","accounts":[]}`, false},
+		{`{"version":1,"accounts":[]}`, false},
+		{`{"type":"other","version":1,"accounts":[]}`, false},
+		{`{"type":"sub2api-data","version":2,"accounts":[]}`, false},
+		{`{"exported_at":"synthetic","proxies":[]}`, false},
+	}
+	for i, test := range tests {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(test.body), &fields); err != nil {
+			t.Fatal(err)
+		}
+		if got := isSub2APIEnvelope(fields); got != test.want {
+			t.Errorf("envelope %d: got %v, want %v", i, got, test.want)
+		}
+	}
+}
+
 func TestNormalizeSub2API(t *testing.T) {
 	fractional := strings.Replace(syntheticSub2Account, `"rate_multiplier":1`, `"rate_multiplier":0.5`, 1)
 	files, err := normalizeSub2API("upload.json", []byte(syntheticSub2Export(fractional)))
 	if err != nil || len(files) != 1 || files[0].name != "upload.json" {
 		t.Fatal("single normalization failed")
+	}
+	headerless, errHeaderless := normalizeSub2API("headerless.json", []byte(syntheticHeaderlessSub2Export(fractional)))
+	if errHeaderless != nil || len(headerless) != 1 || string(headerless[0].body) != string(files[0].body) {
+		t.Fatal("headerless normalization diverged from v1")
 	}
 	var metadata map[string]string
 	if errDecode := json.Unmarshal(files[0].body, &metadata); errDecode != nil {
@@ -78,6 +111,9 @@ func TestNormalizeSub2APIRejectsMalformedBatch(t *testing.T) {
 	invalid := []string{
 		syntheticSub2Export(),
 		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"version":1`, `"version":2`, 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"type":"sub2api-data",`, "", 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"version":1,`, "", 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"type":"sub2api-data"`, `"type":"other"`, 1),
 		syntheticSub2Export(syntheticSub2Account, `null`),
 	}
 	for _, replacement := range []struct{ old, new string }{
@@ -127,9 +163,23 @@ func TestSub2APIImportBatch(t *testing.T) {
 	}
 	invalid := syntheticSub2Export(syntheticSub2Account, strings.Replace(syntheticSub2Account, `"platform":"openai"`, `"platform":"claude"`, 1))
 	assertHTTPStatus(t, request("invalid.json", invalid), 422)
+	for i, invalidHeader := range []string{
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"type":"sub2api-data",`, "", 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"version":1,`, "", 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"type":"sub2api-data"`, `"type":"other"`, 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"type":"sub2api-data"`, `"type":"codex","access_token":"native-looking"`, 1),
+		strings.Replace(syntheticSub2Export(syntheticSub2Account), `"version":1`, `"version":2`, 1),
+	} {
+		assertHTTPStatus(t, request(fmt.Sprintf("invalid-header-%d.json", i), invalidHeader), 422)
+	}
 	entries, errRead := os.ReadDir(dir)
 	if errRead != nil || len(entries) != 0 || len(manager.List()) != 0 {
 		t.Fatal("invalid batch produced writes")
+	}
+	headerless := syntheticHeaderlessSub2Export(syntheticSub2Account)
+	assertHTTPStatus(t, request("headerless.json", headerless), 200)
+	if _, errHeaderless := os.Stat(filepath.Join(dir, "headerless.json")); errHeaderless != nil {
+		t.Fatal("headerless upload was not persisted")
 	}
 	batch := syntheticSub2Export(syntheticSub2Account, syntheticSub2Account)
 	rec := request("batch.json", batch)
