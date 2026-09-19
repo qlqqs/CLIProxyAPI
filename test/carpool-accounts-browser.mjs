@@ -54,9 +54,11 @@ try {
   assert(initial.data.files.every(file => file.quota && Array.isArray(file.quota.windows)));
   assert(!JSON.stringify(initial.data).includes('claude'));
   const emptyQuota = page.locator('.account-table tbody tr').first().locator('td').nth(3);
-  await emptyQuota.getByText('暂无配额数据').waitFor();
+  await emptyQuota.locator('.quota-meter-empty').waitFor();
   assert.equal(await emptyQuota.locator('progress').getAttribute('value'), '0');
-  checks.push('管理员入口顺序、账号配额零进度和仅 OpenAI/Codex 的真实列表');
+  assert.equal((await emptyQuota.locator('.quota-meter-empty b').innerText()).trim(), '0%');
+  assert(!/暂无配额数据|被动更新|账号产生请求且上游返回配额后更新/.test(await emptyQuota.innerText()));
+  checks.push('管理员入口顺序、账号配额居中零进度和仅 OpenAI/Codex 的真实列表');
 
   let testRow = page.locator('.account-table tbody tr').filter({ has: page.locator('[data-account-test]:not([disabled])') }).first();
   await testRow.locator('[data-account-test]').click();

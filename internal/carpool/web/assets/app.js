@@ -746,7 +746,7 @@ function quotaWindowMarkup(window) {
 
 function quotaMarkup(quota) {
   if (!quota || !quota.supported || !Array.isArray(quota.windows) || quota.windows.length === 0) {
-    return `<div class="quota-stack"><div class="quota-window quota-window-empty"><div class="quota-window-head"><strong>暂无配额数据</strong><span>被动更新</span></div><div class="quota-meter">${percentageMeter(0, "配额数据暂无，当前显示 0%")}<b>0%</b></div><small>账号产生请求且上游返回配额后更新</small></div></div>`;
+    return `<div class="quota-stack"><div class="quota-window quota-window-empty"><div class="quota-meter quota-meter-empty">${percentageMeter(0, "配额 0%")}<b>0%</b></div></div></div>`;
   }
   const windows = quota.windows;
   const visible = windows.slice(0, 2).map(quotaWindowMarkup).join("");
@@ -1760,7 +1760,7 @@ function accountTestFailureMessage(error) {
 function openAccountTest(item, onUpdated) {
   if (!item || accountStatus(item) === "disabled") return null;
   const displayName = item.label || item.name || "未命名账号";
-  const dialog = accountDialog("测试账号连接", `<div class="account-test-summary"><div><span>账号</span><strong>${escapeHTML(displayName)}</strong></div><div><span>状态</span>${statusLabel(accountStatus(item))}</div></div><form data-account-test-form><div class="field"><label for="account-test-model">模型</label><input id="account-test-model" name="model" value="gpt5.6sol" required maxlength="128" autocomplete="off" spellcheck="false"><small>请输入该账号可访问的模型，最多 128 个字符。</small></div><div class="field"><label for="account-test-prompt">提示词</label><textarea id="account-test-prompt" name="prompt" required maxlength="2000" rows="3">请只回复 OK。</textarea><small>仅用于本次连接测试，最多 2000 个字符。</small></div><div class="account-test-terminal" data-account-test-status role="status" aria-live="polite">等待开始测试…</div><div class="form-actions"><button class="button" type="submit" data-account-test-submit>开始测试</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form>`);
+  const dialog = accountDialog("测试账号连接", `<div class="account-test-summary"><div><span>账号</span><strong>${escapeHTML(displayName)}</strong></div><div><span>状态</span>${statusLabel(accountStatus(item))}</div></div><form data-account-test-form><div class="field"><label for="account-test-model">模型</label><input id="account-test-model" name="model" value="gpt-5.6-sol" required maxlength="128" autocomplete="off" spellcheck="false"><small>请输入该账号可访问的模型，最多 128 个字符。</small></div><div class="field"><label for="account-test-prompt">提示词</label><textarea id="account-test-prompt" name="prompt" required maxlength="2000" rows="3">请只回复 OK。</textarea><small>仅用于本次连接测试，最多 2000 个字符。</small></div><div class="account-test-terminal" data-account-test-status role="status" aria-live="polite">等待开始测试…</div><div class="form-actions"><button class="button" type="submit" data-account-test-submit>开始测试</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form>`);
   const controller = new AbortController();
   let running = false;
   dialog.addEventListener("account-cleanup", () => controller.abort(), { once: true });

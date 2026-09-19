@@ -215,10 +215,10 @@ test("account connection output uses safe classifications without dangerous fiel
 test("account quota renders passive observations and a zero meter before data exists", () => {
   const c = harness();
   const missing = c.quotaMarkup(null);
-  assert.match(missing, /暂无配额数据/);
   assert.match(missing, /value="0"/);
+  assert.match(missing, /quota-meter-empty/);
   assert.match(missing, />0%<\/b>/);
-  assert.match(missing, /账号产生请求且上游返回配额后更新/);
+  assert.doesNotMatch(missing, /暂无配额数据|被动更新|账号产生请求且上游返回配额后更新/);
 
   const observed = c.quotaMarkup({supported: true, stale: false, windows: [{id: "primary", label: "主窗口", used_percent: 37, status: "observed"}]});
   assert.match(observed, /value="37"/);
@@ -231,10 +231,10 @@ test("account quota renders passive observations and a zero meter before data ex
 });
 
 
-test("account test defaults to gpt5.6sol and file-backed accounts expose confirmed deletion", () => {
+test("account test defaults to gpt-5.6-sol and file-backed accounts expose confirmed deletion", () => {
   const testSection = source.slice(source.indexOf("function openAccountTest"), source.indexOf("function openAccountImport"));
-  assert.match(testSection, /value="gpt5\.6sol"/);
-  assert.doesNotMatch(testSection, /value="gpt-5\.4"|value="gpt-5\.5"/);
+  assert.match(testSection, /value="gpt-5\.6-sol"/);
+  assert.doesNotMatch(testSection, /value="gpt-5\.4"|value="gpt-5\.5"|value="gpt5\.6sol"/);
 
   const accountsSection = source.slice(source.indexOf("async function renderAdminAccounts"), source.indexOf("function accountTestFailureMessage"));
   assert.match(accountsSection, /data-account-delete=/);
