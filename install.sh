@@ -24,10 +24,15 @@ USAGE
 INSTALL_DIR="$DEFAULT_DIR"
 REF="main"
 DOWNLOAD_ARCHIVE=""
+DOWNLOAD_SOURCE_DIR=""
+SOURCE_MANAGED=0
 
 cleanup() {
   if [[ -n "$DOWNLOAD_ARCHIVE" && -f "$DOWNLOAD_ARCHIVE" ]]; then
     rm -f "$DOWNLOAD_ARCHIVE"
+  fi
+  if [[ -n "$DOWNLOAD_SOURCE_DIR" && -d "$DOWNLOAD_SOURCE_DIR" ]]; then
+    rm -rf "$DOWNLOAD_SOURCE_DIR"
   fi
 }
 trap cleanup EXIT
@@ -88,15 +93,15 @@ prepare_source() {
     return
   fi
 
+  SOURCE_MANAGED=1
   SOURCE_DIR="$INSTALL_DIR/source"
-  if [[ -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/go.mod" ]]; then
-    return
-  fi
 
   command -v tar >/dev/null 2>&1 || { echo "未找到 tar，无法下载源码。" >&2; exit 1; }
-  local archive
+  local archive staging_dir
   DOWNLOAD_ARCHIVE=$(mktemp)
   archive="$DOWNLOAD_ARCHIVE"
+  DOWNLOAD_SOURCE_DIR=$(mktemp -d)
+  staging_dir="$DOWNLOAD_SOURCE_DIR"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "${SOURCE_REPOSITORY}/archive/${REF}.tar.gz" -o "$archive"
   elif command -v wget >/dev/null 2>&1; then
@@ -109,6 +114,8 @@ prepare_source() {
   tar -xzf "$archive" --strip-components=1 -C "$SOURCE_DIR"
   rm -f "$archive"
   DOWNLOAD_ARCHIVE=""
+DOWNLOAD_SOURCE_DIR=""
+SOURCE_MANAGED=0
   [[ -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/go.mod" ]] || {
     echo "下载的源码不完整，无法构建。" >&2
     exit 1
@@ -136,19 +143,25 @@ services:
 COMPOSE
 
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
-  printf 'COMPOSE_PROJECT_NAME=cpa-carpool\nCLI_PROXY_IMAGE=cpa-carpool:local\nCLI_PROXY_BUILD_CONTEXT=%s\n' "$SOURCE_DIR" > "$INSTALL_DIR/.env"
+  printf 'COMPOSE_PROJECT_NAME=cpa-carpool\nCLI_PROXY_IMAGE=cpa-carpool:local\nCLI_PROXY_BUILD_CONTEXT=%s\nCLI_PROXY_SOURCE_MANAGED=%s\nCLI_PROXY_SOURCE_REPOSITORY=%s\nCLI_PROXY_SOURCE_REF=%s\n' "$SOURCE_DIR" "$SOURCE_MANAGED" "$SOURCE_REPOSITORY" "$REF" > "$INSTALL_DIR/.env"
 else
   tmp_file=$(mktemp)
-  awk -v context="$SOURCE_DIR" '
-    BEGIN { project_found = 0; image_found = 0; context_found = 0 }
+  awk -v context="$SOURCE_DIR" -v managed="$SOURCE_MANAGED" -v repository="$SOURCE_REPOSITORY" -v ref="$REF" '
+    BEGIN { project_found = 0; image_found = 0; context_found = 0; managed_found = 0; repository_found = 0; ref_found = 0 }
     /^COMPOSE_PROJECT_NAME=/ { print "COMPOSE_PROJECT_NAME=cpa-carpool"; project_found = 1; next }
     /^CLI_PROXY_IMAGE=/ { print "CLI_PROXY_IMAGE=cpa-carpool:local"; image_found = 1; next }
     /^CLI_PROXY_BUILD_CONTEXT=/ { print "CLI_PROXY_BUILD_CONTEXT=" context; context_found = 1; next }
+    /^CLI_PROXY_SOURCE_MANAGED=/ { print "CLI_PROXY_SOURCE_MANAGED=" managed; managed_found = 1; next }
+    /^CLI_PROXY_SOURCE_REPOSITORY=/ { print "CLI_PROXY_SOURCE_REPOSITORY=" repository; repository_found = 1; next }
+    /^CLI_PROXY_SOURCE_REF=/ { print "CLI_PROXY_SOURCE_REF=" ref; ref_found = 1; next }
     { print }
     END {
       if (!project_found) print "COMPOSE_PROJECT_NAME=cpa-carpool"
       if (!image_found) print "CLI_PROXY_IMAGE=cpa-carpool:local"
       if (!context_found) print "CLI_PROXY_BUILD_CONTEXT=" context
+      if (!managed_found) print "CLI_PROXY_SOURCE_MANAGED=" managed
+      if (!repository_found) print "CLI_PROXY_SOURCE_REPOSITORY=" repository
+      if (!ref_found) print "CLI_PROXY_SOURCE_REF=" ref
     }
   ' "$INSTALL_DIR/.env" > "$tmp_file"
   mv "$tmp_file" "$INSTALL_DIR/.env"

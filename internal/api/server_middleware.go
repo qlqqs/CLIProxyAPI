@@ -71,6 +71,10 @@ func (s *Server) exampleAPIKeySafeModeMiddleware() gin.HandlerFunc {
 		}
 
 		path := c.Request.URL.Path
+		if path == "/" && s.cfg != nil && s.cfg.Carpool.Enabled {
+			c.Next()
+			return
+		}
 		if path == exampleAPIKeyManagementPath && c.Query("safe-mode") == "configure" {
 			c.Next()
 			return

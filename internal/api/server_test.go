@@ -25,6 +25,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
+	sdkhandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executionregistry"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -1712,6 +1713,25 @@ func TestHomeEnabledHidesManagementEndpointsAndControlPanel(t *testing.T) {
 			t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusNotFound, rr.Body.String())
 		}
 	})
+}
+
+func TestExampleAPIKeySafeModeKeepsCarpoolHomepage(t *testing.T) {
+	server := newTestServerWithOptions(t, WithExampleAPIKeySafeMode(), WithRouterConfigurator(func(engine *gin.Engine, _ *sdkhandlers.BaseAPIHandler, _ *proxyconfig.Config) {
+		engine.GET("/", func(c *gin.Context) {
+			c.String(http.StatusOK, "carpool homepage")
+		})
+	}))
+	cfg := *server.cfg
+	cfg.APIKeys = []string{"your-api-key-1"}
+	cfg.Carpool.Enabled = true
+	server.UpdateClients(&cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "carpool homepage" {
+		t.Fatalf("carpool root response = %d %q", rr.Code, rr.Body.String())
+	}
 }
 
 func TestExampleAPIKeySafeModeShowsWarningAndKeepsManagement(t *testing.T) {
