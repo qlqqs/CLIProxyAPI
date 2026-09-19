@@ -229,3 +229,18 @@ test("account quota renders passive observations and a zero meter before data ex
   assert.match(section, /账号配额/);
   assert.match(section, /quotaMarkup\(item\.quota\)/);
 });
+
+
+test("account test defaults to gpt5.6sol and file-backed accounts expose confirmed deletion", () => {
+  const testSection = source.slice(source.indexOf("function openAccountTest"), source.indexOf("function openAccountImport"));
+  assert.match(testSection, /value="gpt5\.6sol"/);
+  assert.doesNotMatch(testSection, /value="gpt-5\.4"|value="gpt-5\.5"/);
+
+  const accountsSection = source.slice(source.indexOf("async function renderAdminAccounts"), source.indexOf("function accountTestFailureMessage"));
+  assert.match(accountsSection, /data-account-delete=/);
+  assert.match(accountsSection, /!item\.deletable[^\n]+disabled/);
+  assert.match(accountsSection, /window\.confirm\(/);
+  assert.match(accountsSection, /method: "DELETE"/);
+  assert.match(accountsSection, /auth_index: item\.auth_index/);
+  assert.match(accountsSection, /账号已删除/);
+});

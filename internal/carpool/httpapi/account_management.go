@@ -79,6 +79,7 @@ func (a *API) registerAccountManagement(admin *gin.RouterGroup) {
 	})
 	group.GET("/auth-files", a.accountFiles)
 	group.POST("/auth-files", a.requireMutation(), a.importAccountFile)
+	group.DELETE("/auth-files", a.requireMutation(), a.deleteAccountFile)
 	group.POST("/auth-files/test", a.requireMutation(), a.testAccountConnection)
 	group.PATCH("/auth-files/status", a.requireMutation(), a.accountStatus)
 	group.POST("/codex-auth-url", a.requireMutation(), a.startAccountOAuth)
@@ -262,7 +263,9 @@ func (a *API) accountFiles(c *gin.Context) {
 		if a.now != nil {
 			now = a.now()
 		}
-		file := gin.H{"name": name, "auth_index": accountString(entry, "auth_index"), "provider": provider, "type": provider, "disabled": disabled, "status": status, "quota": accountQuotaResponse(entry, provider, now)}
+		var runtimeOnly bool
+		_ = json.Unmarshal(entry["runtime_only"], &runtimeOnly)
+		file := gin.H{"name": name, "auth_index": accountString(entry, "auth_index"), "provider": provider, "type": provider, "disabled": disabled, "status": status, "quota": accountQuotaResponse(entry, provider, now), "deletable": accountString(entry, "source") == "file" && !runtimeOnly}
 		// Labels and email are display fields; never expose AccountInfo's raw account value.
 		for _, key := range []string{"label", "email"} {
 			if value := accountString(entry, key); len(value) <= 256 {
@@ -298,6 +301,48 @@ func accountQuotaResponse(entry map[string]json.RawMessage, provider string, now
 	}
 	auth := &coreauth.Auth{Provider: provider, Quota: coreauth.QuotaState{ObservedAt: observation.ObservedAt, Signals: observation.Signals}}
 	return quotaResponse(carpoolruntime.ProjectAccountQuota(auth, now, carpoolruntime.DefaultAccountObservationMaxAge))
+}
+
+func (a *API) deleteAccountFile(c *gin.Context) {
+	name := c.Query("name")
+	index := c.Query("auth_index")
+	if !safeAccountTargetName(name) || strings.TrimSpace(index) != index || !utf8.ValidString(index) || utf8.RuneCountInString(index) > 256 {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_account_target", "账号标识无效")
+		return
+	}
+	entries, ok := a.accountEntries(c)
+	if !ok {
+		return
+	}
+	matches := 0
+	deletable := false
+	for _, entry := range entries {
+		if accountString(entry, "name") != name || accountString(entry, "auth_index") != index {
+			continue
+		}
+		matches++
+		var runtimeOnly bool
+		_ = json.Unmarshal(entry["runtime_only"], &runtimeOnly)
+		deletable = accountString(entry, "source") == "file" && !runtimeOnly
+	}
+	if matches == 0 {
+		writeAPIError(c, http.StatusNotFound, "account_not_found", "未找到指定账号，请刷新列表后重试")
+		return
+	}
+	if matches != 1 {
+		writeAPIError(c, http.StatusConflict, "account_ambiguous", "账号标识不唯一，请刷新列表后重试")
+		return
+	}
+	if !deletable {
+		writeAPIError(c, http.StatusForbidden, "account_not_deletable", "该账号由配置管理，不能在此删除")
+		return
+	}
+	status, _ := invokeAccountHandler(c, a.accounts.handler.DeleteAuthFile, http.MethodDelete, url.Values{"name": []string{name}}, nil)
+	if status != http.StatusOK {
+		accountFailure(c, status)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (a *API) accountNameAllowed(c *gin.Context, name, index string, mustExist bool) bool {

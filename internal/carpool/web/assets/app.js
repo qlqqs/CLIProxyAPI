@@ -1656,7 +1656,7 @@ async function renderAdminAccounts(content) {
       return;
     }
     const shown = files.map((item, index) => ({ item, index })).filter(({ item }) => (!filter || accountStatus(item) === filter) && [item.name, item.email, item.label, item.auth_index].some(value => String(value || "").toLowerCase().includes(query.toLowerCase())));
-    results.innerHTML = shown.length ? `<div class="table-wrap"><table class="account-table"><thead><tr><th>账号</th><th>提供商</th><th>状态</th><th>账号配额</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${shown.map(({ item, index }) => `<tr><td><strong>${escapeHTML(item.label || item.name || "未命名账号")}</strong><div class="muted">${escapeHTML(accountSecondaryText(item))}</div></td><td>OpenAI / Codex</td><td>${statusLabel(accountStatus(item))}</td><td>${quotaMarkup(item.quota)}</td><td>${escapeHTML(formatTime(item.updated_at || item.modtime))}</td><td><div class="form-actions"><button class="button secondary compact" data-account-detail="${index}">详情</button><button class="button secondary compact" data-account-test="${index}"${accountStatus(item) === "disabled" || busy.has(item.name) || loading ? " disabled" : ""}${accountStatus(item) === "disabled" ? ' title="禁用账号不能测试"' : ""}>测试</button><button class="button secondary compact" data-account-toggle="${index}"${busy.has(item.name) || loading ? " disabled" : ""}>${busy.has(item.name) ? "保存中…" : accountStatus(item) === "disabled" ? "启用" : "禁用"}</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><h3>${files.length ? "没有匹配的账号" : "尚未添加账号"}</h3><p>${files.length ? "调整搜索或清除筛选后重试。" : "导入 OpenAI / Codex JSON 文件，或通过 OAuth 添加账号。"}</p></div>`;
+    results.innerHTML = shown.length ? `<div class="table-wrap"><table class="account-table"><thead><tr><th>账号</th><th>提供商</th><th>状态</th><th>账号配额</th><th>最近更新</th><th>操作</th></tr></thead><tbody>${shown.map(({ item, index }) => `<tr><td><strong>${escapeHTML(item.label || item.name || "未命名账号")}</strong><div class="muted">${escapeHTML(accountSecondaryText(item))}</div></td><td>OpenAI / Codex</td><td>${statusLabel(accountStatus(item))}</td><td>${quotaMarkup(item.quota)}</td><td>${escapeHTML(formatTime(item.updated_at || item.modtime))}</td><td><div class="form-actions"><button class="button secondary compact" data-account-detail="${index}">详情</button><button class="button secondary compact" data-account-test="${index}"${accountStatus(item) === "disabled" || busy.has(item.name) || loading ? " disabled" : ""}${accountStatus(item) === "disabled" ? ' title="禁用账号不能测试"' : ""}>测试</button><button class="button secondary compact" data-account-toggle="${index}"${busy.has(item.name) || loading ? " disabled" : ""}>${busy.has(item.name) ? "保存中…" : accountStatus(item) === "disabled" ? "启用" : "禁用"}</button><button class="button danger compact" data-account-delete="${index}"${!item.deletable || busy.has(item.name) || loading ? " disabled" : ""}${!item.deletable ? ' title="配置管理的账号不能在此删除"' : ""}>删除</button></div></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><h3>${files.length ? "没有匹配的账号" : "尚未添加账号"}</h3><p>${files.length ? "调整搜索或清除筛选后重试。" : "导入 OpenAI / Codex JSON 文件，或通过 OAuth 添加账号。"}</p></div>`;
     results.querySelectorAll("[data-account-detail]").forEach(button => button.addEventListener("click", () => {
       const item = files[Number(button.dataset.accountDetail)];
       const fields = [["名称", item.name], ["标签", item.label], ["邮箱", item.email], ["提供商", "OpenAI / Codex"], ["账号索引", item.auth_index], ["套餐", item.plan_type], ["状态", statusText(accountStatus(item))], ["创建时间", formatTime(item.created_at)], ["更新时间", formatTime(item.updated_at || item.modtime)], ["最近刷新", formatTime(item.last_refresh)], ["下次重试", formatTime(item.next_retry_after)]];
@@ -1665,6 +1665,19 @@ async function renderAdminAccounts(content) {
     results.querySelectorAll("[data-account-test]").forEach(button => button.addEventListener("click", () => {
       const item = files[Number(button.dataset.accountTest)];
       if (accountStatus(item) !== "disabled") openAccountTest(item, refresh);
+    }));
+    results.querySelectorAll("[data-account-delete]").forEach(button => button.addEventListener("click", async () => {
+      const item = files[Number(button.dataset.accountDelete)];
+      if (!item?.deletable || busy.has(item.name)) return;
+      if (!window.confirm(`确定删除 ${item.label || item.name}？此操作会移除账号授权文件，且无法撤销。`)) return;
+      busy.add(item.name);
+      draw();
+      try {
+        const query = new URLSearchParams({name: item.name, auth_index: item.auth_index || ""});
+        await request(`/admin/auth-files?${query}`, {method: "DELETE"});
+        if (current()) { toast("账号已删除"); await refresh(); }
+      } catch (error) { if (current()) message = error.message; }
+      finally { busy.delete(item.name); draw(); }
     }));
     results.querySelectorAll("[data-account-toggle]").forEach(button => button.addEventListener("click", async () => {
       const item = files[Number(button.dataset.accountToggle)];
@@ -1747,7 +1760,7 @@ function accountTestFailureMessage(error) {
 function openAccountTest(item, onUpdated) {
   if (!item || accountStatus(item) === "disabled") return null;
   const displayName = item.label || item.name || "未命名账号";
-  const dialog = accountDialog("测试账号连接", `<div class="account-test-summary"><div><span>账号</span><strong>${escapeHTML(displayName)}</strong></div><div><span>状态</span>${statusLabel(accountStatus(item))}</div></div><form data-account-test-form><div class="field"><label for="account-test-model">模型</label><input id="account-test-model" name="model" value="gpt-5.4" required maxlength="128" autocomplete="off" spellcheck="false"><small>请输入该账号可访问的模型，最多 128 个字符。</small></div><div class="field"><label for="account-test-prompt">提示词</label><textarea id="account-test-prompt" name="prompt" required maxlength="2000" rows="3">请只回复 OK。</textarea><small>仅用于本次连接测试，最多 2000 个字符。</small></div><div class="account-test-terminal" data-account-test-status role="status" aria-live="polite">等待开始测试…</div><div class="form-actions"><button class="button" type="submit" data-account-test-submit>开始测试</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form>`);
+  const dialog = accountDialog("测试账号连接", `<div class="account-test-summary"><div><span>账号</span><strong>${escapeHTML(displayName)}</strong></div><div><span>状态</span>${statusLabel(accountStatus(item))}</div></div><form data-account-test-form><div class="field"><label for="account-test-model">模型</label><input id="account-test-model" name="model" value="gpt5.6sol" required maxlength="128" autocomplete="off" spellcheck="false"><small>请输入该账号可访问的模型，最多 128 个字符。</small></div><div class="field"><label for="account-test-prompt">提示词</label><textarea id="account-test-prompt" name="prompt" required maxlength="2000" rows="3">请只回复 OK。</textarea><small>仅用于本次连接测试，最多 2000 个字符。</small></div><div class="account-test-terminal" data-account-test-status role="status" aria-live="polite">等待开始测试…</div><div class="form-actions"><button class="button" type="submit" data-account-test-submit>开始测试</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form>`);
   const controller = new AbortController();
   let running = false;
   dialog.addEventListener("account-cleanup", () => controller.abort(), { once: true });

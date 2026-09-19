@@ -165,7 +165,7 @@ func TestAccountManagement(t *testing.T) {
 	if !okMultipart || multipartAuth.ProxyURL != "socks5://proxy.example:1080" {
 		t.Fatalf("multipart proxy URL = %q, found=%t", multipartAuth.ProxyURL, okMultipart)
 	}
-	for _, route := range []struct{ method, path, body string }{{"GET", "/auth-files", ""}, {"POST", "/auth-files?name=x.json", credential}, {"PATCH", "/auth-files/status", `{"name":"good.json","disabled":false}`}, {"POST", "/auth-files/test", `{"name":"good.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`}, {"POST", "/codex-auth-url", ""}, {"GET", "/get-auth-status?state=foreign", ""}, {"POST", "/oauth-callback", `{"state":"foreign","code":"secret"}`}} {
+	for _, route := range []struct{ method, path, body string }{{"GET", "/auth-files", ""}, {"POST", "/auth-files?name=x.json", credential}, {"DELETE", "/auth-files?name=good.json&auth_index=wrong", ""}, {"PATCH", "/auth-files/status", `{"name":"good.json","disabled":false}`}, {"POST", "/auth-files/test", `{"name":"good.json","auth_index":"","model":"gpt-5.4","prompt":"OK"}`}, {"POST", "/codex-auth-url", ""}, {"GET", "/get-auth-status?state=foreign", ""}, {"POST", "/oauth-callback", `{"state":"foreign","code":"secret"}`}} {
 		if route.method != "GET" {
 			assertHTTPStatus(t, request(route.method, route.path, route.body, "application/json", false), 403)
 		}
@@ -281,9 +281,77 @@ func TestAccountQuotaResponseProjectsPassiveCodexObservation(t *testing.T) {
 	}
 }
 
+func TestAccountDeleteRemovesOnlyFileBackedExactTarget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	manager := coreauth.NewManager(nil, nil, nil)
+	fileName := "delete-me.json"
+	filePath := filepath.Join(dir, fileName)
+	if errWrite := os.WriteFile(filePath, []byte(`{"type":"codex","access_token":"synthetic"}`), 0o600); errWrite != nil {
+		t.Fatal(errWrite)
+	}
+	registered, errRegister := manager.Register(context.Background(), &coreauth.Auth{ID: "delete-auth", FileName: fileName, Provider: "codex", Status: coreauth.StatusActive, Attributes: map[string]string{"path": filePath}})
+	if errRegister != nil {
+		t.Fatal(errRegister)
+	}
+	registeredConfig, errConfig := manager.Register(context.Background(), &coreauth.Auth{ID: "codex:apikey:managed", Provider: "codex", Status: coreauth.StatusActive, Attributes: map[string]string{"source": "config:codex[managed]"}})
+	if errConfig != nil {
+		t.Fatal(errConfig)
+	}
+
+	api := &API{}
+	api.originValidator, _ = NewOriginValidator(nil)
+	api.SetAccountManagement(management.NewHandler(&config.Config{AuthDir: dir}, "", manager))
+	identity := service.SessionIdentity{User: domain.User{Role: domain.UserRoleAdmin}, Session: domain.Session{ID: "owner", CSRFToken: "csrf"}}
+	engine := gin.New()
+	group := engine.Group("/admin", func(c *gin.Context) { c.Set(identityContextKey, identity) }, requireChangedPassword, requireAdmin)
+	api.registerAccountManagement(group)
+	request := func(method, path string, security bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://test/admin"+path, nil)
+		if security {
+			req.Header.Set("Origin", "http://test")
+			req.Header.Set(csrfHeaderName, "csrf")
+		}
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	list := request(http.MethodGet, "/auth-files", false)
+	assertHTTPStatus(t, list, http.StatusOK)
+	var payload struct {
+		Files []struct {
+			Name      string `json:"name"`
+			AuthIndex string `json:"auth_index"`
+			Deletable bool   `json:"deletable"`
+		} `json:"files"`
+	}
+	if errDecode := json.Unmarshal(list.Body.Bytes(), &payload); errDecode != nil {
+		t.Fatal(errDecode)
+	}
+	deletableByName := make(map[string]bool, len(payload.Files))
+	for _, file := range payload.Files {
+		deletableByName[file.Name] = file.Deletable
+	}
+	if !deletableByName[fileName] || deletableByName["codex:apikey:managed"] {
+		t.Fatalf("unexpected deletion capabilities: %#v", deletableByName)
+	}
+
+	assertHTTPStatus(t, request(http.MethodDelete, "/auth-files?name="+fileName+"&auth_index="+registered.Index, false), http.StatusForbidden)
+	assertHTTPStatus(t, request(http.MethodDelete, "/auth-files?name="+fileName+"&auth_index=wrong", true), http.StatusNotFound)
+	assertHTTPStatus(t, request(http.MethodDelete, "/auth-files?name=codex%3Aapikey%3Amanaged&auth_index="+registeredConfig.Index, true), http.StatusForbidden)
+	assertHTTPStatus(t, request(http.MethodDelete, "/auth-files?name="+fileName+"&auth_index="+registered.Index, true), http.StatusOK)
+	if _, errStat := os.Stat(filePath); !os.IsNotExist(errStat) {
+		t.Fatalf("account file still exists: %v", errStat)
+	}
+	if _, exists := manager.GetByID("delete-auth"); exists {
+		t.Fatal("runtime account still exists after deletion")
+	}
+}
+
 func TestAccountRoutesRequireSession(t *testing.T) {
 	fixture := newCarpoolHTTPFlowFixture(t)
-	for _, route := range []struct{ method, path string }{{"GET", "auth-files"}, {"POST", "auth-files"}, {"PATCH", "auth-files/status"}, {"POST", "auth-files/test"}, {"POST", "codex-auth-url"}, {"GET", "get-auth-status"}, {"POST", "oauth-callback"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "auth-files"}, {"POST", "auth-files"}, {"DELETE", "auth-files"}, {"PATCH", "auth-files/status"}, {"POST", "auth-files/test"}, {"POST", "codex-auth-url"}, {"GET", "get-auth-status"}, {"POST", "oauth-callback"}} {
 		assertHTTPStatus(t, fixture.request(t, route.method, "/carpool/api/v1/admin/"+route.path, nil, nil, "", true), http.StatusUnauthorized)
 	}
 }
