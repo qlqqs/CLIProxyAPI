@@ -90,6 +90,7 @@ fetch_file() {
 prepare_source() {
   if [[ -f "$SCRIPT_DIR/Dockerfile" && -f "$SCRIPT_DIR/go.mod" ]]; then
     SOURCE_DIR="$SCRIPT_DIR"
+    SOURCE_MANAGED=0
     return
   fi
 
@@ -110,18 +111,17 @@ prepare_source() {
     echo "需要 curl 或 wget 才能下载源码。" >&2
     exit 1
   fi
-  mkdir -p "$SOURCE_DIR"
-  tar -xzf "$archive" --strip-components=1 -C "$SOURCE_DIR"
-  rm -f "$archive"
-  DOWNLOAD_ARCHIVE=""
-DOWNLOAD_SOURCE_DIR=""
-SOURCE_MANAGED=0
-  [[ -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/go.mod" ]] || {
+  tar -xzf "$archive" --strip-components=1 -C "$staging_dir"
+  [[ -f "$staging_dir/Dockerfile" && -f "$staging_dir/go.mod" ]] || {
     echo "下载的源码不完整，无法构建。" >&2
     exit 1
   }
+  rm -rf "$SOURCE_DIR"
+  mv "$staging_dir" "$SOURCE_DIR"
+  DOWNLOAD_SOURCE_DIR=""
+  rm -f "$archive"
+  DOWNLOAD_ARCHIVE=""
 }
-
 prepare_source
 
 # Keep local deployment files independent from the source directory.

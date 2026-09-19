@@ -7,6 +7,7 @@ INSTALL_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ENV_FILE="$INSTALL_DIR/.env"
 DOWNLOAD_ARCHIVE=""
 DOWNLOAD_SOURCE_DIR=""
+PENDING_UPDATE_SCRIPT=""
 
 cleanup() {
   if [[ -n "$DOWNLOAD_ARCHIVE" && -f "$DOWNLOAD_ARCHIVE" ]]; then
@@ -14,6 +15,9 @@ cleanup() {
   fi
   if [[ -n "$DOWNLOAD_SOURCE_DIR" && -d "$DOWNLOAD_SOURCE_DIR" ]]; then
     rm -rf "$DOWNLOAD_SOURCE_DIR"
+  fi
+  if [[ -n "$PENDING_UPDATE_SCRIPT" && -f "$PENDING_UPDATE_SCRIPT" ]]; then
+    rm -f "$PENDING_UPDATE_SCRIPT"
   fi
 }
 trap cleanup EXIT
@@ -50,10 +54,30 @@ SOURCE_MANAGED=$(read_env CLI_PROXY_SOURCE_MANAGED)
 SOURCE_REPOSITORY=$(read_env CLI_PROXY_SOURCE_REPOSITORY)
 SOURCE_REF=$(read_env CLI_PROXY_SOURCE_REF)
 
+# Older installer versions did not record the source mode correctly. The default
+# /opt/cpa-carpool/source layout is always managed by this updater.
+if [[ -z "$SOURCE_MANAGED" || "$SOURCE_MANAGED" == "0" ]] && [[ "$BUILD_CONTEXT" == "$INSTALL_DIR/source" ]]; then
+  SOURCE_MANAGED=1
+fi
+
 if [[ "$SOURCE_MANAGED" == "1" ]]; then
-  [[ -n "$BUILD_CONTEXT" && "$BUILD_CONTEXT" != "/" ]] || { echo "源码目录配置无效。" >&2; exit 1; }
   SOURCE_REPOSITORY="${SOURCE_REPOSITORY:-https://github.com/qlqqs/CLIProxyAPI}"
   SOURCE_REF="${SOURCE_REF:-main}"
+  metadata_file=$(mktemp)
+  awk -v managed="$SOURCE_MANAGED" -v repository="$SOURCE_REPOSITORY" -v ref="$SOURCE_REF" '
+    BEGIN { managed_found = 0; repository_found = 0; ref_found = 0 }
+    /^CLI_PROXY_SOURCE_MANAGED=/ { print "CLI_PROXY_SOURCE_MANAGED=" managed; managed_found = 1; next }
+    /^CLI_PROXY_SOURCE_REPOSITORY=/ { print "CLI_PROXY_SOURCE_REPOSITORY=" repository; repository_found = 1; next }
+    /^CLI_PROXY_SOURCE_REF=/ { print "CLI_PROXY_SOURCE_REF=" ref; ref_found = 1; next }
+    { print }
+    END {
+      if (!managed_found) print "CLI_PROXY_SOURCE_MANAGED=" managed
+      if (!repository_found) print "CLI_PROXY_SOURCE_REPOSITORY=" repository
+      if (!ref_found) print "CLI_PROXY_SOURCE_REF=" ref
+    }
+  ' "$ENV_FILE" > "$metadata_file"
+  mv "$metadata_file" "$ENV_FILE"
+  [[ -n "$BUILD_CONTEXT" && "$BUILD_CONTEXT" != "/" ]] || { echo "源码目录配置无效。" >&2; exit 1; }
   command -v tar >/dev/null 2>&1 || { echo "未找到 tar，无法更新源码。" >&2; exit 1; }
   DOWNLOAD_ARCHIVE=$(mktemp)
   DOWNLOAD_SOURCE_DIR=$(mktemp -d)
@@ -75,6 +99,12 @@ if [[ "$SOURCE_MANAGED" == "1" ]]; then
   DOWNLOAD_SOURCE_DIR=""
   rm -f "$DOWNLOAD_ARCHIVE"
   DOWNLOAD_ARCHIVE=""
+  if [[ -f "$BUILD_CONTEXT/update.sh" ]]; then
+    PENDING_UPDATE_SCRIPT="$INSTALL_DIR/.update.sh.next"
+    cp "$BUILD_CONTEXT/update.sh" "$PENDING_UPDATE_SCRIPT"
+    chmod +x "$PENDING_UPDATE_SCRIPT"
+  fi
+  printf '已下载最新源码：%s (%s)\n' "$SOURCE_REPOSITORY" "$SOURCE_REF"
 fi
 
 [[ -f "$BUILD_CONTEXT/Dockerfile" && -f "$BUILD_CONTEXT/go.mod" ]] || {
@@ -82,8 +112,8 @@ fi
   exit 1
 }
 
-printf '源码目录：%s\n正在重新编译并更新服务...\n' "$BUILD_CONTEXT"
-docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" build
+printf '源码目录：%s\n正在无缓存编译最新镜像...\n' "$BUILD_CONTEXT"
+docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" build --pull --no-cache
 
 for container_name in cli-proxy-api cpa-carpool; do
   existing_container=$(docker ps -aq --filter "name=^/${container_name}$")
@@ -96,5 +126,8 @@ for container_name in cli-proxy-api cpa-carpool; do
   fi
 done
 
-docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" up -d --remove-orphans --pull never
-printf '更新完成。\n'
+docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" up -d --remove-orphans --pull never --force-recreate
+if [[ -n "$PENDING_UPDATE_SCRIPT" && -f "$PENDING_UPDATE_SCRIPT" ]]; then
+  mv "$PENDING_UPDATE_SCRIPT" "$INSTALL_DIR/update.sh"
+fi
+printf '最新源码已重新编译，容器已强制重建。\n'
