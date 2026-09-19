@@ -145,6 +145,34 @@ func TestRunCarpoolBootstrapAdmin(t *testing.T) {
 	}
 }
 
+func TestRunCarpoolBootstrapRandomAdminIsIdempotent(t *testing.T) {
+	cfg, configPath, databasePath := enabledCarpoolCommandConfig(t)
+	const password = "generated-bootstrap-password-value"
+	command := carpoolCommandOptions{randomBootstrapAdmin: "admin"}
+	dependencies := commandDependencies(databasePath, nil, nil)
+	dependencies.generatePassword = func() (string, error) { return password, nil }
+	var firstOutput bytes.Buffer
+	dependencies.output = &firstOutput
+
+	handled, errRun := runCarpoolCommand(context.Background(), cfg, configPath, command, dependencies)
+	if !handled || errRun != nil {
+		t.Fatalf("first runCarpoolCommand() = (%t, %v)", handled, errRun)
+	}
+	if !strings.Contains(firstOutput.String(), `administrator "admin" created`) || !strings.Contains(firstOutput.String(), password) {
+		t.Fatalf("first output = %q, want generated credentials", firstOutput.String())
+	}
+
+	var secondOutput bytes.Buffer
+	dependencies.output = &secondOutput
+	handled, errRun = runCarpoolCommand(context.Background(), cfg, configPath, command, dependencies)
+	if !handled || errRun != nil {
+		t.Fatalf("second runCarpoolCommand() = (%t, %v)", handled, errRun)
+	}
+	if !strings.Contains(secondOutput.String(), "already exists") || strings.Contains(secondOutput.String(), password) {
+		t.Fatalf("second output = %q, want idempotent skip without password", secondOutput.String())
+	}
+}
+
 func TestRunCarpoolBootstrapAdminRejectsRepeat(t *testing.T) {
 	cfg, configPath, databasePath := enabledCarpoolCommandConfig(t)
 	const password = "repeat-bootstrap-password"
@@ -300,6 +328,7 @@ func TestCarpoolCommandRequestedInArgs(t *testing.T) {
 	}{
 		{name: "none", args: []string{"--config", "config.yaml"}, want: false},
 		{name: "bootstrap separate", args: []string{"--carpool-bootstrap-admin", "admin"}, want: true},
+		{name: "random bootstrap", args: []string{"--carpool-bootstrap-random-admin=admin"}, want: true},
 		{name: "backup equals", args: []string{"-carpool-backup=backup.db"}, want: true},
 		{name: "restore double dash equals", args: []string{"--carpool-restore=backup.db"}, want: true},
 		{name: "similar plugin flag", args: []string{"--plugin-carpool-backup=value"}, want: false},

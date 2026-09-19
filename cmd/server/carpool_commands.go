@@ -20,12 +20,14 @@ import (
 )
 
 type carpoolCommandOptions struct {
-	bootstrapAdmin string
-	backupPath     string
-	restorePath    string
-	bootstrapSet   bool
-	backupSet      bool
-	restoreSet     bool
+	bootstrapAdmin       string
+	randomBootstrapAdmin string
+	backupPath           string
+	restorePath          string
+	bootstrapSet         bool
+	randomBootstrapSet   bool
+	backupSet            bool
+	restoreSet           bool
 }
 
 func (options carpoolCommandOptions) requested() bool {
@@ -34,7 +36,7 @@ func (options carpoolCommandOptions) requested() bool {
 
 func (options carpoolCommandOptions) commandCount() int {
 	count := 0
-	for _, requested := range []bool{options.bootstrapRequested(), options.backupRequested(), options.restoreRequested()} {
+	for _, requested := range []bool{options.bootstrapRequested(), options.randomBootstrapRequested(), options.backupRequested(), options.restoreRequested()} {
 		if requested {
 			count++
 		}
@@ -44,6 +46,10 @@ func (options carpoolCommandOptions) commandCount() int {
 
 func (options carpoolCommandOptions) bootstrapRequested() bool {
 	return options.bootstrapSet || options.bootstrapAdmin != ""
+}
+
+func (options carpoolCommandOptions) randomBootstrapRequested() bool {
+	return options.randomBootstrapSet || options.randomBootstrapAdmin != ""
 }
 
 func (options carpoolCommandOptions) backupRequested() bool {
@@ -97,6 +103,7 @@ type carpoolCommandDependencies struct {
 	output              io.Writer
 	now                 func() time.Time
 	passwordHasher      carpoolservice.PasswordHasher
+	generatePassword    func() (string, error)
 	resolveDatabasePath func(config.CarpoolConfig, string) (string, error)
 }
 
@@ -105,6 +112,9 @@ func defaultCarpoolCommandDependencies() carpoolCommandDependencies {
 		terminal: standardCarpoolTerminal{input: os.Stdin},
 		output:   os.Stdout,
 		now:      time.Now,
+		generatePassword: func() (string, error) {
+			return carpoolservice.NewTemporaryPassword(nil)
+		},
 	}
 }
 
@@ -113,7 +123,7 @@ func carpoolCommandRequestedInArgs(args []string) bool {
 		if argument == "--" {
 			return false
 		}
-		for _, name := range []string{"carpool-bootstrap-admin", "carpool-backup", "carpool-restore"} {
+		for _, name := range []string{"carpool-bootstrap-admin", "carpool-bootstrap-random-admin", "carpool-backup", "carpool-restore"} {
 			if argument == "-"+name || argument == "--"+name ||
 				strings.HasPrefix(argument, "-"+name+"=") || strings.HasPrefix(argument, "--"+name+"=") {
 				return true
@@ -135,7 +145,7 @@ func runCarpoolCommand(
 		return false, nil
 	}
 	if commandCount != 1 {
-		return true, fmt.Errorf("carpool command: specify exactly one of --carpool-bootstrap-admin, --carpool-backup, or --carpool-restore")
+		return true, fmt.Errorf("carpool command: specify exactly one bootstrap, backup, or restore command")
 	}
 	if cfg == nil || !cfg.Carpool.Enabled {
 		return true, fmt.Errorf("carpool command: carpool.enabled must be true")
@@ -164,6 +174,34 @@ func runCarpoolCommand(
 	}
 
 	switch {
+	case command.randomBootstrapRequested():
+		if _, errUsername := carpoolservice.NormalizeUsername(command.randomBootstrapAdmin); errUsername != nil {
+			return true, errUsername
+		}
+		if errStopped := ops.RequireStopped(databasePath); errStopped != nil {
+			return true, errStopped
+		}
+		generatePassword := dependencies.generatePassword
+		if generatePassword == nil {
+			generatePassword = func() (string, error) { return carpoolservice.NewTemporaryPassword(nil) }
+		}
+		password, errPassword := generatePassword()
+		if errPassword != nil {
+			return true, fmt.Errorf("carpool bootstrap: generate random password: %w", errPassword)
+		}
+		user, errBootstrap := bootstrapCarpoolAdmin(ctx, cfg, databasePath, command.randomBootstrapAdmin, password, dependencies.passwordHasher)
+		if errors.Is(errBootstrap, domain.ErrAlreadyBootstrapped) {
+			if _, errWrite := fmt.Fprintln(dependencies.output, "Carpool administrator already exists; bootstrap skipped."); errWrite != nil {
+				return true, fmt.Errorf("carpool bootstrap: write skipped confirmation: %w", errWrite)
+			}
+			return true, nil
+		}
+		if errBootstrap != nil {
+			return true, errBootstrap
+		}
+		if _, errWrite := fmt.Fprintf(dependencies.output, "Carpool administrator %q created.\nTemporary password: %s\n", user.Username, password); errWrite != nil {
+			return true, fmt.Errorf("carpool bootstrap: write credentials: %w", errWrite)
+		}
 	case command.bootstrapRequested():
 		if _, errUsername := carpoolservice.NormalizeUsername(command.bootstrapAdmin); errUsername != nil {
 			return true, errUsername

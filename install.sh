@@ -184,5 +184,10 @@ for container_name in cli-proxy-api cpa-carpool; do
   fi
 done
 
+printf '正在初始化默认管理员账号...\n'
+docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" stop cli-proxy-api >/dev/null 2>&1 || true
+docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" run --rm --no-deps cli-proxy-api \
+  ./CLIProxyAPI --config /CLIProxyAPI/config.yaml --carpool-bootstrap-random-admin admin
+
 docker compose --project-directory "$INSTALL_DIR" -f "$INSTALL_DIR/docker-compose.yml" -f "$INSTALL_DIR/docker-compose.cpa.yml" up -d --remove-orphans --pull never
 printf '\n安装完成。\n配置文件：%s/config.yaml\n查看日志：cd %q && docker compose -f docker-compose.yml -f docker-compose.cpa.yml logs -f\n' "$INSTALL_DIR" "$INSTALL_DIR"

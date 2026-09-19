@@ -91,6 +91,7 @@ func main() {
 	var standalone bool
 	var localModel bool
 	var carpoolBootstrapAdmin carpoolStringFlag
+	var carpoolBootstrapRandomAdmin carpoolStringFlag
 	var carpoolBackupPath carpoolStringFlag
 	var carpoolRestorePath carpoolStringFlag
 
@@ -113,6 +114,7 @@ func main() {
 	flag.BoolVar(&standalone, "standalone", false, "In TUI mode, start an embedded local server")
 	flag.BoolVar(&localModel, "local-model", false, "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching")
 	flag.Var(&carpoolBootstrapAdmin, "carpool-bootstrap-admin", "Create the first carpool administrator (password is read from a TTY)")
+	flag.Var(&carpoolBootstrapRandomAdmin, "carpool-bootstrap-random-admin", "Create the first carpool administrator with a generated password (idempotent)")
 	flag.Var(&carpoolBackupPath, "carpool-backup", "Back up the stopped carpool SQLite database to this file")
 	flag.Var(&carpoolRestorePath, "carpool-restore", "Restore the stopped carpool SQLite database from this backup file")
 
@@ -544,12 +546,14 @@ func main() {
 		cfg = &config.Config{}
 	}
 	carpoolCommand := carpoolCommandOptions{
-		bootstrapAdmin: carpoolBootstrapAdmin.value,
-		backupPath:     carpoolBackupPath.value,
-		restorePath:    carpoolRestorePath.value,
-		bootstrapSet:   carpoolBootstrapAdmin.set,
-		backupSet:      carpoolBackupPath.set,
-		restoreSet:     carpoolRestorePath.set,
+		bootstrapAdmin:       carpoolBootstrapAdmin.value,
+		randomBootstrapAdmin: carpoolBootstrapRandomAdmin.value,
+		backupPath:           carpoolBackupPath.value,
+		restorePath:          carpoolRestorePath.value,
+		bootstrapSet:         carpoolBootstrapAdmin.set,
+		randomBootstrapSet:   carpoolBootstrapRandomAdmin.set,
+		backupSet:            carpoolBackupPath.set,
+		restoreSet:           carpoolRestorePath.set,
 	}
 	legacyCommandMode := vertexImport != "" || antigravityLogin || codexLogin || codexDeviceLogin || claudeLogin || kimiLogin || xaiLogin
 	if carpoolCommand.requested() && legacyCommandMode {

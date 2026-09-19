@@ -132,6 +132,7 @@ curl -fsSL https://raw.githubusercontent.com/qlqqs/CLIProxyAPI/main/install.sh |
 ```
 
 脚本会自动下载本项目源码、构建本地镜像 `cpa-carpool:local` 并启动服务。默认安装到 `/opt/cpa-carpool`，配置文件位于 `/opt/cpa-carpool/config.yaml`。
+首次安装时会自动创建管理员账号 `admin`，并在终端中显示一次随机密码。请立即保存密码并在登录后修改；后续重复执行安装脚本不会重置已有管理员密码。
 
 也可以先克隆源码再部署：
 
