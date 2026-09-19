@@ -48,7 +48,7 @@ func (f *fakeCodexOAuthService) CreateTokenStorage(bundle *codex.CodexAuthBundle
 
 func TestRequestCodexTokenCompletionKeepsConcurrentSessionPending(t *testing.T) {
 	originalNewCodexOAuthService := newCodexOAuthService
-	newCodexOAuthService = func(cfg *config.Config) codexOAuthService {
+	newCodexOAuthService = func(cfg *config.Config, proxyURL string) codexOAuthService {
 		return &fakeCodexOAuthService{}
 	}
 	defer func() {
@@ -108,4 +108,42 @@ func waitForOAuthSessionDone(t *testing.T, state string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for codex session %s to complete", state)
+}
+
+func TestRequestCodexTokenUsesProxyOverride(t *testing.T) {
+	originalNewCodexOAuthService := newCodexOAuthService
+	capturedProxyURL := ""
+	newCodexOAuthService = func(_ *config.Config, proxyURL string) codexOAuthService {
+		capturedProxyURL = proxyURL
+		return &fakeCodexOAuthService{}
+	}
+	defer func() { newCodexOAuthService = originalNewCodexOAuthService }()
+
+	authDir := filepath.Join(t.TempDir(), "auths")
+	handler := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	router := gin.New()
+	router.GET("/codex-auth-url", handler.RequestCodexToken)
+
+	req := httptest.NewRequest(http.MethodGet, "/codex-auth-url?proxy_url=socks5%3A%2F%2Fproxy.example%3A1080", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if capturedProxyURL != "socks5://proxy.example:1080" {
+		t.Fatalf("proxy URL = %q", capturedProxyURL)
+	}
+	var payload struct {
+		State string `json:"state"`
+	}
+	if errDecode := json.Unmarshal(response.Body.Bytes(), &payload); errDecode != nil || payload.State == "" {
+		t.Fatalf("invalid response: %s", response.Body.String())
+	}
+	CompleteOAuthSession(payload.State)
+
+	invalid := httptest.NewRecorder()
+	router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/codex-auth-url?proxy_url=ftp%3A%2F%2Fproxy.example", nil))
+	if invalid.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid proxy status = %d, body=%s", invalid.Code, invalid.Body.String())
+	}
 }

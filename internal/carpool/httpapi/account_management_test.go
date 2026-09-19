@@ -71,6 +71,7 @@ func TestAccountManagement(t *testing.T) {
 		{"unicode spaces", "%E4%B8%AD%E6%96%87%20account.json", credential, 200},
 		{"windows reserved", "CON.json", credential, 422},
 		{"platform unsafe", "bad%3Aname.json", credential, 422},
+		{"invalid proxy", "proxy-invalid.json&proxy_url=ftp%3A%2F%2Fproxy.example", credential, 422},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertHTTPStatus(t, request("POST", "/auth-files?name="+tc.path, tc.body, "application/json", true), tc.want)
@@ -149,10 +150,17 @@ func TestAccountManagement(t *testing.T) {
 	if _, errWrite := part.Write([]byte(credential)); errWrite != nil {
 		t.Fatal(errWrite)
 	}
+	if errField := writer.WriteField("proxy_url", "socks5://proxy.example:1080"); errField != nil {
+		t.Fatal(errField)
+	}
 	if errClose := writer.Close(); errClose != nil {
 		t.Fatal(errClose)
 	}
 	assertHTTPStatus(t, request("POST", "/auth-files", multipartBody.String(), writer.FormDataContentType(), true), 200)
+	multipartAuth, okMultipart := manager.GetByID("multipart.json")
+	if !okMultipart || multipartAuth.ProxyURL != "socks5://proxy.example:1080" {
+		t.Fatalf("multipart proxy URL = %q, found=%t", multipartAuth.ProxyURL, okMultipart)
+	}
 	for _, route := range []struct{ method, path, body string }{{"GET", "/auth-files", ""}, {"POST", "/auth-files?name=x.json", credential}, {"PATCH", "/auth-files/status", `{"name":"good.json","disabled":false}`}, {"POST", "/codex-auth-url", ""}, {"GET", "/get-auth-status?state=foreign", ""}, {"POST", "/oauth-callback", `{"state":"foreign","code":"secret"}`}} {
 		if route.method != "GET" {
 			assertHTTPStatus(t, request(route.method, route.path, route.body, "application/json", false), 403)
@@ -197,6 +205,7 @@ func TestAccountManagement(t *testing.T) {
 		}
 		assertHTTPStatus(t, request("POST", "/auth-files", body.String(), writer.FormDataContentType(), true), tc.want)
 	}
+	assertHTTPStatus(t, request("POST", "/codex-auth-url", `{"proxy_url":"ftp://proxy.example"}`, "application/json", true), 422)
 	// The real original start handler creates a session-bound manual OAuth URL.
 	start := request("POST", "/codex-auth-url", "{}", "application/json", true)
 	assertHTTPStatus(t, start, 200)

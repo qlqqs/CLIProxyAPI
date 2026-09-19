@@ -1593,6 +1593,16 @@ function accountImportOutcome(result, originalName) {
   return { names, failures };
 }
 
+function accountProxyURL(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    if (!["http:", "https:", "socks5:", "socks5h:"].includes(url.protocol) || !url.hostname) throw new Error();
+    return trimmed;
+  } catch (_) { throw new Error("代理地址格式无效，请使用 http://、https://、socks5:// 或 socks5h://"); }
+}
+
 function safeOAuthURL(value) {
   try {
     const url = new URL(value);
@@ -1701,7 +1711,7 @@ async function renderAdminAccounts(content) {
 }
 
 function openAccountImport(onSaved, existingNames = []) {
-  const dialog = accountDialog("导入 OpenAI / Codex 账号", `<p class="muted">支持原版 Codex OAuth JSON 和 sub2api-data v1 导出文件（仅 OpenAI OAuth）。sub2api 中的多个账号将分别导入；不导入密码、TOTP、恢复信息或代理配置。API Key 请使用原版管理配置。每个文件单独上传并显示结果；同名文件不会覆盖已有账号，请先重命名文件再导入。每个文件须小于 1 MiB（含上传封装）。</p><form data-import-form><div class="field"><label for="account-files">JSON 文件</label><input id="account-files" name="files" type="file" accept=".json,application/json" multiple required></div><div class="form-actions"><button class="button" type="submit">开始导入</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form><ul class="account-import-results" aria-live="polite"></ul>`);
+  const dialog = accountDialog("导入 OpenAI / Codex 账号", `<p class="muted">支持原版 Codex OAuth JSON 和 sub2api-data v1 导出文件（仅 OpenAI OAuth）。sub2api 中的多个账号将分别导入；不会读取导出文件中的密码、TOTP、恢复信息或代理配置。填写代理后，导入账号的刷新及后续请求都会使用该代理。API Key 请使用原版管理配置。每个文件单独上传并显示结果；同名文件不会覆盖已有账号，请先重命名文件再导入。每个文件须小于 1 MiB（含上传封装）。</p><form data-import-form><div class="field"><label for="account-import-proxy">代理地址（可选）</label><input id="account-import-proxy" name="proxy_url" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"><p class="muted">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H，可包含代理用户名和密码。</p></div><div class="field"><label for="account-files">JSON 文件</label><input id="account-files" name="files" type="file" accept=".json,application/json" multiple required></div><div class="form-actions"><button class="button" type="submit">开始导入</button><button class="button secondary" type="button" data-dialog-close>关闭</button></div></form><ul class="account-import-results" aria-live="polite"></ul>`);
   const controller = new AbortController();
   dialog.addEventListener("account-cleanup", () => controller.abort(), { once: true });
   dialog.querySelector("form").addEventListener("submit", async event => {
@@ -1709,10 +1719,14 @@ function openAccountImport(onSaved, existingNames = []) {
     const form = event.currentTarget;
     const selected = Array.from(form.elements.files.files);
     if (!selected.length) return;
+    let proxyURL;
+    try { proxyURL = accountProxyURL(form.elements.proxy_url.value); }
+    catch (error) { toast(error.message); form.elements.proxy_url.focus(); return; }
     const results = dialog.querySelector("ul");
     results.replaceChildren();
     form.querySelector("button[type=submit]").disabled = true;
     form.elements.files.disabled = true;
+    form.elements.proxy_url.disabled = true;
     let saved = false;
     for (const file of selected) {
       if (controller.signal.aborted) break;
@@ -1731,6 +1745,7 @@ function openAccountImport(onSaved, existingNames = []) {
         if (controller.signal.aborted) break;
         const body = new FormData();
         body.append("file", file, file.name);
+        body.append("proxy_url", proxyURL);
         const result = await request("/admin/auth-files", { method: "POST", body, signal: controller.signal });
         const outcome = accountImportOutcome(result, file.name);
         row.textContent = outcome.failures.length
@@ -1771,13 +1786,14 @@ function openAccountImport(onSaved, existingNames = []) {
     if (dialog.isConnected) {
       form.elements.files.value = "";
       form.elements.files.disabled = false;
+      form.elements.proxy_url.disabled = false;
       form.querySelector("button[type=submit]").disabled = false;
     }
   });
 }
 
 function openAccountOAuth(onSaved) {
-  const dialog = accountDialog("添加 OpenAI / Codex 账号", `<p class="muted">在 OpenAI 授权页面完成登录后，必须复制地址栏中的完整 localhost 回调 URL 并在下方提交。即使浏览器显示无法连接，也请复制完整地址。关闭此窗口将停止查询。</p><div data-oauth-status role="status" aria-live="polite"></div><div data-oauth-link></div><form data-oauth-callback hidden><div class="field"><label for="oauth-callback-url">手动提交回调 URL</label><input id="oauth-callback-url" name="redirect_url" type="url" autocomplete="off" spellcheck="false" required placeholder="粘贴授权后浏览器地址栏中的完整 URL"></div><p class="muted">请粘贴完整 localhost 地址（包含 code 和 state 参数）。回调提交成功不代表登录完成，请等待授权成功提示。不要将回调链接分享给他人。</p><button class="button secondary" type="submit">提交回调</button></form><div class="form-actions"><button class="button" data-oauth-start>开始授权</button><button class="button secondary" data-dialog-close>取消</button></div>`);
+  const dialog = accountDialog("添加 OpenAI / Codex 账号", `<p class="muted">在 OpenAI 授权页面完成登录后，必须复制地址栏中的完整 localhost 回调 URL 并在下方提交。即使浏览器显示无法连接，也请复制完整地址。关闭此窗口将停止查询。</p><div class="field"><label for="account-oauth-proxy">代理地址（可选）</label><input id="account-oauth-proxy" data-oauth-proxy type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"><p class="muted">支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。服务端换取、刷新令牌及该账号后续请求都会使用此代理；浏览器打开授权页时仍使用浏览器自身网络。</p></div><div data-oauth-status role="status" aria-live="polite"></div><div data-oauth-link></div><form data-oauth-callback hidden><div class="field"><label for="oauth-callback-url">手动提交回调 URL</label><input id="oauth-callback-url" name="redirect_url" type="url" autocomplete="off" spellcheck="false" required placeholder="粘贴授权后浏览器地址栏中的完整 URL"></div><p class="muted">请粘贴完整 localhost 地址（包含 code 和 state 参数）。回调提交成功不代表登录完成，请等待授权成功提示。不要将回调链接分享给他人。</p><button class="button secondary" type="submit">提交回调</button></form><div class="form-actions"><button class="button" data-oauth-start>开始授权</button><button class="button secondary" data-dialog-close>取消</button></div>`);
   let controller = null;
   let timer = 0;
   let generation = 0;
@@ -1786,12 +1802,17 @@ function openAccountOAuth(onSaved) {
   const start = dialog.querySelector("[data-oauth-start]");
   const callback = dialog.querySelector("form");
   const link = dialog.querySelector("[data-oauth-link]");
-  const stop = () => { generation++; window.clearTimeout(timer); controller?.abort(); oauthState = ""; callback.reset(); };
+  const proxyInput = dialog.querySelector("[data-oauth-proxy]");
+  const stop = () => { generation++; window.clearTimeout(timer); controller?.abort(); oauthState = ""; callback.reset(); proxyInput.disabled = false; };
   dialog.addEventListener("account-cleanup", stop, { once: true });
   start.addEventListener("click", async () => {
+    let proxyURL;
+    try { proxyURL = accountProxyURL(proxyInput.value); }
+    catch (error) { status.textContent = error.message; proxyInput.focus(); return; }
     stop();
     const version = generation;
     controller = new AbortController();
+    proxyInput.disabled = true;
     const active = () => version === generation && dialog.isConnected && dialog.open && !controller.signal.aborted;
     start.disabled = true;
     start.textContent = "重新授权";
@@ -1828,7 +1849,7 @@ function openAccountOAuth(onSaved) {
       } catch (error) { fail(error.message); }
     };
     try {
-      const result = await request("/admin/codex-auth-url", { method: "POST", signal: controller.signal });
+      const result = await request("/admin/codex-auth-url", { method: "POST", body: JSON.stringify({ proxy_url: proxyURL }), signal: controller.signal });
       if (!active()) return;
       const url = safeOAuthURL(result?.url);
       if (result?.status !== "ok" || !url || typeof result.state !== "string" || !result.state) throw new Error("授权链接无效，请重试");

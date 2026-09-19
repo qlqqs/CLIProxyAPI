@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	management "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 )
 
 const accountBodyLimit = 1 << 20
@@ -110,6 +112,28 @@ func accountFailure(c *gin.Context, status int) {
 	}
 	writeAPIError(c, status, "account_operation_failed", "账号操作失败")
 }
+func accountProxyURL(c *gin.Context, raw string) (string, bool) {
+	setting, errParse := proxyutil.Parse(raw)
+	if errParse != nil || (setting.Mode != proxyutil.ModeInherit && setting.Mode != proxyutil.ModeProxy) {
+		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_proxy_url", "代理地址必须使用 http、https、socks5 或 socks5h 协议")
+		return "", false
+	}
+	return setting.Raw, true
+}
+
+func applyAccountProxy(body []byte, proxyURL string) ([]byte, error) {
+	if proxyURL == "" {
+		return body, nil
+	}
+	var metadata map[string]json.RawMessage
+	if errUnmarshal := json.Unmarshal(body, &metadata); errUnmarshal != nil || metadata == nil {
+		return nil, fmt.Errorf("invalid account metadata")
+	}
+	encodedProxy, _ := json.Marshal(proxyURL)
+	metadata["proxy_url"] = encodedProxy
+	return json.Marshal(metadata)
+}
+
 func (a *API) accountEntries(c *gin.Context) ([]map[string]json.RawMessage, bool) {
 	status, result := invokeAccountHandler(c, a.accounts.handler.ListAuthFiles, "GET", nil, nil)
 	if status != 200 {
@@ -207,6 +231,7 @@ func (a *API) importAccountFile(c *gin.Context) {
 		return
 	}
 	name := c.Query("name")
+	proxyURL := c.Query("proxy_url")
 	contentType, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil {
 		accountFailure(c, 415)
@@ -214,28 +239,62 @@ func (a *API) importAccountFile(c *gin.Context) {
 	}
 	if contentType == "multipart/form-data" {
 		reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
-		part, errPart := reader.NextPart()
-		if errPart != nil {
-			accountFailure(c, 422)
-			return
+		fileSeen := false
+		proxySeen := false
+		for {
+			part, errPart := reader.NextPart()
+			if errPart == io.EOF {
+				break
+			}
+			if errPart != nil {
+				accountFailure(c, 422)
+				return
+			}
+			switch part.FormName() {
+			case "file", "files":
+				if fileSeen {
+					accountFailure(c, 422)
+					return
+				}
+				_, disposition, errDisposition := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+				if errDisposition != nil {
+					accountFailure(c, 422)
+					return
+				}
+				name = disposition["filename"]
+				body, err = io.ReadAll(part)
+				if err != nil {
+					accountFailure(c, 422)
+					return
+				}
+				fileSeen = true
+			case "proxy_url":
+				if proxySeen {
+					accountFailure(c, 422)
+					return
+				}
+				proxyBytes, errRead := io.ReadAll(io.LimitReader(part, 2049))
+				if errRead != nil || len(proxyBytes) > 2048 {
+					accountFailure(c, 422)
+					return
+				}
+				proxyURL = string(proxyBytes)
+				proxySeen = true
+			default:
+				accountFailure(c, 422)
+				return
+			}
 		}
-		_, disposition, errDisposition := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
-		if errDisposition != nil || (part.FormName() != "file" && part.FormName() != "files") {
-			accountFailure(c, 422)
-			return
-		}
-		name = disposition["filename"]
-		body, err = io.ReadAll(part)
-		if err != nil {
-			accountFailure(c, 422)
-			return
-		}
-		if _, errNext := reader.NextPart(); errNext != io.EOF {
+		if !fileSeen {
 			accountFailure(c, 422)
 			return
 		}
 	} else if contentType != "application/json" {
 		accountFailure(c, 415)
+		return
+	}
+	proxyURL, ok = accountProxyURL(c, proxyURL)
+	if !ok {
 		return
 	}
 	var metadata map[string]json.RawMessage
@@ -244,6 +303,15 @@ func (a *API) importAccountFile(c *gin.Context) {
 		if errNormalize != nil {
 			accountFailure(c, 422)
 			return
+		}
+		if proxyURL != "" {
+			for i := range files {
+				files[i].body, err = applyAccountProxy(files[i].body, proxyURL)
+				if err != nil {
+					accountFailure(c, 422)
+					return
+				}
+			}
 		}
 		a.importNormalizedAccounts(c, files)
 		return
@@ -255,6 +323,11 @@ func (a *API) importAccountFile(c *gin.Context) {
 	// Require usable credentials, not arbitrary JSON carrying a provider label.
 	if accountString(metadata, "type") != "codex" || strings.TrimSpace(accountString(metadata, "access_token")) == "" {
 		writeAPIError(c, 422, "unsupported_credential_shape", "JSON 导入仅支持含 access_token 的 Codex 授权文件；API Key 请使用原版管理配置")
+		return
+	}
+	body, err = applyAccountProxy(body, proxyURL)
+	if err != nil {
+		accountFailure(c, 422)
 		return
 	}
 	if !a.accountNameAllowed(c, name, "", false) {
@@ -339,7 +412,19 @@ func (a *API) accountStatus(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "disabled": *request.Disabled})
 }
 func (a *API) startAccountOAuth(c *gin.Context) {
-	if _, ok := readAccountBody(c); !ok {
+	body, ok := readAccountBody(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		ProxyURL string `json:"proxy_url"`
+	}
+	if len(strings.TrimSpace(string(body))) > 0 && json.Unmarshal(body, &request) != nil {
+		accountFailure(c, 422)
+		return
+	}
+	proxyURL, ok := accountProxyURL(c, request.ProxyURL)
+	if !ok {
 		return
 	}
 	identity, _ := currentIdentity(c)
@@ -358,7 +443,11 @@ func (a *API) startAccountOAuth(c *gin.Context) {
 		return
 	}
 	// Manual callback submission avoids opening a shared loopback forwarder.
-	status, result := invokeAccountHandler(c, a.accounts.handler.RequestCodexToken, "GET", nil, nil)
+	query := url.Values{}
+	if proxyURL != "" {
+		query.Set("proxy_url", proxyURL)
+	}
+	status, result := invokeAccountHandler(c, a.accounts.handler.RequestCodexToken, "GET", query, nil)
 	if status != 200 {
 		accountFailure(c, status)
 		return

@@ -42,6 +42,21 @@ test("original string errors and structured carpool errors are preserved", async
   }
 });
 
+test("account proxy accepts HTTP and SOCKS URLs and rejects unsupported schemes", () => {
+  const c = harness();
+  for (const value of ["http://127.0.0.1:7890", "https://proxy.example:8443", "socks5://user:pass@proxy.example:1080", "socks5h://proxy.example:1080"]) assert.equal(c.accountProxyURL(value), value);
+  assert.equal(c.accountProxyURL("  "), "");
+  for (const value of ["ftp://proxy.example", "proxy.example:8080", "http://", "javascript:alert(1)"]) assert.throws(() => c.accountProxyURL(value));
+});
+
+test("import and OAuth forms submit the selected proxy", () => {
+  const importSection = source.slice(source.indexOf("function openAccountImport"), source.indexOf("function openAccountOAuth"));
+  assert.match(importSection, /body\.append\("proxy_url", proxyURL\)/);
+  const oauthSection = source.slice(source.indexOf("function openAccountOAuth"), source.indexOf("function renderPassword"));
+  assert.match(oauthSection, /JSON\.stringify\(\{ proxy_url: proxyURL \}\)/);
+  assert.match(oauthSection, /浏览器自身网络/);
+});
+
 test("OAuth authorization links reject unsafe schemes, foreign hosts and credentials", () => {
   const c = harness();
   const valid = "https://auth.openai.com/oauth/authorize?state=example";

@@ -24,6 +24,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -215,8 +216,14 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 		return
 	}
 
+	proxyURL := strings.TrimSpace(c.Query("proxy_url"))
+	if _, errProxy := proxyutil.Parse(proxyURL); errProxy != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid proxy URL"})
+		return
+	}
+
 	// Initialize Codex auth service
-	openaiAuth := newCodexOAuthService(h.cfg)
+	openaiAuth := newCodexOAuthService(h.cfg, proxyURL)
 
 	// Generate authorization URL
 	authURL, err := openaiAuth.GenerateAuthURL(state, pkceCodes)
@@ -311,15 +318,19 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 		// Create token storage and persist
 		tokenStorage := openaiAuth.CreateTokenStorage(bundle)
 		fileName := codex.CredentialFileName(tokenStorage.Email, planType, hashAccountID, true)
+		metadata := map[string]any{
+			"email":      tokenStorage.Email,
+			"account_id": tokenStorage.AccountID,
+		}
+		if proxyURL != "" {
+			metadata["proxy_url"] = proxyURL
+		}
 		record := &coreauth.Auth{
 			ID:       fileName,
 			Provider: "codex",
 			FileName: fileName,
 			Storage:  tokenStorage,
-			Metadata: map[string]any{
-				"email":      tokenStorage.Email,
-				"account_id": tokenStorage.AccountID,
-			},
+			Metadata: metadata,
 		}
 		if errGuard := guardOAuthSessionPendingForSave(state, "codex"); errGuard != nil {
 			return
