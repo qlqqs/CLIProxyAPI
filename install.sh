@@ -23,6 +23,14 @@ USAGE
 
 INSTALL_DIR="$DEFAULT_DIR"
 REF="main"
+DOWNLOAD_ARCHIVE=""
+
+cleanup() {
+  if [[ -n "$DOWNLOAD_ARCHIVE" && -f "$DOWNLOAD_ARCHIVE" ]]; then
+    rm -f "$DOWNLOAD_ARCHIVE"
+  fi
+}
+trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,8 +95,8 @@ prepare_source() {
 
   command -v tar >/dev/null 2>&1 || { echo "未找到 tar，无法下载源码。" >&2; exit 1; }
   local archive
-  archive=$(mktemp)
-  trap 'rm -f "$archive"' EXIT
+  DOWNLOAD_ARCHIVE=$(mktemp)
+  archive="$DOWNLOAD_ARCHIVE"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "${SOURCE_REPOSITORY}/archive/${REF}.tar.gz" -o "$archive"
   elif command -v wget >/dev/null 2>&1; then
@@ -99,6 +107,8 @@ prepare_source() {
   fi
   mkdir -p "$SOURCE_DIR"
   tar -xzf "$archive" --strip-components=1 -C "$SOURCE_DIR"
+  rm -f "$archive"
+  DOWNLOAD_ARCHIVE=""
   [[ -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/go.mod" ]] || {
     echo "下载的源码不完整，无法构建。" >&2
     exit 1
@@ -137,6 +147,17 @@ fi
 printf '安装目录：%s\n源码目录：%s\n' "$INSTALL_DIR" "$SOURCE_DIR"
 printf '正在编译本地镜像并启动服务...\n'
 docker compose --project-directory "$INSTALL_DIR" build
+
+# Replace a container left by an older deployment that used the same fixed name.
+existing_container=$(docker ps -aq --filter 'name=^/cli-proxy-api$')
+container_workdir=""
+if [[ -n "$existing_container" ]]; then
+  container_workdir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$existing_container" 2>/dev/null || true)
+fi
+if [[ -n "$existing_container" && "$container_workdir" != "$INSTALL_DIR" ]]; then
+  printf '检测到旧的 cli-proxy-api 容器，正在替换...\n'
+  docker rm -f "$existing_container" >/dev/null
+fi
 
 docker compose --project-directory "$INSTALL_DIR" up -d --remove-orphans --pull never
 printf '\n安装完成。\n配置文件：%s/config.yaml\n查看日志：cd %q && docker compose logs -f\n' "$INSTALL_DIR" "$INSTALL_DIR"

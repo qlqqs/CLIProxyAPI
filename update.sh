@@ -37,5 +37,15 @@ BUILD_CONTEXT=$(awk -F= '$1 == "CLI_PROXY_BUILD_CONTEXT" { print substr($0, inde
 
 printf '源码目录：%s\n正在重新编译并更新服务...\n' "$BUILD_CONTEXT"
 docker compose --project-directory "$INSTALL_DIR" build
+
+existing_container=$(docker ps -aq --filter 'name=^/cli-proxy-api$')
+container_workdir=""
+if [[ -n "$existing_container" ]]; then
+  container_workdir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$existing_container" 2>/dev/null || true)
+fi
+if [[ -n "$existing_container" && "$container_workdir" != "$INSTALL_DIR" ]]; then
+  docker rm -f "$existing_container" >/dev/null
+fi
+
 docker compose --project-directory "$INSTALL_DIR" up -d --remove-orphans --pull never
 printf '更新完成。\n'
