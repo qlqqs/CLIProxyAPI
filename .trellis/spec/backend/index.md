@@ -47,6 +47,7 @@ Before writing or reviewing backend code:
 | [Database Guidelines](./database-guidelines.md) | Store interfaces, SQL/file persistence, schema, and transactions | Complete |
 | [Error Handling](./error-handling.md) | Error types, propagation, classification, and API responses | Complete |
 | [Quality Guidelines](./quality-guidelines.md) | Forbidden/required patterns, testing, and review checks | Complete |
+| [隔离实机功能测试规范](./live-functional-testing.md) | Loopback 隔离、协议校验、并发取消、证据脱敏与清理合同 | 完成 |
 | [Logging Guidelines](./logging-guidelines.md) | Logrus levels, structured fields, request capture, and redaction | Complete |
 | [拼车模块开发规范](./carpool-guidelines.md) | 用户、车辆、SQLite、凭据隔离、用量与前端契约 | 完成 |
 | [拼车同步记账规范](./carpool-accounting-guidelines.md) | 请求侧同步观察、失败门禁、重试与关停契约 | 完成 |
