@@ -756,12 +756,16 @@ function quotaWindowByKind(windows, kind) {
     windows.find(window => String(window?.id || "").toLowerCase().endsWith(`-${kind === "5h" ? "primary" : "secondary"}`)) || null;
 }
 
+function quotaCompactWindowMarkup(window, label) {
+  const percent = Number.isFinite(window?.used_percent) ? window.used_percent : 0;
+  return `<div class="quota-window quota-window-compact"><strong>${escapeHTML(label)}</strong><div class="quota-meter quota-meter-compact">${percentageMeter(percent, `${label} 已用比例`)}<b>${escapeHTML(formatQuotaPercent(percent))}</b></div></div>`;
+}
+
 function quotaMarkup(quota) {
   const windows = quota?.supported && Array.isArray(quota.windows) ? quota.windows : [];
-  const normalize = window => window ? {...window, used_percent: Number.isFinite(window.used_percent) ? window.used_percent : 0} : null;
-  const fiveHour = normalize(quotaWindowByKind(windows, "5h"));
-  const sevenDay = normalize(quotaWindowByKind(windows, "7d"));
-  return `<div class="quota-stack">${quota?.stale && windows.length ? `<span class="quota-stale">数据陈旧 · ${escapeHTML(formatTime(quota.observed_at))}</span>` : ""}${quotaWindowMarkup(fiveHour, "5h")}${quotaWindowMarkup(sevenDay, "7d")}</div>`;
+  const fiveHour = quotaWindowByKind(windows, "5h");
+  const sevenDay = quotaWindowByKind(windows, "7d");
+  return `<div class="quota-stack quota-stack-compact">${quotaCompactWindowMarkup(fiveHour, "5h")}${quotaCompactWindowMarkup(sevenDay, "7d")}</div>`;
 }
 
 async function renderKeys(content, reset) {

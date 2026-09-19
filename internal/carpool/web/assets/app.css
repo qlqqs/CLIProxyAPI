@@ -340,6 +340,12 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .quota-more { margin-top: 2px; }
 .quota-more summary { padding: 5px 0; color: var(--accent); font-size: 12px; cursor: pointer; }
 .quota-more > div { display: grid; gap: 8px; margin-top: 8px; }
+.quota-stack-compact { gap: 6px; min-width: 170px; }
+.quota-window-compact { display: grid; grid-template-columns: 24px minmax(110px, 160px); align-items: center; gap: 8px; min-width: 0; padding: 2px 0; border-bottom: 0; }
+.quota-window-compact > strong { font-size: 12px; font-weight: 500; }
+.quota-meter-compact { gap: 7px; }
+.quota-meter-compact .quota-meter-track { height: 5px; }
+.quota-meter-compact b { min-width: 34px; font-size: 11px; }
 
 /* User USD windows stay separate from upstream percentage quota meters. */
 .member-quota-windows { display: grid; gap: 16px; min-width: 0; }

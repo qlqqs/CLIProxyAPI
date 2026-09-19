@@ -215,12 +215,13 @@ test("account connection output uses safe classifications without dangerous fiel
 test("account quota always renders Sub2API-style 5h and 7d meters", () => {
   const c = harness();
   const missing = c.quotaMarkup(null);
-  assert.equal((missing.match(/<div class="quota-window(?: quota-window-empty)?">/g) || []).length, 2);
+  assert.equal((missing.match(/<div class="quota-window quota-window-compact">/g) || []).length, 2);
   assert.equal((missing.match(/value="0"/g) || []).length, 2);
   assert.equal((missing.match(/>0%<\/b>/g) || []).length, 2);
   assert.match(missing, /<strong>5h<\/strong>/);
   assert.match(missing, /<strong>7d<\/strong>/);
-  assert.match(missing, /quota-meter-overlay/);
+  assert.match(missing, /quota-stack-compact/);
+  assert.equal((missing.match(/quota-meter-compact/g) || []).length, 2);
   assert.doesNotMatch(missing, /暂无配额数据|被动更新|账号产生请求且上游返回配额后更新/);
 
   const observed = c.quotaMarkup({supported: true, stale: false, windows: [
@@ -228,7 +229,7 @@ test("account quota always renders Sub2API-style 5h and 7d meters", () => {
     {id: "secondary", label: "次窗口", used_percent: 64, status: "observed"},
     {id: "other-primary", label: "其他", used_percent: 88, status: "observed"},
   ]});
-  assert.equal((observed.match(/<div class="quota-window(?: quota-window-empty)?">/g) || []).length, 2);
+  assert.equal((observed.match(/<div class="quota-window quota-window-compact">/g) || []).length, 2);
   assert.match(observed, /value="37"/);
   assert.match(observed, />37%<\/b>/);
   assert.match(observed, /value="64"/);
