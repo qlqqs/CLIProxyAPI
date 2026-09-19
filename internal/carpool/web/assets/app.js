@@ -736,22 +736,32 @@ function quotaProgress(window) {
   const percent = window.used_percent;
   const meter = percentageMeter(percent, `${window.label || window.id} 已用比例`);
   if (!meter) return "";
-  return `<div class="quota-meter">${meter}<b>${escapeHTML(formatQuotaPercent(percent))}</b></div>`;
+  return `<div class="quota-meter quota-meter-overlay">${meter}<b>${escapeHTML(formatQuotaPercent(percent))}</b></div>`;
 }
 
-function quotaWindowMarkup(window) {
+function quotaWindowMarkup(window, label) {
+  if (!window) {
+    return `<div class="quota-window quota-window-empty"><div class="quota-window-head"><strong>${escapeHTML(label)}</strong></div><div class="quota-meter quota-meter-overlay">${percentageMeter(0, `${label} 0%`)}<b>0%</b></div></div>`;
+  }
+  const displayLabel = label || window.label || window.id || "配额窗口";
   const status = window.status && window.status !== "observed" ? statusText(window.status) : "已观测";
-  return `<div class="quota-window"><div class="quota-window-head"><strong>${escapeHTML(window.label || window.id || "配额窗口")}</strong><span>${escapeHTML(status)}</span></div>${quotaProgress(window) || `<div class="quota-status-only">${escapeHTML(status)}</div>`}<small>${window.reset_at ? `重置：${escapeHTML(formatTime(window.reset_at))}` : window.window_minutes ? `窗口：${formatNumber(window.window_minutes)} 分钟` : "重置时间：上游未提供"}</small></div>`;
+  return `<div class="quota-window"><div class="quota-window-head"><strong>${escapeHTML(displayLabel)}</strong><span>${escapeHTML(status)}</span></div>${quotaProgress({...window, label: displayLabel}) || `<div class="quota-status-only">${escapeHTML(status)}</div>`}<small>${window.reset_at ? `重置：${escapeHTML(formatTime(window.reset_at))}` : window.window_minutes ? `窗口：${formatNumber(window.window_minutes)} 分钟` : "重置时间：上游未提供"}</small></div>`;
+}
+
+function quotaWindowByKind(windows, kind) {
+  const exactIDs = kind === "5h" ? ["5h", "primary"] : ["7d", "secondary"];
+  const minutes = kind === "5h" ? 300 : 10080;
+  return windows.find(window => exactIDs.includes(String(window?.id || "").toLowerCase())) ||
+    windows.find(window => Number(window?.window_minutes) === minutes) ||
+    windows.find(window => String(window?.id || "").toLowerCase().endsWith(`-${kind === "5h" ? "primary" : "secondary"}`)) || null;
 }
 
 function quotaMarkup(quota) {
-  if (!quota || !quota.supported || !Array.isArray(quota.windows) || quota.windows.length === 0) {
-    return `<div class="quota-stack"><div class="quota-window quota-window-empty"><div class="quota-meter quota-meter-empty">${percentageMeter(0, "配额 0%")}<b>0%</b></div></div></div>`;
-  }
-  const windows = quota.windows;
-  const visible = windows.slice(0, 2).map(quotaWindowMarkup).join("");
-  const rest = windows.length > 2 ? `<details class="quota-more"><summary>其余 ${formatNumber(windows.length - 2)} 个窗口</summary><div>${windows.slice(2).map(quotaWindowMarkup).join("")}</div></details>` : "";
-  return `<div class="quota-stack">${quota.stale ? `<span class="quota-stale">数据陈旧 · ${escapeHTML(formatTime(quota.observed_at))}</span>` : ""}${visible}${rest}</div>`;
+  const windows = quota?.supported && Array.isArray(quota.windows) ? quota.windows : [];
+  const normalize = window => window ? {...window, used_percent: Number.isFinite(window.used_percent) ? window.used_percent : 0} : null;
+  const fiveHour = normalize(quotaWindowByKind(windows, "5h"));
+  const sevenDay = normalize(quotaWindowByKind(windows, "7d"));
+  return `<div class="quota-stack">${quota?.stale && windows.length ? `<span class="quota-stale">数据陈旧 · ${escapeHTML(formatTime(quota.observed_at))}</span>` : ""}${quotaWindowMarkup(fiveHour, "5h")}${quotaWindowMarkup(sevenDay, "7d")}</div>`;
 }
 
 async function renderKeys(content, reset) {

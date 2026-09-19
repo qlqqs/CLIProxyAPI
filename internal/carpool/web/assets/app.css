@@ -330,9 +330,9 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .quota-meter-track::-webkit-progress-value { border-radius: 999px; background: var(--accent); }
 .quota-meter-track::-moz-progress-bar { border-radius: 999px; background: var(--accent); }
 .quota-meter b { min-width: 42px; text-align: right; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.quota-meter-empty { position: relative; display: block; }
-.quota-meter-empty .quota-meter-track { height: 22px; }
-.quota-meter-empty b { position: absolute; inset: 0; display: grid; min-width: 0; place-items: center; text-align: center; pointer-events: none; }
+.quota-meter-overlay { position: relative; display: block; }
+.quota-meter-overlay .quota-meter-track { height: 22px; }
+.quota-meter-overlay b { position: absolute; inset: 0; display: grid; min-width: 0; place-items: center; text-align: center; pointer-events: none; }
 .quota-meter[title] { cursor: help; }
 .quota-status-only { color: var(--info); font-size: 12px; }
 .quota-missing { color: var(--muted); font-size: 13px; }
