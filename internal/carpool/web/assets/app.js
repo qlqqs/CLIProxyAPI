@@ -1,6 +1,50 @@
 const apiBase = "/carpool/api/v1";
 const pageLimit = 25;
 const maximumSelectorItems = 1000;
+const themeStorageKey = "carpool-theme";
+
+function currentTheme() {
+  if (typeof document === "undefined") return "light";
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+
+function applyTheme(theme, persist = false) {
+  if (typeof document === "undefined") return;
+  const resolved = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = resolved;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", resolved === "dark" ? "#181714" : "#f5f4ed");
+  document.querySelectorAll("[data-theme-toggle]").forEach(button => {
+    const target = resolved === "dark" ? "浅色" : "深色";
+    button.setAttribute("aria-label", `切换至${target}主题`);
+    button.setAttribute("title", `切换至${target}主题`);
+    const label = button.querySelector(".theme-toggle-label");
+    if (label) label.textContent = target;
+  });
+  if (!persist || typeof localStorage === "undefined") return;
+  try { localStorage.setItem(themeStorageKey, resolved); } catch (_) { /* Theme still applies when storage is unavailable. */ }
+}
+
+function initializeTheme() {
+  if (typeof document === "undefined") return;
+  let theme = "light";
+  if (typeof localStorage !== "undefined") {
+    try { theme = localStorage.getItem(themeStorageKey) || theme; } catch (_) { /* Use the light default. */ }
+  }
+  applyTheme(theme);
+}
+
+function themeToggleMarkup(extraClass = "") {
+  return `<button class="icon-button theme-toggle ${extraClass}" type="button" data-theme-toggle aria-label="切换主题"><svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 15.2A8 8 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/></svg><svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><span class="theme-toggle-label"></span></button>`;
+}
+
+function bindThemeToggle(root = document) {
+  root.querySelectorAll("[data-theme-toggle]").forEach(button => button.addEventListener("click", () => {
+    applyTheme(currentTheme() === "dark" ? "light" : "dark", true);
+  }));
+  applyTheme(currentTheme());
+}
+
+initializeTheme();
 
 function emptyPage() {
   return { items: [], total: 0, nextCursor: "", loaded: false };
@@ -344,7 +388,7 @@ function loginView(message = "") {
   closeAdminAccountDialogs();
   clearStatusRefresh();
   closeEntityPanels();
-  document.querySelector("#app").innerHTML = `<main class="login-shell">
+  document.querySelector("#app").innerHTML = `${themeToggleMarkup("login-theme-toggle")}<main class="login-shell">
     <section class="login-story" aria-labelledby="login-title">
       <h1 id="login-title">来不及解释了，<br>快上车！</h1>
     </section>
@@ -356,6 +400,7 @@ function loginView(message = "") {
       <button class="button" type="submit">登录</button>
     </form>
   </main>`;
+  bindThemeToggle(document.querySelector("#app"));
   document.querySelector("#login-form").addEventListener("submit", async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector("button[type=submit]");
@@ -421,12 +466,13 @@ function renderShell() {
     <div class="app-workspace">
       <header class="topbar">
         <button class="icon-button" id="nav-toggle" type="button" aria-controls="app-rail" aria-expanded="false" aria-label="展开导航"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-        <div class="topbar-actions"><span class="tag">${state.session.role === "carpool_admin" ? "管理员" : "乘客"}</span>${statusLabel(state.session.module_status || "unknown")}<span class="user-chip">${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout" type="button">退出</button></div>
+        <div class="topbar-actions">${themeToggleMarkup()}<span class="tag">${state.session.role === "carpool_admin" ? "管理员" : "乘客"}</span>${statusLabel(state.session.module_status || "unknown")}<span class="user-chip">${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout" type="button">退出</button></div>
       </header>
       <main class="main"><div class="content" id="content" data-page="${escapeHTML(state.route)}"><div class="loading" role="status">正在加载...</div></div></main>
     </div>
   </div>`;
   const shell = document.querySelector(".app-shell");
+  bindThemeToggle(shell);
   const toggle = document.querySelector("#nav-toggle");
   const setNavOpen = open => {
     shell.classList.toggle("nav-open", open);

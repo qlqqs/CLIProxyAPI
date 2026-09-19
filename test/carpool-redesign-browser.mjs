@@ -39,10 +39,21 @@ async function screenshot(page, name) {
 try {
   const admin = await newPage();
   await screenshot(admin, 'login-desktop');
+  await admin.locator('[data-theme-toggle]').click();
+  assert.equal(await admin.evaluate(() => document.documentElement.dataset.theme), 'dark');
+  assert.equal(await admin.locator('meta[name="theme-color"]').getAttribute('content'), '#181714');
+  await screenshot(admin, 'login-dark-desktop');
+  await admin.reload();
+  assert.equal(await admin.evaluate(() => document.documentElement.dataset.theme), 'dark');
   await admin.setViewportSize({ width: 390, height: 844 });
   await screenshot(admin, 'login-mobile');
   await admin.setViewportSize({ width: 1440, height: 1000 });
   await login(admin, fixture.admin);
+  assert.equal(await admin.evaluate(() => document.documentElement.dataset.theme), 'dark');
+  assert.equal(await admin.locator('.topbar [data-theme-toggle]').getAttribute('aria-label'), '切换至浅色主题');
+  await screenshot(admin, 'admin-dark-overview');
+  await admin.locator('.topbar [data-theme-toggle]').click();
+  assert.equal(await admin.evaluate(() => document.documentElement.dataset.theme), 'light');
   await admin.locator('.skip-link').focus();
   await admin.keyboard.press('Enter');
   assert.equal(await admin.locator('#content').evaluate(node => node === document.activeElement), true);
@@ -72,7 +83,7 @@ try {
       await admin.locator('dialog.entity-panel').waitFor({ state: 'detached' });
     }
   }
-  checks.push('管理端全部九入口与用户/车辆非模态详情，1440/1024/390/360px 无整页溢出');
+  checks.push('管理端明暗主题切换与持久化、全部九入口与用户/车辆非模态详情，1440/1024/390/360px 无整页溢出');
   await admin.setViewportSize({ width: 1440, height: 1000 });
   await nav(admin, '/cars');
   await admin.locator('[data-manage-car]').first().click();
@@ -110,6 +121,10 @@ try {
   await passenger.locator('#password-form button').click();
   await passenger.locator('#login-form').waitFor();
   await login(passenger, credentials);
+  await passenger.locator('.topbar [data-theme-toggle]').click();
+  assert.equal(await passenger.evaluate(() => document.documentElement.dataset.theme), 'dark');
+  await screenshot(passenger, 'passenger-dark-overview');
+  await passenger.locator('.topbar [data-theme-toggle]').click();
   for (const width of [1440, 390, 360]) {
     await passenger.setViewportSize({ width, height: width > 760 ? 1000 : 844 });
     for (const route of ['/', '/members', '/accounts', '/keys', '/password']) {
@@ -118,7 +133,7 @@ try {
       await screenshot(passenger, `passenger-${width}-${route.slice(1) || 'overview'}`);
     }
   }
-  checks.push('用户端五入口、登录、首次改密门禁、空 Key 与账号状态，桌面和双手机宽度');
+  checks.push('用户端明暗主题切换、五入口、登录、首次改密门禁、空 Key 与账号状态，桌面和双手机宽度');
   await admin.setViewportSize({ width: 1440, height: 1000 });
   await admin.route('**/carpool/api/v1/admin/pricing', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: '测试服务暂不可用', code: 'qa_unavailable' } }) }));
   await nav(admin, '/pricing');
