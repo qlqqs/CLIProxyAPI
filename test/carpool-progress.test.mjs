@@ -66,9 +66,10 @@ test("over-limit billing clamps the meter, not the real amount or accessible per
 
 const shortWindow = { kind: "5h", limit_usd: "2", used_usd: "1.25", remaining_usd: "0.75", overage_usd: "0", status: "active", period_from: "2026-09-15T00:00:00Z", reset_at: "2026-09-15T05:00:00Z", coverage_from: "2026-09-15T01:00:00Z", unknown_cost_events: 2, data_complete: false };
 
-test("short USD windows display real usage percent, amounts, reset, coverage and incomplete cost", () => {
+test("passenger short USD windows display usage details without coverage warnings", () => {
   const markup = context.memberQuotaMarkup({ quota_windows: [shortWindow] });
-  for (const text of ["5 小时", "$2", "$1.25", "$0.75", "重置：", "周期起点：", "统计覆盖起点：", "2 条费用未知", "统计覆盖不完整"]) assert.ok(markup.includes(text), text);
+  for (const text of ["5 小时", "$2", "$1.25", "$0.75", "重置：", "周期起点：", "统计覆盖起点："]) assert.ok(markup.includes(text), text);
+  assert.doesNotMatch(markup, /2 条费用未知|统计覆盖不完整/);
   assert.match(markup, /<progress [^>]*aria-valuenow="62.5"[^>]*value="62.5"/);
   assert.match(markup, /<b>62.5%<\/b>/);
   assert.doesNotMatch(markup, /style=/);
@@ -95,7 +96,7 @@ test("pending short window renders a fixed zero meter with sync details only in 
   assert.match(markup, /<b>0%<\/b>/);
   assert.match(markup, /title="周期待同步\n已确认 待同步\n重置：待同步\n统计覆盖起点：未提供\n暂不执行此项短周期限制；月额度与并发限制仍生效。"/);
   assert.doesNotMatch(markup, />周期待同步<|>已确认 待同步<|>暂不执行此|class="status pending_sync"/);
-  assert.match(markup, /2 条费用未知/);
+  assert.doesNotMatch(markup, /2 条费用未知|统计覆盖不完整/);
   assert.doesNotMatch(markup, /已确认 \$|\$0|1970/);
 });
 
@@ -114,6 +115,16 @@ test("configured short limit without a window is pending, not unlimited", () => 
   assert.match(markup, /7 天 · \$10/);
   assert.equal((markup.match(/aria-valuetext="周期待同步"/g) || []).length, 2);
   assert.equal((markup.match(/<progress /g) || []).length, 2);
+});
+
+test("passenger member usage hides amounts and coverage warnings while admin rows retain them", () => {
+  const item = { display_name: "乘客", monthly_limit_usd: "500", billing: { status: "active", limit_usd: "500", used_usd: "1", remaining_usd: "499", usage_percent: 0.2, unknown_cost_events: 1, data_complete: false }, quota_windows: [shortWindow] };
+  const passengerMarkup = context.memberTable([item]);
+  assert.doesNotMatch(passengerMarkup, /已确认 \$|剩余 \$|条费用未知|统计覆盖不完整/);
+  const adminMarkup = context.memberQuotaRow(item);
+  assert.match(adminMarkup, /已确认 \$1\.25 · 剩余 \$0\.75/);
+  assert.match(adminMarkup, /条费用未知/);
+  assert.match(adminMarkup, /统计覆盖不完整/);
 });
 
 test("member quota row keeps the monthly meter and pending short windows on one row", () => {

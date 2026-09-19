@@ -565,7 +565,7 @@ async function renderPassengerRoute(content) {
 function memberTable(items) {
   if (!items.length) return `<div class="empty">该周期暂无成员用量</div>`;
   return `<div class="table-wrap"><table><thead><tr><th>成员</th><th>个人额度 · USD</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${item.left ? `<span class="muted">月额度</span>${billingMarkup(item.billing)}` : `${memberQuotaRow(item)}<small class="policy-concurrency">用户并发：${concurrencyMarkup(item.concurrency_limit)}</small>`}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
+    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${item.left ? `<span class="muted">月额度</span>${billingMarkup(item.billing)}` : `${memberQuotaRow(item, { showAmounts: false, showCoverageWarning: false })}<small class="policy-concurrency">用户并发：${concurrencyMarkup(item.concurrency_limit)}</small>`}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
@@ -593,7 +593,7 @@ function memberQuotaWindowCard(title, statusMarkup, meter, amounts, details, war
 
 const memberShortWindowSpecs = [["5h", "5 小时", "five_hour_limit_usd"], ["7d", "7 天", "weekly_limit_usd"]];
 
-function memberShortWindow(member, windows, kind, label, field, compact) {
+function memberShortWindow(member, windows, kind, label, field, compact, showAmounts = true, showCoverageWarning = true) {
   const window = windows.find(item => item.kind === kind);
   const limit = window ? window.limit_usd : member[field];
   const status = window?.status || (limit == null ? "unlimited" : "pending_sync");
@@ -616,37 +616,39 @@ function memberShortWindow(member, windows, kind, label, field, compact) {
   const meter = pending
     ? `<div class="quota-meter" title="${escapeHTML(pendingTip)}"><progress class="quota-meter-track" role="progressbar" aria-label="${escapeHTML(`${label} ${memberQuotaStatusLabels.pending_sync}`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="${memberQuotaStatusLabels.pending_sync}" max="100" value="0">0%</progress><b>0%</b></div>`
     : usedPercent != null ? `<div class="quota-meter">${percentageMeter(usedPercent, `${label} 已用比例`)}<b>${escapeHTML(formatQuotaPercent(usedPercent))}</b></div>` : "";
-  const amounts = pending ? "" : `<span class="member-quota-amounts">已确认 ${moneyMarkup(window?.used_usd)}${limit != null ? ` · 剩余 ${moneyMarkup(window?.remaining_usd)}` : ""}${status === "overage" ? ` · 超额 ${moneyMarkup(window?.overage_usd)}` : ""}</span>`;
+  const amounts = !showAmounts || pending ? "" : `<span class="member-quota-amounts">已确认 ${moneyMarkup(window?.used_usd)}${limit != null ? ` · 剩余 ${moneyMarkup(window?.remaining_usd)}` : ""}${status === "overage" ? ` · 超额 ${moneyMarkup(window?.overage_usd)}` : ""}</span>`;
   const details = compact || pending ? "" : `<small>重置：${!window?.reset_at ? "待同步" : escapeHTML(formatTime(window.reset_at))}${window?.period_from ? ` · 周期起点：${escapeHTML(formatTime(window.period_from))}` : ""}</small><small>统计覆盖起点：${window?.coverage_from ? escapeHTML(formatTime(window.coverage_from)) : "未提供"}</small>`;
   const unknown = window?.unknown_cost_events ? `${formatNumber(window.unknown_cost_events)} 条费用未知` : "";
   const incomplete = window?.data_complete === false && !pending ? "统计覆盖不完整，金额仅为已确认小计" : "";
-  const warning = unknown || incomplete ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : "";
+  const warning = showCoverageWarning && (unknown || incomplete) ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : "";
   return memberQuotaWindowCard(`${label} · ${limit == null ? "不限额" : moneyMarkup(limit)}`, pending ? "" : memberQuotaStatusMarkup(knownStatus), meter, amounts, details, warning);
 }
 
-function memberMonthlyWindow(item, compact) {
+function memberMonthlyWindow(item, compact, showAmounts = true, showCoverageWarning = true) {
   const billing = item.billing || {};
   const limit = billing.limit_usd ?? item.monthly_limit_usd;
   const configured = billing.status && billing.status !== "not_configured" && limit != null && limit !== "";
   const knownStatus = configured && Object.hasOwn(memberQuotaStatusLabels, billing.status) ? billing.status : configured ? "unknown" : "not_configured";
   const meter = configured && Number.isFinite(billing.usage_percent) ? `<div class="quota-meter">${percentageMeter(billing.usage_percent, `${item.display_name} 本月已用`)}<b>${escapeHTML(formatQuotaPercent(billing.usage_percent))}</b></div>` : "";
-  const amounts = configured ? `<span class="member-quota-amounts">已确认 ${moneyMarkup(billing.used_usd)} · 剩余 ${moneyMarkup(billing.remaining_usd)}${billing.status === "overage" ? ` · 超额 ${moneyMarkup(billing.overage_usd)}` : ""}</span>` : `<small class="quota-policy-warning">待管理员设置额度</small>`;
+  const amounts = configured ? (showAmounts ? `<span class="member-quota-amounts">已确认 ${moneyMarkup(billing.used_usd)} · 剩余 ${moneyMarkup(billing.remaining_usd)}${billing.status === "overage" ? ` · 超额 ${moneyMarkup(billing.overage_usd)}` : ""}</span>` : "") : `<small class="quota-policy-warning">待管理员设置额度</small>`;
   const details = compact || !configured ? "" : `<small>重置：${billing.period_to ? escapeHTML(formatTime(billing.period_to)) : "待同步"}${billing.period_from ? ` · 周期起点：${escapeHTML(formatTime(billing.period_from))}` : ""}</small><small>统计覆盖起点：${billing.coverage_from ? escapeHTML(formatTime(billing.coverage_from)) : "未提供"}</small>`;
   const unknown = configured && billing.unknown_cost_events ? `${formatNumber(billing.unknown_cost_events)} 条费用未知` : "";
   const incomplete = configured && billing.data_complete === false ? "统计覆盖不完整，金额仅为已确认小计" : "";
-  const warning = unknown || incomplete ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : "";
+  const warning = showCoverageWarning && (unknown || incomplete) ? `<small class="quota-policy-warning">${[unknown, incomplete].filter(Boolean).join("；")}</small>` : "";
   return memberQuotaWindowCard(`本月 · ${limit == null ? "不限额" : moneyMarkup(limit)}`, memberQuotaStatusMarkup(knownStatus), meter, amounts, details, warning);
 }
 
 function memberQuotaMarkup(member, compact = false) {
   const windows = Array.isArray(member.quota_windows) ? member.quota_windows : [];
-  return `<div class="member-quota-windows${compact ? " compact-quota-windows" : ""}">${memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(member, windows, kind, label, field, compact)).join("")}</div>`;
+  return `<div class="member-quota-windows${compact ? " compact-quota-windows" : ""}">${memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(member, windows, kind, label, field, compact, true, false)).join("")}</div>`;
 }
 
-function memberQuotaRow(item) {
+function memberQuotaRow(item, options = {}) {
   const windows = Array.isArray(item.quota_windows) ? item.quota_windows : [];
-  const shorts = memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(item, windows, kind, label, field, true)).join("");
-  return `<div class="member-quota-row">${shorts}${memberMonthlyWindow(item, true)}</div>`;
+  const showAmounts = options.showAmounts !== false;
+  const showCoverageWarning = options.showCoverageWarning !== false;
+  const shorts = memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(item, windows, kind, label, field, true, showAmounts, showCoverageWarning)).join("");
+  return `<div class="member-quota-row">${shorts}${memberMonthlyWindow(item, true, showAmounts, showCoverageWarning)}</div>`;
 }
 
 function optionalConcurrency(value) {
