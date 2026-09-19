@@ -36,7 +36,10 @@ remote-management:
 auth-dir: "~/.cli-proxy-api"
 
 # API keys for authentication
-api-keys: []
+api-keys:
+  - "your-api-key-1"
+  - "your-api-key-2"
+  - "your-api-key-3"
 
 # Administrator-managed carpool module. It is enabled by default.
 # The SQLite file must live on persistent local storage and may only be opened by one CPA process.

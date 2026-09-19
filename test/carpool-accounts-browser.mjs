@@ -54,6 +54,30 @@ try {
   assert(!JSON.stringify(initial.data).includes('claude'));
   checks.push('管理员入口顺序和仅 OpenAI/Codex 的真实列表');
 
+  let testRow = page.locator('.account-table tbody tr').filter({ has: page.locator('[data-account-test]:not([disabled])') }).first();
+  await testRow.locator('[data-account-test]').click();
+  const testDialog = page.locator('dialog[open]').filter({ hasText: '测试账号连接' });
+  await testDialog.locator('#account-test-model').fill(fixture.model);
+  await testDialog.locator('[data-account-test-submit]').click();
+  await testDialog.locator('[data-account-test-status]').filter({ hasText: '连接成功' }).waitFor();
+  assert.match(await testDialog.locator('[data-account-test-status]').innerText(), /毫秒[\s\S]*字节/);
+  assert(!await testDialog.innerText().then(text => /access_token|refresh_token|SYNTHETIC-ACCESS/.test(text)));
+  await shot('account-test-success-desktop');
+  await closeDialog();
+
+  await page.route('**/carpool/api/v1/admin/auth-files/test', route => route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: { code: 'rate_limited', message: '账号额度或速率受限，请稍后重试' } }) }));
+  testRow = page.locator('.account-table tbody tr').filter({ has: page.locator('[data-account-test]:not([disabled])') }).first();
+  await testRow.locator('[data-account-test]').click();
+  await page.locator('dialog[open] #account-test-model').fill(fixture.model);
+  await page.locator('dialog[open] [data-account-test-submit]').click();
+  await page.locator('dialog[open] [data-account-test-status]').filter({ hasText: '账号额度或速率受限' }).waitFor();
+  assert.equal(await page.locator('dialog[open] [data-account-test-submit]').innerText(), '重试');
+  await page.unroute('**/carpool/api/v1/admin/auth-files/test');
+  await page.locator('dialog[open] [data-account-test-submit]').click();
+  await page.locator('dialog[open] [data-account-test-status]').filter({ hasText: '连接成功' }).waitFor();
+  await closeDialog();
+  checks.push('账号测试弹窗成功、限流分类和原位重试');
+
   const suffix = Date.now();
   const name = `qa-import-${suffix}.json`;
   await page.locator('[data-account-import]').click();

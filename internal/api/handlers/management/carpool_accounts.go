@@ -106,8 +106,12 @@ func (h *Handler) TestCarpoolAccountConnection(ctx context.Context, name, index,
 		Output json.RawMessage `json:"output"`
 		Error  json.RawMessage `json:"error"`
 	}
-	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) || json.Unmarshal(trimmed, &responseObject) != nil ||
-		len(responseObject.Error) != 0 || (len(responseObject.ID) == 0 && len(responseObject.Object) == 0 && len(responseObject.Output) == 0) {
+	if len(trimmed) == 0 || trimmed[0] != '{' || !json.Valid(trimmed) || json.Unmarshal(trimmed, &responseObject) != nil {
+		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusBadGateway, Code: "invalid_upstream_response"}
+	}
+	errorValue := bytes.TrimSpace(responseObject.Error)
+	if (len(errorValue) != 0 && !bytes.Equal(errorValue, []byte("null"))) ||
+		(len(responseObject.ID) == 0 && len(responseObject.Object) == 0 && len(responseObject.Output) == 0) {
 		return CarpoolAccountTestResult{}, &CarpoolAccountTestError{Status: http.StatusBadGateway, Code: "invalid_upstream_response"}
 	}
 	return CarpoolAccountTestResult{Model: model, DurationMS: duration, ResponseBytes: len(response.Payload)}, nil

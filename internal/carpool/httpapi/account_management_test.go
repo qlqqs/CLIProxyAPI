@@ -315,7 +315,7 @@ func TestAccountConnection(t *testing.T) {
 	newFixture := func(t *testing.T, executeErr error) (*gin.Engine, *accountTestExecutor, *service.SessionIdentity, func(string, string, bool) *httptest.ResponseRecorder) {
 		t.Helper()
 		manager := coreauth.NewManager(nil, nil, nil)
-		executor := &accountTestExecutor{response: coreexecutor.Response{Payload: []byte(`{"id":"resp_test","status":"completed","output":[]}`)}, err: executeErr}
+		executor := &accountTestExecutor{response: coreexecutor.Response{Payload: []byte(`{"id":"resp_test","status":"completed","output":[],"error":null}`)}, err: executeErr}
 		manager.RegisterExecutor(executor)
 		for _, auth := range []*coreauth.Auth{
 			{ID: "target-auth", FileName: "target.json", Provider: "codex", Status: coreauth.StatusActive},
