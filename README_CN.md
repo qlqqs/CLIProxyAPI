@@ -128,17 +128,17 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 本项目是二开版本，默认使用当前源码自行编译部署，不拉取官方或其他远程的 CLIProxyAPI 应用镜像。安装 Docker 和 Docker Compose v2 后，执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/qlqqs/CLIProxyAPI/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qlqqs/CLIProxyAPI/main/install.sh | sudo bash
 ```
 
-脚本会自动下载本项目源码、构建本地镜像 `cli-proxy-api:local` 并启动服务。默认安装到 `~/cli-proxy-api`，配置文件位于 `~/cli-proxy-api/config.yaml`。
+脚本会自动下载本项目源码、构建本地镜像 `cli-proxy-api:local` 并启动服务。默认安装到 `/opt/cli-proxy-api`，配置文件位于 `/opt/cli-proxy-api/config.yaml`。
 
 也可以先克隆源码再部署：
 
 ```bash
 git clone https://github.com/qlqqs/CLIProxyAPI.git
 cd CLIProxyAPI
-./install.sh
+sudo ./install.sh
 ```
 
 源码更新后，重新编译并更新容器：
@@ -146,8 +146,8 @@ cd CLIProxyAPI
 ```bash
 cd CLIProxyAPI
 git pull
-cd ~/cli-proxy-api
-./update.sh
+cd /opt/cli-proxy-api
+sudo ./update.sh
 ```
 
 脚本不会覆盖已有的 `config.yaml`、`.env`、`auths/`、`data/` 或自定义 `docker-compose.yml`。Dockerfile 构建阶段仍可能按 Docker 的基础镜像缓存策略访问基础镜像仓库，但不会拉取 CLIProxyAPI 的远程应用镜像。

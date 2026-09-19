@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-DEFAULT_DIR="${HOME}/cli-proxy-api"
+DEFAULT_DIR="/opt/cli-proxy-api"
 SOURCE_REPOSITORY="${CLIPROXY_SOURCE_REPOSITORY:-https://github.com/qlqqs/CLIProxyAPI}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
@@ -13,7 +13,7 @@ usage() {
   ./install.sh [选项]
 
 选项：
-  --dir DIR       安装目录（默认：~/cli-proxy-api）
+  --dir DIR       安装目录（默认：/opt/cli-proxy-api）
   --ref REF       远程源码引用（默认：main；仅从 curl 执行时使用）
   -h, --help      显示帮助
 
@@ -54,7 +54,10 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
-mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/auths" "$INSTALL_DIR/logs" "$INSTALL_DIR/plugins" "$INSTALL_DIR/data"
+if ! mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/auths" "$INSTALL_DIR/logs" "$INSTALL_DIR/plugins" "$INSTALL_DIR/data"; then
+  echo "无法创建安装目录 $INSTALL_DIR，请使用 sudo 运行，或通过 --dir 指定可写目录。" >&2
+  exit 1
+fi
 
 fetch_file() {
   local name=$1
