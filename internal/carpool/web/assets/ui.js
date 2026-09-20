@@ -38,6 +38,42 @@ export function iconButtonMarkup({ label, content, title = label, className = ""
   return `<button class="${escapeHTML(classNames("icon-button", className))}" type="button" data-ui="icon-button" aria-label="${escapeHTML(label)}" title="${escapeHTML(title)}"${attributesMarkup(attributes)}>${content}</button>`;
 }
 
+export function linkButtonMarkup({ label, href, tone = "primary", size = "default", className = "", attributes = {} }) {
+  if (!buttonTones.has(tone)) throw new Error(`Unsupported link button tone: ${tone}`);
+  const toneClass = tone === "primary" ? "" : tone;
+  const sizeClass = size === "compact" ? "compact" : "";
+  return `<a class="${escapeHTML(classNames("button", toneClass, sizeClass, className))}" href="${escapeHTML(href)}" data-ui="link-button"${attributesMarkup(attributes)}>${escapeHTML(label)}</a>`;
+}
+
+export function formFieldMarkup({ id, label, controlHTML, help = "", className = "" }) {
+  const helpMarkup = help ? `<small>${escapeHTML(help)}</small>` : "";
+  return `<div class="${escapeHTML(classNames("field", className))}" data-ui="field"><label for="${escapeHTML(id)}">${escapeHTML(label)}</label>${controlHTML}${helpMarkup}</div>`;
+}
+
+export function formActionsMarkup(actionsHTML, className = "") {
+  return `<div class="${escapeHTML(classNames("form-actions", className))}" data-ui="form-actions">${actionsHTML}</div>`;
+}
+
+export function sectionHeaderMarkup({ title, description = "", descriptionHTML = "", actionsHTML = "" }) {
+  const details = descriptionHTML || (description ? escapeHTML(description) : "");
+  const descriptionMarkup = details ? `<p>${details}</p>` : "";
+  return `<div class="section-header" data-ui="section-header"><div><h2>${escapeHTML(title)}</h2>${descriptionMarkup}</div>${actionsHTML}</div>`;
+}
+
+export function segmentedControlMarkup({ label, items }) {
+  const buttons = items.map(item => `<button type="button"${attributesMarkup(item.attributes)} aria-pressed="${item.pressed ? "true" : "false"}">${escapeHTML(item.label)}</button>`).join("");
+  return `<div class="period-control" data-ui="segmented-control" aria-label="${escapeHTML(label)}">${buttons}</div>`;
+}
+
+export function tableMarkup({ headings, rowsHTML, className = "", wrapperClassName = "", caption = "" }) {
+  const headingMarkup = headings.map(heading => {
+    const definition = typeof heading === "string" ? { label: heading } : heading;
+    return `<th${definition.className ? ` class="${escapeHTML(definition.className)}"` : ""}>${escapeHTML(definition.label || "")}</th>`;
+  }).join("");
+  const captionMarkup = caption ? `<caption>${escapeHTML(caption)}</caption>` : "";
+  return `<div class="${escapeHTML(classNames("table-wrap", wrapperClassName))}" data-ui="table"><table class="${escapeHTML(className)}">${captionMarkup}<thead><tr>${headingMarkup}</tr></thead><tbody>${rowsHTML}</tbody></table></div>`;
+}
+
 export function statusBadgeMarkup(status, label) {
   return `<span class="${escapeHTML(classNames("status", status))}" data-ui="status">${escapeHTML(label)}</span>`;
 }

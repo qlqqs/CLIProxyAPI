@@ -129,7 +129,10 @@
 拼车工作台继续使用 Go `embed`、原生 JavaScript 与 CSS，不引入 React、Vue、Node 构建链或第三方运行时组件库。共享表现层集中在 `internal/carpool/web/assets/ui.js`，业务页面只负责数据、流程和事件绑定。
 
 - `buttonMarkup`：统一主按钮、次按钮、危险按钮与紧凑尺寸；属性必须通过结构化 `attributes` 传入并统一转义。
-- `iconButtonMarkup`：统一图标按钮的触摸目标、可访问名称与标题。
+- `iconButtonMarkup` 与 `linkButtonMarkup`：统一图标按钮、按钮式链接的触摸目标、可访问名称与视觉层级。
+- `formFieldMarkup` 与 `formActionsMarkup`：统一标签、控件、帮助文字和表单操作区；业务层仍负责校验与错误恢复。
+- `sectionHeaderMarkup` 与 `segmentedControlMarkup`：统一页面标题区和单选型周期切换，选中状态使用 `aria-pressed`。
+- `tableMarkup`：统一表格外壳、表头和横向滚动边界；业务层提供已转义的单元格内容。
 - `statusBadgeMarkup`：状态始终同时使用文字和颜色，不以颜色单独表达含义。
 - `bannerMarkup`：统一错误、警告与成功反馈；错误消息必须给出恢复动作。
 - `emptyStateMarkup` 与 `loadingMarkup`：区分空数据和等待状态；已有内容刷新时不得清空页面。

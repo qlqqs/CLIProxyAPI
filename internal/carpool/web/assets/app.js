@@ -4,10 +4,16 @@ import {
   dialogContentMarkup,
   emptyStateMarkup,
   escapeHTML,
+  formActionsMarkup,
+  formFieldMarkup,
+  linkButtonMarkup,
   loadingMarkup,
+  sectionHeaderMarkup,
+  segmentedControlMarkup,
   setButtonBusy,
   showToast,
   statusBadgeMarkup,
+  tableMarkup,
 } from "./ui.js";
 
 const apiBase = "/carpool/api/v1";
@@ -176,10 +182,14 @@ function statusLabel(status) {
 }
 
 function periodControl() {
-  return `<div class="period-control" aria-label="统计周期">
-    ${[["today", "今日"], ["7d", "最近 7 天"], ["30d", "最近 30 天"]].map(([value, label]) =>
-      `<button type="button" data-period="${value}" aria-pressed="${state.period === value}">${label}</button>`).join("")}
-  </div>`;
+  return segmentedControlMarkup({
+    label: "统计周期",
+    items: [["today", "今日"], ["7d", "最近 7 天"], ["30d", "最近 30 天"]].map(([value, label]) => ({
+      label,
+      pressed: state.period === value,
+      attributes: { "data-period": value },
+    })),
+  });
 }
 
 // Resets report, request-filter, and period selections that otherwise linger
@@ -394,8 +404,8 @@ function loginView(message = "") {
     <form class="login-panel" id="login-form">
       <div class="login-intro"><h2>检票口</h2><p>使用售票员下发的专属车票。</p></div>
       ${message ? bannerMarkup({ message, tone: "error", attributes: { role: "alert" } }) : ""}
-      <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="64"></div>
-      <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128"></div>
+      ${formFieldMarkup({ id: "username", label: "用户名", controlHTML: '<input id="username" name="username" autocomplete="username" required minlength="3" maxlength="64">' })}
+      ${formFieldMarkup({ id: "password", label: "密码", controlHTML: '<input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128">' })}
       ${buttonMarkup({ label: "登录", type: "submit" })}
     </form>
   </main>`;
@@ -611,10 +621,13 @@ async function renderPassengerRoute(content) {
 }
 
 function memberTable(items) {
-  if (!items.length) return `<div class="empty">该周期暂无成员用量</div>`;
-  return `<div class="table-wrap"><table class="member-usage-table"><thead><tr><th>成员</th><th>个人额度</th><th>并发</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${memberQuotaRow(item)}</td><td>${item.left ? `<span class="muted">—</span>` : concurrencyBadgeMarkup(item.concurrency_limit)}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
-  </tbody></table></div>`;
+  if (!items.length) return emptyStateMarkup({ description: "该周期暂无成员用量" });
+  const rowsHTML = items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${memberQuotaRow(item)}</td><td>${item.left ? `<span class="muted">—</span>` : concurrencyBadgeMarkup(item.concurrency_limit)}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("");
+  return tableMarkup({
+    headings: ["成员", "个人额度", "并发", ...["请求", "成功", "失败", "Token", "未知"].map(label => ({ label, className: "numeric" }))],
+    rowsHTML,
+    className: "member-usage-table",
+  });
 }
 
 function moneyMarkup(value) {
@@ -749,10 +762,13 @@ function billingMarkup(billing) {
 }
 
 function accountTable(items) {
-  if (!items.length) return `<div class="empty">当前车辆还没有分配账号</div>`;
-  return `<div class="table-wrap account-table"><table><thead><tr><th>账号</th><th>供应商</th><th>账号并发</th><th>CPA 原生配额</th><th>状态</th><th>观测时间</th><th class="numeric">请求</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.label || item.safe_label)}</strong></td><td>${escapeHTML(item.provider)}</td><td>${concurrencyMarkup(item.concurrency_limit)}</td><td>${quotaMarkup(item.quota)}</td><td>${statusLabel(item.stale ? "unknown" : item.status)}${item.stale ? ` <span class="tag">健康数据陈旧</span>` : ""}</td><td>${escapeHTML(formatTime(item.observed_at))}</td><td class="numeric">${formatNumber(item.usage?.logical_requests)}</td><td class="numeric">${formatNumber(item.usage?.known_total_tokens)}</td><td class="numeric">${formatNumber(item.usage?.unknown_usage_events)}</td></tr>`).join("")}
-  </tbody></table></div>`;
+  if (!items.length) return emptyStateMarkup({ description: "当前车辆还没有分配账号" });
+  const rowsHTML = items.map(item => `<tr><td><strong>${escapeHTML(item.label || item.safe_label)}</strong></td><td>${escapeHTML(item.provider)}</td><td>${concurrencyMarkup(item.concurrency_limit)}</td><td>${quotaMarkup(item.quota)}</td><td>${statusLabel(item.stale ? "unknown" : item.status)}${item.stale ? ` <span class="tag">健康数据陈旧</span>` : ""}</td><td>${escapeHTML(formatTime(item.observed_at))}</td><td class="numeric">${formatNumber(item.usage?.logical_requests)}</td><td class="numeric">${formatNumber(item.usage?.known_total_tokens)}</td><td class="numeric">${formatNumber(item.usage?.unknown_usage_events)}</td></tr>`).join("");
+  return tableMarkup({
+    headings: ["账号", "供应商", "账号并发", "CPA 原生配额", "状态", "观测时间", ...["请求", "Token", "未知"].map(label => ({ label, className: "numeric" }))],
+    rowsHTML,
+    wrapperClassName: "account-table",
+  });
 }
 
 function formatQuotaPercent(value) {
@@ -826,9 +842,13 @@ async function copyAPIKey(value) {
 async function renderKeys(content, reset) {
   const page = await loadPage("keys", searchPath("keys", "/me/api-keys"), reset);
   const items = page.items;
-  content.innerHTML = `<div class="section-header"><div><h2>API Key</h2><p>完整 Key 可在列表中复制，请仅提供给受信任的客户端。</p></div><button class="button" id="create-key">创建 Key</button></div>
+  const rowsHTML = items.map(item => `<tr><td>${escapeHTML(item.name)}</td><td>${apiKeyValueMarkup(item)}</td><td>${statusLabel(item.status)}</td><td>${escapeHTML(formatTime(item.created_at))}</td><td>${escapeHTML(formatTime(item.expires_at))}</td><td>${escapeHTML(formatTime(item.last_used_at))}</td><td>${item.status === "active" ? buttonMarkup({ label: "撤销", tone: "danger", size: "compact", attributes: { "data-revoke-key": item.key_ref } }) : ""}</td></tr>`).join("");
+  const listMarkup = items.length
+    ? tableMarkup({ headings: ["名称", "Key", "状态", "创建时间", "过期时间", "最近使用", ""], rowsHTML })
+    : emptyStateMarkup({ description: state.searches.keys ? "没有匹配的 API Key" : "尚未创建 API Key" });
+  content.innerHTML = `${sectionHeaderMarkup({ title: "API Key", description: "完整 Key 可在列表中复制，请仅提供给受信任的客户端。", actionsHTML: buttonMarkup({ label: "创建 Key", attributes: { id: "create-key" } }) })}
     ${searchBar("keys", "按名称搜索")}
-    ${items.length ? `<div class="table-wrap"><table><thead><tr><th>名称</th><th>Key</th><th>状态</th><th>创建时间</th><th>过期时间</th><th>最近使用</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHTML(item.name)}</td><td>${apiKeyValueMarkup(item)}</td><td>${statusLabel(item.status)}</td><td>${escapeHTML(formatTime(item.created_at))}</td><td>${escapeHTML(formatTime(item.expires_at))}</td><td>${escapeHTML(formatTime(item.last_used_at))}</td><td>${item.status === "active" ? `<button class="button danger compact" data-revoke-key="${escapeHTML(item.key_ref)}">撤销</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.keys ? "没有匹配的 API Key" : "尚未创建 API Key"}</div>`}
+    ${listMarkup}
     ${paginationFooter(page, "个 Key")}`;
   content.querySelector("#create-key").addEventListener("click", showKeyDialog);
   content.querySelectorAll("[data-copy-api-key]").forEach(button => button.addEventListener("click", async () => {
@@ -862,9 +882,9 @@ async function renderKeys(content, reset) {
 
 function showKeyDialog() {
   const dialog = openDialog("创建 API Key", `<form id="key-form">
-    <div class="field"><label for="key-name">名称</label><input id="key-name" name="name" required maxlength="64" placeholder="例如：笔记本电脑"></div>
-    <div class="field"><label for="key-expiry">过期时间（可选）</label><input id="key-expiry" name="expires_at" type="datetime-local"></div>
-    <div class="form-actions"><button class="button secondary" type="button" data-dialog-close>取消</button><button class="button" type="submit">创建</button></div>
+    ${formFieldMarkup({ id: "key-name", label: "名称", controlHTML: '<input id="key-name" name="name" required maxlength="64" placeholder="例如：笔记本电脑">' })}
+    ${formFieldMarkup({ id: "key-expiry", label: "过期时间（可选）", controlHTML: '<input id="key-expiry" name="expires_at" type="datetime-local">' })}
+    ${formActionsMarkup(`${buttonMarkup({ label: "取消", tone: "secondary", attributes: { "data-dialog-close": true } })}${buttonMarkup({ label: "创建", type: "submit" })}`)}
   </form>`);
   dialog.querySelector("form").addEventListener("submit", async event => {
     event.preventDefault();
@@ -889,7 +909,7 @@ async function renderAdminRoute(content) {
     const [users, cars] = await Promise.all([request("/admin/users?limit=1"), request("/admin/cars?limit=6")]);
     const carItems = cars.items || [];
     const count = value => value == null ? "未提供" : formatNumber(value);
-    content.innerHTML = `<div class="section-header"><div><h2>运营概览</h2><p>从车辆和成员开始，管理当前拼车业务。</p></div><a class="button" href="#/cars">管理车辆</a></div>
+    content.innerHTML = `${sectionHeaderMarkup({ title: "运营概览", description: "从车辆和成员开始，管理当前拼车业务。", actionsHTML: linkButtonMarkup({ label: "管理车辆", href: "#/cars" }) })}
       <div class="dashboard-layout"><div class="dashboard-main">
         <section class="workspace-panel"><div class="panel-heading"><h3>运营摘要</h3></div><dl class="overview-stats"><div><dt>用户总数</dt><dd>${count(users.total)}</dd></div><div><dt>车辆总数</dt><dd>${count(cars.total)}</dd></div><div><dt>模块状态</dt><dd>${statusLabel(state.session?.module_status || "unknown")}</dd></div></dl></section>
         <section class="workspace-panel"><div class="panel-heading"><div><h3>车辆一览</h3><p class="muted">显示 ${formatNumber(carItems.length)} 辆车辆${cars.total != null ? `，共 ${count(cars.total)} 辆` : ""}</p></div><a href="#/cars">查看全部</a></div>
@@ -923,7 +943,7 @@ async function renderUsers(content, reset) {
   const page = await loadPage("users", searchPath("users", "/admin/users"), reset);
   const items = page.items;
   closeEntityPanels(content);
-  content.innerHTML = `<div class="section-header"><div><h2>用户管理</h2><p>共 ${formatNumber(page.total)} 名用户 · 选择用户后在右侧管理</p></div><button class="button" id="create-user">创建用户</button></div>
+  content.innerHTML = `${sectionHeaderMarkup({ title: "用户管理", description: `共 ${formatNumber(page.total)} 名用户 · 选择用户后在右侧管理`, actionsHTML: buttonMarkup({ label: "创建用户", attributes: { id: "create-user" } }) })}
     <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="用户列表">
       ${searchBar("users", "按用户名、展示名或引用搜索")}
       ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.username)}</strong>${item.display_name && item.display_name !== item.username ? `<span class="muted">${escapeHTML(item.display_name)}</span>` : ""}</div><div class="entity-meta"><span>${item.role === "carpool_admin" ? "管理员" : "乘客"}</span><span>创建于 ${escapeHTML(formatTime(item.created_at))}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.users ? "没有匹配的用户" : "暂无用户，请先创建用户。"}</div>`}
@@ -945,9 +965,9 @@ async function renderUsers(content, reset) {
 
 function showUserDialog() {
   const dialog = openDialog("创建用户", `<form id="user-form">
-    <div class="form-row"><div class="field"><label for="new-username">用户名</label><input id="new-username" name="username" required minlength="3" maxlength="64"></div><div class="field"><label for="new-display-name">默认展示名</label><input id="new-display-name" name="display_name" required maxlength="64"></div></div>
-    <div class="field"><label for="new-role">角色</label><select id="new-role" name="role"><option value="passenger">乘客</option><option value="carpool_admin">拼车管理员</option></select></div>
-    <div class="form-actions"><button class="button secondary" type="button" data-dialog-close>取消</button><button class="button" type="submit">创建</button></div>
+    <div class="form-row">${formFieldMarkup({ id: "new-username", label: "用户名", controlHTML: '<input id="new-username" name="username" required minlength="3" maxlength="64">' })}${formFieldMarkup({ id: "new-display-name", label: "默认展示名", controlHTML: '<input id="new-display-name" name="display_name" required maxlength="64">' })}</div>
+    ${formFieldMarkup({ id: "new-role", label: "角色", controlHTML: '<select id="new-role" name="role"><option value="passenger">乘客</option><option value="carpool_admin">拼车管理员</option></select>' })}
+    ${formActionsMarkup(`${buttonMarkup({ label: "取消", tone: "secondary", attributes: { "data-dialog-close": true } })}${buttonMarkup({ label: "创建", type: "submit" })}`)}
   </form>`);
   dialog.querySelector("form").addEventListener("submit", async event => {
     event.preventDefault();
@@ -1067,7 +1087,7 @@ async function renderCars(content, reset) {
   const page = await loadPage("cars", searchPath("cars", "/admin/cars"), reset);
   const items = page.items;
   closeEntityPanels(content);
-  content.innerHTML = `<div class="section-header"><div><h2>车辆管理</h2><p>共 ${formatNumber(page.total)} 辆车辆 · 选择车辆后在右侧管理</p></div><button class="button" id="create-car">创建车辆</button></div>
+  content.innerHTML = `${sectionHeaderMarkup({ title: "车辆管理", description: `共 ${formatNumber(page.total)} 辆车辆 · 选择车辆后在右侧管理`, actionsHTML: buttonMarkup({ label: "创建车辆", attributes: { id: "create-car" } }) })}
     <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="车辆列表">
       ${searchBar("cars", "按名称、说明或引用搜索")}
       ${items.length ? `<div class="table-wrap"><table><thead><tr><th>车辆</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.name)}</strong>${item.description ? `<span class="muted">${escapeHTML(item.description)}</span>` : ""}</div><div class="entity-meta"><span>${formatNumber(item.member_count)} 名成员</span><span>${formatNumber(item.account_count)} 个账号</span><span>席位 ${item.seat_limit ? formatNumber(item.seat_limit) : "不限"}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-car="${escapeHTML(item.car_ref)}" aria-label="管理车辆 ${escapeHTML(item.name)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.cars ? "没有匹配的车辆" : "暂无车辆，请先创建车辆。"}</div>`}
@@ -1089,10 +1109,10 @@ async function renderCars(content, reset) {
 
 function showCarDialog() {
   const dialog = openDialog("创建车辆", `<form id="car-form">
-    <div class="field"><label for="car-name">名称</label><input id="car-name" name="name" required maxlength="80"></div>
-    <div class="field"><label for="car-description">说明</label><textarea id="car-description" name="description" maxlength="500"></textarea></div>
-    <div class="field"><label for="seat-limit">席位上限（留空表示不限）</label><input id="seat-limit" name="seat_limit" type="number" min="1"></div>
-    <div class="form-actions"><button class="button secondary" type="button" data-dialog-close>取消</button><button class="button" type="submit">创建</button></div>
+    ${formFieldMarkup({ id: "car-name", label: "名称", controlHTML: '<input id="car-name" name="name" required maxlength="80">' })}
+    ${formFieldMarkup({ id: "car-description", label: "说明", controlHTML: '<textarea id="car-description" name="description" maxlength="500"></textarea>' })}
+    ${formFieldMarkup({ id: "seat-limit", label: "席位上限（留空表示不限）", controlHTML: '<input id="seat-limit" name="seat_limit" type="number" min="1">' })}
+    ${formActionsMarkup(`${buttonMarkup({ label: "取消", tone: "secondary", attributes: { "data-dialog-close": true } })}${buttonMarkup({ label: "创建", type: "submit" })}`)}
   </form>`);
   dialog.querySelector("form").addEventListener("submit", async event => {
     event.preventDefault();
