@@ -412,12 +412,30 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .quota-more { margin-top: 2px; }
 .quota-more summary { padding: 5px 0; color: var(--accent); font-size: 12px; cursor: pointer; }
 .quota-more > div { display: grid; gap: 8px; margin-top: 8px; }
-.quota-stack-compact { gap: 6px; min-width: 170px; }
-.quota-window-compact { display: grid; grid-template-columns: 24px minmax(110px, 160px); align-items: center; gap: 8px; min-width: 0; padding: 2px 0; border-bottom: 0; }
-.quota-window-compact > strong { font-size: 12px; font-weight: 500; }
-.quota-meter-compact { gap: 7px; }
-.quota-meter-compact .quota-meter-track { height: 5px; }
-.quota-meter-compact b { min-width: 34px; font-size: 11px; }
+.usage-window-stack, .member-quota-row { display: grid; gap: 4px; min-width: 176px; }
+.usage-window-row { display: grid; grid-template-columns: 32px 32px 34px minmax(48px, auto); align-items: center; gap: 4px; min-width: 0; min-height: 18px; font-variant-numeric: tabular-nums; }
+.usage-window-label { display: block; width: 32px; overflow: hidden; padding: 1px 4px; border-radius: 4px; font-size: 10px; font-weight: 500; line-height: 1.5; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.usage-window-indigo { background: #e0e7ff; color: #4338ca; }
+.usage-window-emerald { background: #d1fae5; color: #047857; }
+.usage-window-purple { background: #ede9fe; color: #6d28d9; }
+.usage-window-amber { background: #fef3c7; color: #a16207; }
+.usage-window-progress { display: block; appearance: none; width: 32px; height: 6px; overflow: hidden; border: 0; border-radius: 999px; background: var(--border); }
+.usage-window-progress::-webkit-progress-bar { border-radius: 999px; background: var(--border); }
+.usage-window-progress::-webkit-progress-value { border-radius: 999px; background: var(--success); }
+.usage-window-progress::-moz-progress-bar { border-radius: 999px; background: var(--success); }
+.usage-window-progress.is-warning::-webkit-progress-value { background: var(--warning); }
+.usage-window-progress.is-warning::-moz-progress-bar { background: var(--warning); }
+.usage-window-progress.is-danger::-webkit-progress-value { background: var(--danger); }
+.usage-window-progress.is-danger::-moz-progress-bar { background: var(--danger); }
+.usage-window-progress.is-unknown { opacity: .55; }
+.usage-window-percent { width: 34px; color: var(--muted); font-size: 10px; font-weight: 500; text-align: right; white-space: nowrap; }
+.usage-window-percent.is-warning { color: var(--warning); }
+.usage-window-percent.is-danger { color: var(--danger); }
+.usage-window-reset { min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-theme="dark"] .usage-window-indigo { background: rgb(49 46 129 / 45%); color: #c7d2fe; }
+:root[data-theme="dark"] .usage-window-emerald { background: rgb(6 78 59 / 45%); color: #a7f3d0; }
+:root[data-theme="dark"] .usage-window-purple { background: rgb(76 29 149 / 45%); color: #ddd6fe; }
+:root[data-theme="dark"] .usage-window-amber { background: rgb(120 53 15 / 45%); color: #fde68a; }
 
 /* User USD windows stay separate from upstream percentage quota meters. */
 .member-quota-windows { display: grid; gap: 16px; min-width: 0; }
@@ -432,13 +450,6 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .compact-quota-windows { gap: 8px; margin-top: 10px; font-size: 13px; }
 .compact-quota-windows .member-quota-window { gap: 3px; padding-bottom: 8px; }
 .compact-quota-windows .member-quota-window:last-child { padding-bottom: 0; }
-.member-quota-row { display: grid; gap: 6px; min-width: 170px; }
-.member-quota-table-window { display: grid; grid-template-columns: 24px minmax(110px, 160px); align-items: center; gap: 8px; min-width: 0; }
-.member-quota-table-window > strong { font-size: 12px; font-weight: 500; }
-.member-quota-table-meter { gap: 7px; }
-.member-quota-table-meter .quota-meter-track { height: 5px; }
-.member-quota-table-meter b { min-width: 34px; font-size: 11px; }
-.member-quota-meter-empty { opacity: .65; }
 .concurrency-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 7px; background: var(--work); color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
 .concurrency-badge svg { width: 13px; height: 13px; flex: 0 0 auto; }
 .member-policy { display: grid; gap: 6px; }

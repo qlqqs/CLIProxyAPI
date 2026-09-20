@@ -14,6 +14,7 @@ import {
   showToast,
   statusBadgeMarkup,
   tableMarkup,
+  usageWindowMarkup,
 } from "./ui.js";
 
 const apiBase = "/carpool/api/v1";
@@ -146,6 +147,21 @@ function formatTime(value) {
     delete options.timeZone;
     return new Intl.DateTimeFormat("zh-CN", options).format(date);
   }
+}
+
+function formatResetCountdown(value, utilization = null, showNowWhenIdle = false) {
+  if (showNowWhenIdle && Number.isFinite(utilization) && utilization <= 0) return "现在";
+  if (!value) return "-";
+  const reset = new Date(value);
+  if (Number.isNaN(reset.getTime())) return "-";
+  const difference = reset.getTime() - Date.now();
+  if (difference <= 0) return Number.isFinite(utilization) && utilization > 0 ? "待刷新" : "现在";
+  const totalMinutes = Math.floor(difference / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function toDatetimeLocalValue(date) {
@@ -684,14 +700,13 @@ function memberQuotaTableWindow(item, windows, kind, field) {
   const status = item.left ? "unavailable" : (Object.hasOwn(memberQuotaStatusLabels, window.status) ? window.status : (String(limit) === "0" ? "unlimited" : "not_started"));
   const usedValue = Number.parseFloat(window.used_usd);
   const limitValue = Number.parseFloat(limit);
-  const percentage = status !== "unlimited" && status !== "not_started" && Number.isFinite(usedValue) && usedValue >= 0 && Number.isFinite(limitValue) && limitValue > 0
+  const utilization = status !== "unlimited" && status !== "not_started" && status !== "unavailable" && Number.isFinite(usedValue) && usedValue >= 0 && Number.isFinite(limitValue) && limitValue > 0
     ? (usedValue / limitValue) * 100
     : null;
   const label = kind === "5h" ? "5h" : "7d";
-  const meter = percentage == null
-    ? `<div class="quota-meter member-quota-table-meter"><span class="quota-meter-track member-quota-meter-empty" role="img" aria-label="${label} 已用比例不可用"></span><b>—</b></div>`
-    : `<div class="quota-meter member-quota-table-meter">${percentageMeter(percentage, `${label} 已用比例`)}<b>${escapeHTML(formatQuotaPercent(percentage))}</b></div>`;
-  return `<div class="member-quota-table-window"><strong>${label}</strong>${meter}</div>`;
+  const percentLabel = status === "unlimited" ? "不限" : status === "not_started" ? "0%" : status === "unavailable" ? "-" : "";
+  const resetsAtLabel = item.left ? "已离车" : status === "unlimited" ? "不限" : status === "not_started" ? "未开始" : formatResetCountdown(window.reset_at, utilization);
+  return usageWindowMarkup({ label, utilization, percentLabel, resetsAtLabel, color: kind === "5h" ? "indigo" : "emerald" });
 }
 
 function memberQuotaRow(item) {
@@ -807,15 +822,20 @@ function quotaWindowByKind(windows, kind) {
 }
 
 function quotaCompactWindowMarkup(window, label) {
-  const percent = Number.isFinite(window?.used_percent) ? window.used_percent : 0;
-  return `<div class="quota-window quota-window-compact"><strong>${escapeHTML(label)}</strong><div class="quota-meter quota-meter-compact">${percentageMeter(percent, `${label} 已用比例`)}<b>${escapeHTML(formatQuotaPercent(percent))}</b></div></div>`;
+  const utilization = Number.isFinite(window?.used_percent) ? window.used_percent : null;
+  return usageWindowMarkup({
+    label,
+    utilization,
+    resetsAtLabel: window ? formatResetCountdown(window.reset_at, utilization, true) : "未提供",
+    color: label === "5h" ? "indigo" : "emerald",
+  });
 }
 
 function quotaMarkup(quota) {
   const windows = quota?.supported && Array.isArray(quota.windows) ? quota.windows : [];
   const fiveHour = quotaWindowByKind(windows, "5h");
   const sevenDay = quotaWindowByKind(windows, "7d");
-  return `<div class="quota-stack quota-stack-compact">${quotaCompactWindowMarkup(fiveHour, "5h")}${quotaCompactWindowMarkup(sevenDay, "7d")}</div>`;
+  return `<div class="usage-window-stack">${quotaCompactWindowMarkup(fiveHour, "5h")}${quotaCompactWindowMarkup(sevenDay, "7d")}</div>`;
 }
 
 function apiKeyValueMarkup(item) {

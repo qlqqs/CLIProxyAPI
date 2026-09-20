@@ -2,6 +2,7 @@ const attributeNamePattern = /^(?:[a-z][a-z0-9-]*|aria-[a-z0-9-]+|data-[a-z0-9-]
 const buttonTones = new Set(["primary", "secondary", "danger"]);
 const buttonTypes = new Set(["button", "submit", "reset"]);
 const bannerTones = new Set(["error", "warning", "success"]);
+const usageWindowColors = new Set(["indigo", "emerald", "purple", "amber"]);
 
 export function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>'"]/g, character => ({
@@ -72,6 +73,18 @@ export function tableMarkup({ headings, rowsHTML, className = "", wrapperClassNa
   }).join("");
   const captionMarkup = caption ? `<caption>${escapeHTML(caption)}</caption>` : "";
   return `<div class="${escapeHTML(classNames("table-wrap", wrapperClassName))}" data-ui="table"><table class="${escapeHTML(className)}">${captionMarkup}<thead><tr>${headingMarkup}</tr></thead><tbody>${rowsHTML}</tbody></table></div>`;
+}
+
+export function usageWindowMarkup({ label, utilization = null, resetsAtLabel = "-", color = "indigo", percentLabel = "" }) {
+  if (!usageWindowColors.has(color)) throw new Error(`Unsupported usage window color: ${color}`);
+  const measured = Number.isFinite(utilization);
+  const normalized = measured ? Math.max(0, utilization) : 0;
+  const progressValue = Math.min(normalized, 100);
+  const rounded = Math.round(normalized);
+  const displayPercent = percentLabel || (measured ? (rounded > 999 ? ">999%" : `${rounded}%`) : "-");
+  const severity = !measured ? "unknown" : normalized >= 90 ? "danger" : normalized >= 75 ? "warning" : "healthy";
+  const ariaLabel = `${label} 已用 ${displayPercent}，重置 ${resetsAtLabel}`;
+  return `<div class="usage-window-row" data-ui="usage-window"><span class="usage-window-label usage-window-${color}">${escapeHTML(label)}</span><progress class="usage-window-progress is-${severity}" max="100" value="${progressValue}" aria-label="${escapeHTML(ariaLabel)}" aria-valuetext="${escapeHTML(displayPercent)}">${escapeHTML(displayPercent)}</progress><span class="usage-window-percent is-${severity}">${escapeHTML(displayPercent)}</span><span class="usage-window-reset">${escapeHTML(resetsAtLabel)}</span></div>`;
 }
 
 export function statusBadgeMarkup(status, label) {
