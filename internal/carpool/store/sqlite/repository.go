@@ -225,10 +225,10 @@ func (s *Store) CreateAPIKey(ctx context.Context, key domain.APIKey, audits ...*
 	}
 	if _, errExec := tx.ExecContext(ctx, `
 		INSERT INTO user_api_keys (
-			key_id, user_id, name, secret_digest, created_at, expires_at,
+			key_id, token, user_id, name, secret_digest, created_at, expires_at,
 			last_used_at, revoked_at, revoke_reason
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, key.KeyID, key.UserID, strings.TrimSpace(key.Name), append([]byte(nil), key.SecretDigest...),
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, key.KeyID, key.Token, key.UserID, strings.TrimSpace(key.Name), append([]byte(nil), key.SecretDigest...),
 		toDatabaseTime(key.CreatedAt), nullableDatabaseTime(key.ExpiresAt), nullableDatabaseTime(key.LastUsedAt),
 		nullableDatabaseTime(key.RevokedAt), key.RevokeReason); errExec != nil {
 		return domain.APIKey{}, rollback(tx, fmt.Errorf("sqlite store: create API key: %w", classifyError(errExec)))
@@ -247,7 +247,7 @@ func (s *Store) GetAPIKey(ctx context.Context, keyID string) (domain.APIKey, err
 		return domain.APIKey{}, errReady
 	}
 	return scanAPIKey(s.db.QueryRowContext(ctx, `
-		SELECT key_id, user_id, name, secret_digest, created_at, expires_at,
+		SELECT key_id, token, user_id, name, secret_digest, created_at, expires_at,
 		       last_used_at, revoked_at, revoke_reason
 		FROM user_api_keys WHERE key_id = ?
 	`, keyID))
@@ -440,12 +440,14 @@ func (s *Store) MoveMembership(ctx context.Context, move domain.MembershipMove) 
 		INSERT INTO memberships (
 		    id, member_ref, user_id, car_id, display_name, display_name_key,
 		    started_at, ended_at, ended_reason, created_by_user_id,
-		    monthly_limit_nano_usd, billing_timezone, billing_anchor_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?, ?, ?)
+		    monthly_limit_nano_usd, billing_timezone, billing_anchor_at,
+		    five_hour_limit_nano_usd, weekly_limit_nano_usd
+		) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?, ?, ?, ?, ?)
 	`, membership.ID, membership.MemberRef, membership.UserID, membership.CarID,
 		membership.DisplayName, membership.DisplayNameKey, toDatabaseTime(membership.StartedAt),
 		membership.CreatedByUserID, nullableInt64(membership.MonthlyLimitNanoUSD), membership.BillingTimezone,
-		toDatabaseTime(membership.BillingAnchorAt)); errInsert != nil {
+		toDatabaseTime(membership.BillingAnchorAt), quotaLimitValue(membership.FiveHourLimitNanoUSD),
+		quotaLimitValue(membership.WeeklyLimitNanoUSD)); errInsert != nil {
 		return domain.Membership{}, rollback(tx, fmt.Errorf("sqlite store: create membership: %w", classifyError(errInsert)))
 	}
 	if errVersions := bumpCarVersions(ctx, tx, now, membership.CarID, previousCarID); errVersions != nil {
@@ -1091,4 +1093,11 @@ func anyNegativeToken(event domain.UsageEvent) bool {
 		}
 	}
 	return false
+}
+
+func quotaLimitValue(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

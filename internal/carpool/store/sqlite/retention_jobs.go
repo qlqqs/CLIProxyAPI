@@ -20,6 +20,7 @@ type retentionConfirmation struct {
 	Cutoff   int64                    `json:"cutoff"`
 	Requests []retentionRequestTarget `json:"requests,omitempty"`
 	Periods  []retentionPeriodTarget  `json:"periods,omitempty"`
+	Windows  []retentionWindowTarget  `json:"windows,omitempty"`
 }
 type retentionRequestTarget struct {
 	ID          string `json:"id"`
@@ -35,6 +36,16 @@ type retentionPeriodTarget struct {
 	Confirmed int64  `json:"confirmed_nano_usd"`
 	Baseline  int64  `json:"reset_baseline_nano_usd"`
 	Unknown   int64  `json:"unknown_cost_events"`
+}
+
+type retentionWindowTarget struct {
+	MembershipID string `json:"membership_id"`
+	Kind         string `json:"kind"`
+	From         int64  `json:"from"`
+	ResetAt      int64  `json:"reset_at"`
+	Revision     int64  `json:"revision"`
+	Confirmed    int64  `json:"confirmed_nano_usd"`
+	Unknown      int64  `json:"unknown_cost_events"`
 }
 
 func (s *Store) PreviewRetentionJob(ctx context.Context, operation, actorRef string, cutoff time.Time) (domain.RetentionJob, error) {
@@ -66,6 +77,8 @@ func (s *Store) previewRetentionJob(ctx context.Context, tx *sql.Tx, operation, 
 	var err error
 	if operation == "usage_details" {
 		rows, err = tx.QueryContext(ctx, `SELECT p.request_id,p.outcome,p.completed_at,(SELECT COUNT(*) FROM usage_events e WHERE e.request_id=p.request_id) FROM proxy_requests p WHERE p.outcome NOT IN ('in_progress','incomplete') AND p.completed_at < ? ORDER BY p.completed_at,p.request_id LIMIT ?`, confirmation.Cutoff, domain.RetentionBatchLimit)
+	} else if operation == "reset_quota_windows" {
+		rows, err = tx.QueryContext(ctx, `SELECT membership_id,kind,window_from,reset_at,revision,confirmed_nano_usd,unknown_cost_events FROM member_quota_windows ORDER BY membership_id,kind LIMIT ?`, domain.RetentionBatchLimit)
 	} else {
 		// Exclude no-op resets so another explicit preview can reach the next
 		// batch instead of repeatedly selecting the same zero-use periods.
@@ -85,6 +98,10 @@ func (s *Store) previewRetentionJob(ctx context.Context, tx *sql.Tx, operation, 
 			var target retentionRequestTarget
 			err = rows.Scan(&target.ID, &target.Outcome, &target.CompletedAt, &target.Events)
 			confirmation.Requests = append(confirmation.Requests, target)
+		} else if operation == "reset_quota_windows" {
+			var target retentionWindowTarget
+			err = rows.Scan(&target.MembershipID, &target.Kind, &target.From, &target.ResetAt, &target.Revision, &target.Confirmed, &target.Unknown)
+			confirmation.Windows = append(confirmation.Windows, target)
 		} else {
 			var target retentionPeriodTarget
 			err = rows.Scan(&target.ID, &target.From, &target.To, &target.Revision, &target.Confirmed, &target.Baseline, &target.Unknown)
@@ -97,10 +114,10 @@ func (s *Store) previewRetentionJob(ctx context.Context, tx *sql.Tx, operation, 
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 		return domain.RetentionJob{}, classifyError(err)
 	}
-	job.ExpectedCount = int64(len(confirmation.Requests) + len(confirmation.Periods))
+	job.ExpectedCount = int64(len(confirmation.Requests) + len(confirmation.Periods) + len(confirmation.Windows))
 	if operation == "usage_details" {
 		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_requests WHERE outcome IN ('in_progress','incomplete')`).Scan(&job.InFlightCount)
-	} else if operation == "reset_current_period" {
+	} else if operation == "reset_current_period" || operation == "reset_quota_windows" {
 		for _, target := range confirmation.Periods {
 			var count int64
 			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_requests WHERE billing_period_id=? AND outcome IN ('in_progress','incomplete')`, target.ID).Scan(&count); err != nil {
@@ -170,10 +187,11 @@ func (s *Store) confirmRetentionJob(ctx context.Context, tx *sql.Tx, id, operati
 		return domain.RetentionJob{}, domain.ErrRetentionPreviewInvalid
 	}
 	if confirmation.Version != 1 || confirmation.Cutoff == 0 ||
-		job.ExpectedCount != int64(len(confirmation.Requests)+len(confirmation.Periods)) ||
+		job.ExpectedCount != int64(len(confirmation.Requests)+len(confirmation.Periods)+len(confirmation.Windows)) ||
 		job.ExpectedCount > domain.RetentionBatchLimit ||
-		(operation == "usage_details" && len(confirmation.Periods) != 0) ||
-		(operation != "usage_details" && len(confirmation.Requests) != 0) {
+		(operation == "usage_details" && (len(confirmation.Periods) != 0 || len(confirmation.Windows) != 0)) ||
+		(operation == "reset_quota_windows" && (len(confirmation.Requests) != 0 || len(confirmation.Periods) != 0)) ||
+		(operation != "usage_details" && operation != "reset_quota_windows" && (len(confirmation.Requests) != 0 || len(confirmation.Windows) != 0)) {
 		return domain.RetentionJob{}, domain.ErrRetentionPreviewInvalid
 	}
 	// Validate every target before changing any of them. New targets never enter
@@ -214,6 +232,16 @@ func (s *Store) confirmRetentionJob(ctx context.Context, tx *sql.Tx, id, operati
 			}
 		}
 	}
+	for _, target := range confirmation.Windows {
+		var current retentionWindowTarget
+		err = tx.QueryRowContext(ctx, `SELECT membership_id,kind,window_from,reset_at,revision,confirmed_nano_usd,unknown_cost_events FROM member_quota_windows WHERE membership_id=? AND kind=?`, target.MembershipID, target.Kind).Scan(&current.MembershipID, &current.Kind, &current.From, &current.ResetAt, &current.Revision, &current.Confirmed, &current.Unknown)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && current != target) {
+			return domain.RetentionJob{}, domain.ErrRetentionPreviewInvalid
+		}
+		if err != nil {
+			return domain.RetentionJob{}, classifyError(err)
+		}
+	}
 	for _, target := range confirmation.Requests {
 		for _, query := range []string{`DELETE FROM usage_events WHERE request_id=?`, `DELETE FROM proxy_request_auth_scopes WHERE request_id=?`} {
 			if _, err = tx.ExecContext(ctx, query, target.ID); err != nil {
@@ -240,6 +268,12 @@ func (s *Store) confirmRetentionJob(ctx context.Context, tx *sql.Tx, id, operati
 		}
 		job.DeletedCount++
 	}
+	for _, target := range confirmation.Windows {
+		if err = retentionMutateOne(ctx, tx, `DELETE FROM member_quota_windows WHERE membership_id=? AND kind=?`, target.MembershipID, target.Kind); err != nil {
+			return domain.RetentionJob{}, err
+		}
+		job.DeletedCount++
+	}
 	job.Status = "completed"
 	job.CompletedAt = &now
 	if err = retentionMutateOne(ctx, tx, `UPDATE retention_jobs SET status='completed',completed_at=?,deleted_count=? WHERE id=?`, toDatabaseTime(now), job.DeletedCount, job.ID); err != nil {
@@ -252,7 +286,8 @@ func (s *Store) confirmRetentionJob(ctx context.Context, tx *sql.Tx, id, operati
 		Expected  int64                   `json:"expected_count"`
 		Deleted   int64                   `json:"deleted_count"`
 		Periods   []retentionPeriodTarget `json:"periods,omitempty"`
-	}{operation, job.ExpectedCount, job.DeletedCount, confirmation.Periods})
+		Windows   []retentionWindowTarget `json:"windows,omitempty"`
+	}{operation, job.ExpectedCount, job.DeletedCount, confirmation.Periods, confirmation.Windows})
 	if err != nil {
 		return domain.RetentionJob{}, err
 	}

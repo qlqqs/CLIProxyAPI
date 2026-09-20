@@ -374,7 +374,7 @@ func (a *API) listMyAPIKeys(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(page.Items))
 	for _, key := range page.Items {
-		items = append(items, a.apiKeyResponse(key))
+		items = append(items, a.apiKeyResponse(key, true))
 	}
 	c.JSON(http.StatusOK, pageResponse(items, page.Total, page.NextCursor))
 }
@@ -393,7 +393,7 @@ func (a *API) createMyAPIKey(c *gin.Context) {
 		writeMappedError(c, errCreate)
 		return
 	}
-	response := a.apiKeyResponse(result.APIKey)
+	response := a.apiKeyResponse(result.APIKey, true)
 	response["api_key"] = result.Token
 	c.JSON(http.StatusCreated, response)
 }
@@ -419,9 +419,6 @@ func (a *API) myCar(c *gin.Context) {
 		return
 	}
 	response := gin.H{"car": carResponse(summary), "report_timezone": a.control.ReportLocationName()}
-	if _, billing, errBilling := a.control.PassengerBilling(c.Request.Context(), identity.User); errBilling == nil {
-		response["billing"] = billingResponse(billing)
-	}
 	limits, windows, errLimits := a.control.PassengerQuota(c.Request.Context(), identity.User)
 	if errLimits != nil {
 		writeMappedError(c, errLimits)
@@ -444,7 +441,7 @@ func (a *API) myMemberUsage(c *gin.Context) {
 		aggregate := view.Usage
 		unknown += aggregate.UnknownUsageCount
 		incomplete += aggregate.IncompleteCount
-		response := memberUsageResponse(aggregate, view.Left, view.Billing)
+		response := memberUsageResponse(aggregate, view.Left)
 		if !view.Left {
 			appendMemberLimits(response, view.Limits, view.QuotaWindows)
 		}
@@ -597,7 +594,7 @@ func (a *API) listUserAPIKeys(c *gin.Context) {
 	}
 	items := make([]gin.H, 0, len(page.Items))
 	for _, key := range page.Items {
-		items = append(items, a.apiKeyResponse(key))
+		items = append(items, a.apiKeyResponse(key, false))
 	}
 	c.JSON(http.StatusOK, pageResponse(items, page.Total, page.NextCursor))
 }
@@ -714,7 +711,7 @@ func (a *API) updateCar(c *gin.Context) {
 
 func (a *API) listMembers(c *gin.Context) {
 	identity, _ := currentIdentity(c)
-	members, errMembers := a.control.ListMembersWithBilling(c.Request.Context(), identity.User, c.Param("car_ref"))
+	members, errMembers := a.control.ListMembersWithQuotas(c.Request.Context(), identity.User, c.Param("car_ref"))
 	if errMembers != nil {
 		writeMappedError(c, errMembers)
 		return
@@ -723,7 +720,6 @@ func (a *API) listMembers(c *gin.Context) {
 	for _, view := range members {
 		member := view.Membership
 		response := membershipResponse(member)
-		response["billing"] = billingResponse(view.Billing)
 		items = append(items, appendMemberLimits(response, view.Limits, view.QuotaWindows))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
@@ -731,28 +727,27 @@ func (a *API) listMembers(c *gin.Context) {
 
 func (a *API) moveMember(c *gin.Context) {
 	var request struct {
-		UserRef         string  `json:"user_ref"`
-		DisplayName     string  `json:"display_name"`
-		MonthlyLimitUSD *string `json:"monthly_limit_usd"`
+		UserRef          string  `json:"user_ref"`
+		DisplayName      string  `json:"display_name"`
+		MonthlyLimitUSD  *string `json:"monthly_limit_usd"`
+		FiveHourLimitUSD *string `json:"five_hour_limit_usd"`
+		WeeklyLimitUSD   *string `json:"weekly_limit_usd"`
 	}
 	if !decodeJSON(c, &request) {
 		return
 	}
-	if request.MonthlyLimitUSD == nil {
+	if request.FiveHourLimitUSD == nil || request.WeeklyLimitUSD == nil {
+		writeMappedError(c, domain.ErrInvalid)
+		return
+	}
+	fiveHour, errFive := carpoolbilling.ParseNanoUSD(*request.FiveHourLimitUSD)
+	weekly, errWeekly := carpoolbilling.ParseNanoUSD(*request.WeeklyLimitUSD)
+	if errFive != nil || errWeekly != nil {
 		writeMappedError(c, domain.ErrInvalid)
 		return
 	}
 	identity, _ := currentIdentity(c)
-	var limit *int64
-	if request.MonthlyLimitUSD != nil {
-		parsed, errParse := carpoolbilling.ParseNanoUSD(*request.MonthlyLimitUSD)
-		if errParse != nil {
-			writeMappedError(c, domain.ErrInvalid)
-			return
-		}
-		limit = &parsed
-	}
-	membership, errMove := a.control.MoveMemberWithLimit(c.Request.Context(), identity.User, c.Param("car_ref"), request.UserRef, request.DisplayName, limit)
+	membership, errMove := a.control.MoveMemberWithLimits(c.Request.Context(), identity.User, c.Param("car_ref"), request.UserRef, request.DisplayName, &fiveHour, &weekly)
 	if errMove != nil {
 		writeMappedError(c, errMove)
 		return
@@ -1205,14 +1200,18 @@ func userResponse(user domain.User) gin.H {
 	return gin.H{"user_ref": user.UserRef, "username": user.Username, "display_name": user.DefaultDisplayName, "role": user.Role, "status": user.Status, "must_change_password": user.MustChangePassword, "created_at": user.CreatedAt, "updated_at": user.UpdatedAt}
 }
 
-func (a *API) apiKeyResponse(key domain.APIKey) gin.H {
+func (a *API) apiKeyResponse(key domain.APIKey, includeToken bool) gin.H {
 	status := "active"
 	if key.RevokedAt != nil {
 		status = "revoked"
 	} else if key.ExpiresAt != nil && !a.now().Before(*key.ExpiresAt) {
 		status = "expired"
 	}
-	return gin.H{"key_ref": key.KeyID, "name": key.Name, "status": status, "created_at": key.CreatedAt, "expires_at": key.ExpiresAt, "last_used_at": key.LastUsedAt, "revoked_at": key.RevokedAt}
+	response := gin.H{"key_ref": key.KeyID, "name": key.Name, "status": status, "created_at": key.CreatedAt, "expires_at": key.ExpiresAt, "last_used_at": key.LastUsedAt, "revoked_at": key.RevokedAt}
+	if includeToken && key.Token != "" {
+		response["api_key"] = key.Token
+	}
+	return response
 }
 
 func carResponse(summary carpoolservice.CarSummary) gin.H {
@@ -1235,16 +1234,12 @@ func accountCandidateResponse(candidate carpoolservice.AccountCandidate) gin.H {
 	}
 }
 
-func memberUsageResponse(row domain.MemberUsageAggregate, left bool, billing domain.BillingSnapshot) gin.H {
-	return gin.H{"member_ref": row.MemberRef, "display_name": row.DisplayName, "left": left, "logical_requests": row.RequestCount, "succeeded": row.SucceededCount, "failed": row.FailedCount, "rejected": row.RejectedCount, "canceled": row.CanceledCount, "incomplete": row.IncompleteCount, "known_input_tokens": row.KnownInputTokens, "known_output_tokens": row.KnownOutputTokens, "known_total_tokens": row.KnownTotalTokens, "unknown_usage_events": row.UnknownUsageCount, "billing": billingResponse(billing)}
+func memberUsageResponse(row domain.MemberUsageAggregate, left bool) gin.H {
+	return gin.H{"member_ref": row.MemberRef, "display_name": row.DisplayName, "left": left, "logical_requests": row.RequestCount, "succeeded": row.SucceededCount, "failed": row.FailedCount, "rejected": row.RejectedCount, "canceled": row.CanceledCount, "incomplete": row.IncompleteCount, "known_input_tokens": row.KnownInputTokens, "known_output_tokens": row.KnownOutputTokens, "known_total_tokens": row.KnownTotalTokens, "unknown_usage_events": row.UnknownUsageCount}
 }
 
 func membershipResponse(member domain.Membership) gin.H {
-	return gin.H{"member_ref": member.MemberRef, "display_name": member.DisplayName, "started_at": member.StartedAt, "monthly_limit_usd": formatNanoUSD(member.MonthlyLimitNanoUSD), "billing_timezone": member.BillingTimezone}
-}
-
-func billingResponse(snapshot domain.BillingSnapshot) gin.H {
-	return gin.H{"currency": snapshot.Currency, "status": snapshot.Status, "limit_usd": formatNanoUSD(snapshot.LimitNanoUSD), "used_usd": formatNanoUSD(pointerInt64(snapshot.ConfirmedNanoUSD)), "remaining_usd": formatNanoUSD(snapshot.RemainingNanoUSD), "overage_usd": formatNanoUSD(pointerInt64(snapshot.OverageNanoUSD)), "usage_percent": optionalInt(snapshot.UsagePercent), "unknown_cost_events": snapshot.UnknownCostEvents, "data_complete": snapshot.DataComplete, "period_from": snapshot.PeriodFrom, "period_to": snapshot.PeriodTo, "timezone": snapshot.Timezone, "coverage_from": optionalTime(pointerTimeFrom(snapshot.CoverageFrom))}
+	return gin.H{"member_ref": member.MemberRef, "display_name": member.DisplayName, "started_at": member.StartedAt}
 }
 
 func pointerInt64(value int64) *int64 { return &value }

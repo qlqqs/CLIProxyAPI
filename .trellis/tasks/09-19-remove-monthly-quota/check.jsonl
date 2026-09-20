@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"最终 Go 质量、测试与构建门禁"}
+{"file":".trellis/spec/backend/carpool-guidelines.md","reason":"检查 Carpool 安全、存储、HTTP 和浏览器契约"}
+{"file":".trellis/spec/backend/carpool-quota-concurrency-guidelines.md","reason":"检查旧月额度残留、5h/7d 准入、记账与并发生命周期"}
+{"file":".trellis/tasks/09-19-remove-monthly-quota/research/sub2api-benchmark.md","reason":"核对实现是否只对标 Sub2API 5h/7d 且未引入 1d/余额/订阅"}

@@ -33,7 +33,7 @@ async function nav(page, route) {
 async function screenshot(page, name) {
   assert.equal(await page.locator('.secret-box').count(), 0, 'never screenshot one-time credentials');
   await page.evaluate(() => { window.scrollTo(0, 0); const main = document.querySelector('.main'); if (main) main.scrollTop = 0; });
-  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, mask: [page.locator('.api-key-value code')] });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: page overflow`);
 }
 try {

@@ -40,7 +40,7 @@ async function api(page, path, body, method = 'POST') {
 }
 async function screenshot(page, name) {
   await page.waitForFunction(() => !document.querySelector('.toast'));
-  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, mask: [page.locator('.api-key-value code')] });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: overflow`);
 }
 try {
@@ -55,13 +55,14 @@ try {
   await passenger.locator('#create-key').click();
   await passenger.locator('#key-name').fill('Retention Browser Only');
   await passenger.locator('#key-form button[type=submit]').click();
-  await passenger.locator('.secret-box').waitFor();
-  const key = await passenger.locator('.secret-box').innerText();
-  await passenger.locator('[data-finish]').click();
+  await passenger.locator('#key-form').waitFor({ state: 'detached' });
+  const key = await passenger.locator('.api-key-value code').first().innerText();
+  assert(key.startsWith('cpk_v1_'));
   await nav(admin, '/cars');
   await admin.locator('tr').filter({ hasText: 'QA Shared Car' }).locator('[data-manage-car]').click();
   await admin.locator('[data-edit-member-limit][data-member-name="QA Passenger 1"]').click();
-  await admin.locator('#member-quota-value').fill('5');
+  await admin.locator('#member-five-hour').fill('5');
+  await admin.locator('#member-weekly').fill('5');
   await admin.locator('#member-quota-form button[type=submit]').click();
   await admin.locator('#member-quota-form').waitFor({ state: 'detached' });
   async function consume() {
@@ -72,7 +73,7 @@ try {
     assert.equal(status, 200);
   }
   for (let index = 0; index < 30; index++) await consume();
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '1.35');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '1.35');
   await nav(admin, '/requests');
   await admin.waitForFunction(() => document.querySelectorAll('.request-row').length === 25);
   assert.equal(await admin.locator('.request-row').count(), 25);
@@ -105,18 +106,18 @@ try {
   await screenshot(admin, 'desktop-filter-details');
   checks.push('模型+结果+精确ID组合过滤、刷新恢复筛选、跨筛选游标拒绝、实际 period');
   await nav(admin, '/retention');
-  const noPreview = await api(admin, '/admin/retention/jobs', { operation: 'reset_current_period', confirm: true });
+  const noPreview = await api(admin, '/admin/retention/jobs', { operation: 'reset_quota_windows', confirm: true });
   assert.equal(noPreview.status, 422);
-  const denied = await api(passenger, '/admin/retention/preview', { operation: 'reset_current_period' });
+  const denied = await api(passenger, '/admin/retention/preview', { operation: 'reset_quota_windows' });
   assert.equal(denied.status, 403);
-  const stale = await api(admin, '/admin/retention/preview', { operation: 'reset_current_period' });
+  const stale = await api(admin, '/admin/retention/preview', { operation: 'reset_quota_windows' });
   assert.equal(stale.status, 200);
   await consume();
-  const rejected = await api(admin, '/admin/retention/jobs', { operation: 'reset_current_period', job_id: stale.body.job_id, confirm: true });
+  const rejected = await api(admin, '/admin/retention/jobs', { operation: 'reset_quota_windows', job_id: stale.body.job_id, confirm: true });
   assert.equal(rejected.status, 409);
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '1.395');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '1.395');
   checks.push('无预览拒绝、乘客越权拒绝、预览后新增消费使旧确认失效且不扣除新消费');
-  await admin.locator('[data-retention-op="reset_current_period"]').click();
+  await admin.locator('[data-retention-op="reset_quota_windows"]').click();
   await admin.locator('[data-retention-confirm]').waitFor();
   await screenshot(admin, 'desktop-reset-preview');
   const complete = admin.waitForResponse(r => r.url().endsWith('/admin/retention/jobs') && r.request().method() === 'POST');
@@ -124,12 +125,12 @@ try {
   const job = await (await complete).json();
   assert.equal(job.status, 'completed');
   assert(job.deleted_count > 0);
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '0');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '0');
   await consume();
   const duplicate = await api(admin, '/admin/retention/jobs', { operation: job.operation, job_id: job.job_id, confirm: true });
   assert.equal(duplicate.status, 202);
   assert.equal(duplicate.body.job_id, job.job_id);
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '0.045');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '0.045');
   assert.equal((await api(admin, '/admin/retention/jobs/' + job.job_id)).body.status, 'completed');
   checks.push('页面确认原子重置；重复确认返回同作业，不重置之后的 $0.045');
   await admin.setViewportSize({ width: 360, height: 844 });
@@ -149,7 +150,7 @@ try {
   const cleanup = await (await cleaned).json();
   assert.equal(cleanup.deleted_count, 32);
   assert.equal((await api(admin, '/admin/usage/requests?period=30d')).body.total, 0);
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '0.045');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '0.045');
   checks.push('360 移动端清理取消不删数据、确认真实删除32条、金额不变');
   assert.deepEqual(errors, []);
   await writeFile(`${output}/results.json`, JSON.stringify({ checks, errors }, null, 2));

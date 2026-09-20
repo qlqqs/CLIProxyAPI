@@ -258,7 +258,7 @@ func (s *Store) ListAPIKeysForUser(ctx context.Context, userID, afterKeyID, sear
 	}
 	pattern := likePattern(search)
 	rows, errQuery := s.db.QueryContext(ctx, `
-		SELECT key_id, user_id, name, secret_digest, created_at, expires_at,
+		SELECT key_id, token, user_id, name, secret_digest, created_at, expires_at,
 		       last_used_at, revoked_at, revoke_reason
 		FROM user_api_keys
 		WHERE user_id = ? AND (? = '' OR key_id > ?)
@@ -640,7 +640,7 @@ func scanAPIKey(row *sql.Row) (domain.APIKey, error) {
 	var key domain.APIKey
 	var createdAt int64
 	var expiresAt, lastUsedAt, revokedAt sql.NullInt64
-	errScan := row.Scan(&key.KeyID, &key.UserID, &key.Name, &key.SecretDigest, &createdAt,
+	errScan := row.Scan(&key.KeyID, &key.Token, &key.UserID, &key.Name, &key.SecretDigest, &createdAt,
 		&expiresAt, &lastUsedAt, &revokedAt, &key.RevokeReason)
 	if errScan != nil {
 		return domain.APIKey{}, scanError("get API key", errScan)
@@ -653,7 +653,7 @@ func scanAPIKeyRows(rows *sql.Rows) (domain.APIKey, error) {
 	var key domain.APIKey
 	var createdAt int64
 	var expiresAt, lastUsedAt, revokedAt sql.NullInt64
-	if errScan := rows.Scan(&key.KeyID, &key.UserID, &key.Name, &key.SecretDigest, &createdAt,
+	if errScan := rows.Scan(&key.KeyID, &key.Token, &key.UserID, &key.Name, &key.SecretDigest, &createdAt,
 		&expiresAt, &lastUsedAt, &revokedAt, &key.RevokeReason); errScan != nil {
 		return domain.APIKey{}, fmt.Errorf("sqlite store: scan API key: %w", errScan)
 	}

@@ -9,10 +9,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
-	carpoolbilling "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/billing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 )
 
@@ -47,7 +45,7 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 	}
 	result.User = user
 	key, errKey := scanAPIKey(tx.QueryRowContext(ctx, `
-		SELECT key_id, user_id, name, secret_digest, created_at, expires_at,
+		SELECT key_id, '' AS token, user_id, name, secret_digest, created_at, expires_at,
 		       last_used_at, revoked_at, revoke_reason
 		FROM user_api_keys WHERE key_id = ?
 	`, input.APIKeyID))
@@ -104,29 +102,6 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 			reasonCode = "car_inactive"
 		}
 	}
-	billingPeriodID := ""
-	if result.Membership != nil && result.Car != nil {
-		period, errPeriod := ensureBillingPeriodTx(ctx, tx, *result.Membership, input.StartedAt)
-		if errPeriod != nil {
-			return domain.AuthorizationSnapshot{}, rollback(tx, errPeriod)
-		}
-		billingPeriodID = period.ID
-		if reasonCode == "" {
-			if period.LimitNanoUSD == nil {
-				// Legacy memberships must be explicitly assigned a limit before
-				// they can start new billable requests.
-				reasonCode = "quota_not_configured"
-			} else {
-				used := period.ConfirmedNanoUSD - period.ResetBaselineNanoUSD
-				if used < 0 {
-					used = 0
-				}
-				if used >= *period.LimitNanoUSD {
-					reasonCode = "quota_exceeded"
-				}
-			}
-		}
-	}
 
 	if reasonCode == "" && result.Car != nil {
 		runtimeAuthIDs := make(map[string]struct{}, len(input.RuntimeAuthIDs))
@@ -150,12 +125,12 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 		reasonCode = "account_changed"
 	}
 	if reasonCode == "" && !input.NonBillable && result.Membership != nil && len(result.Scopes) == 1 {
-		windows, errWindows := memberQuotaWindowsTx(ctx, tx, result.Membership.ID, result.Scopes[0].AuthID, input.StartedAt)
+		windows, errWindows := memberQuotaWindowsTx(ctx, tx, result.Membership.ID, input.StartedAt)
 		if errWindows != nil {
 			return domain.AuthorizationSnapshot{}, rollback(tx, errWindows)
 		}
 		for _, window := range windows {
-			if !window.PendingSync && window.LimitNanoUSD != nil && window.ConfirmedNanoUSD >= *window.LimitNanoUSD {
+			if window.LimitNanoUSD != nil && *window.LimitNanoUSD > 0 && window.ConfirmedNanoUSD >= *window.LimitNanoUSD {
 				if window.Kind == domain.QuotaWindowFiveHour {
 					reasonCode = "five_hour_quota_exhausted"
 				} else {
@@ -181,7 +156,6 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 		request.MembershipID = result.Membership.ID
 		request.MemberRefSnapshot = result.Membership.MemberRef
 		request.DisplayNameSnapshot = result.Membership.DisplayName
-		request.BillingPeriodID = billingPeriodID
 	}
 	if input.NonBillable {
 		request.BillingStatus = "not_billable"
@@ -278,41 +252,6 @@ func listAuthorizationScopes(ctx context.Context, tx *sql.Tx, requestID, carID s
 	return scopes, nil
 }
 
-func ensureBillingPeriodTx(ctx context.Context, tx *sql.Tx, membership domain.Membership, at time.Time) (domain.BillingPeriod, error) {
-	anchor := membership.BillingAnchorAt
-	if anchor.IsZero() {
-		anchor = membership.StartedAt
-	}
-	location := time.UTC
-	if strings.TrimSpace(membership.BillingTimezone) != "" {
-		if loaded, err := time.LoadLocation(strings.TrimSpace(membership.BillingTimezone)); err == nil {
-			location = loaded
-		}
-	}
-	period, errPeriod := carpoolbilling.MonthlyPeriod(anchor, at, location)
-	if errPeriod != nil {
-		return domain.BillingPeriod{}, errPeriod
-	}
-	var existing domain.BillingPeriod
-	var limit, storedAnchor sql.NullInt64
-	var from, to int64
-	err := tx.QueryRowContext(ctx, `SELECT id, membership_id, member_ref_snapshot, car_id, timezone, anchor_at, period_from, period_to, limit_nano_usd, confirmed_nano_usd, reset_baseline_nano_usd, unknown_cost_events, revision FROM billing_periods WHERE membership_id=? AND period_from=?`, membership.ID, toDatabaseTime(period.From)).Scan(&existing.ID, &existing.MembershipID, &existing.MemberRefSnapshot, &existing.CarID, &existing.Timezone, &storedAnchor, &from, &to, &limit, &existing.ConfirmedNanoUSD, &existing.ResetBaselineNanoUSD, &existing.UnknownCostEvents, &existing.Revision)
-	if err == nil {
-		existing.AnchorAt, existing.From, existing.To = fromDatabaseTime(storedAnchor.Int64), fromDatabaseTime(from), fromDatabaseTime(to)
-		existing.LimitNanoUSD = fromNullableInt64(limit)
-		return existing, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return domain.BillingPeriod{}, scanError("read billing period", err)
-	}
-	id := uuid.NewString()
-	_, err = tx.ExecContext(ctx, `INSERT INTO billing_periods (id, membership_id, member_ref_snapshot, car_id, timezone, anchor_at, period_from, period_to, limit_nano_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, membership.ID, membership.MemberRef, membership.CarID, location.String(), toDatabaseTime(anchor), toDatabaseTime(period.From), toDatabaseTime(period.To), nullableInt64(membership.MonthlyLimitNanoUSD))
-	if err != nil {
-		return domain.BillingPeriod{}, fmt.Errorf("sqlite store: create billing period: %w", classifyError(err))
-	}
-	return domain.BillingPeriod{ID: id, MembershipID: membership.ID, MemberRefSnapshot: membership.MemberRef, CarID: membership.CarID, Timezone: location.String(), AnchorAt: anchor, From: period.From, To: period.To, LimitNanoUSD: copyNullableInt64(membership.MonthlyLimitNanoUSD), Revision: 1}, nil
-}
-
 func copyNullableInt64(value *int64) *int64 {
 	if value == nil {
 		return nil
@@ -373,11 +312,6 @@ func insertProxyRequestWithScopes(ctx context.Context, target *sql.Tx, request d
 		`, request.RequestID, scope.AuthID, scope.AssignmentID, scope.AccountRefSnapshot,
 			scope.SafeLabelSnapshot, scope.ProviderSnapshot); errScope != nil {
 			return fmt.Errorf("sqlite store: insert proxy request scope: %w", classifyError(errScope))
-		}
-		if request.Outcome == domain.RequestOutcomeInProgress && request.BillingStatus != "not_billable" {
-			if errFee := ensureQuotaRequestFeeTx(ctx, target, request.RequestID, scope.AuthID); errFee != nil {
-				return errFee
-			}
 		}
 	}
 	return nil

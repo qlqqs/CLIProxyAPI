@@ -96,10 +96,10 @@ func TestAdministratorUserKeyAndPublicCursorAPI(t *testing.T) {
 		t.Fatalf("load key owners errors = (%v, %v)", errFirstOwner, errSecondOwner)
 	}
 	firstKey, errFirstKey := fixture.store.CreateAPIKey(t.Context(), domain.APIKey{
-		KeyID: "AAAAAAAAAAAAAAAA", UserID: firstOwner.ID, Name: "first", SecretDigest: []byte("first-digest"),
+		KeyID: "AAAAAAAAAAAAAAAA", Token: "cpk_v1_AAAAAAAAAAAAAAAA.first-secret", UserID: firstOwner.ID, Name: "first", SecretDigest: []byte("first-digest"),
 	})
 	secondKey, errSecondKey := fixture.store.CreateAPIKey(t.Context(), domain.APIKey{
-		KeyID: "AQEBAQEBAQEBAQEB", UserID: firstOwner.ID, Name: "second", SecretDigest: []byte("second-digest"),
+		KeyID: "AQEBAQEBAQEBAQEB", Token: "cpk_v1_AQEBAQEBAQEBAQEB.second-secret", UserID: firstOwner.ID, Name: "second", SecretDigest: []byte("second-digest"),
 	})
 	if errFirstKey != nil || errSecondKey != nil {
 		t.Fatalf("create administrator-visible keys errors = (%v, %v)", errFirstKey, errSecondKey)
@@ -110,8 +110,8 @@ func TestAdministratorUserKeyAndPublicCursorAPI(t *testing.T) {
 	if adminKeysBody["total"] != float64(2) || len(objectItems(t, adminKeysBody)) != 1 {
 		t.Fatalf("administrator key page = %#v", adminKeysBody)
 	}
-	if strings.Contains(adminKeys.Body.String(), "first-digest") || strings.Contains(adminKeys.Body.String(), "second-digest") {
-		t.Fatalf("administrator key page exposes digest: %s", adminKeys.Body.String())
+	if strings.Contains(adminKeys.Body.String(), "first-digest") || strings.Contains(adminKeys.Body.String(), "second-digest") || strings.Contains(adminKeys.Body.String(), "first-secret") || strings.Contains(adminKeys.Body.String(), "second-secret") {
+		t.Fatalf("administrator key page exposes credential material: %s", adminKeys.Body.String())
 	}
 	keyCursor := stringField(t, adminKeysBody, "next_cursor")
 	adminKeysNext := fixture.request(t, http.MethodGet, "/carpool/api/v1/admin/users/"+firstUserRef+"/api-keys?limit=1&cursor="+url.QueryEscape(keyCursor), nil, adminCookie, "", false)

@@ -41,19 +41,19 @@ func TestRootResponsesCarpoolQuotaAndConcurrency(t *testing.T) {
 		}
 	}
 	zero := int64(0)
-	if errSet := f.module.store.SetMemberLimits(t.Context(), member.ID, domain.MemberLimitsUpdate{MonthlySet: true, MonthlyNanoUSD: &zero}, nil); errSet != nil {
+	if errSet := f.module.store.SetMemberLimits(t.Context(), member.ID, domain.MemberLimitsUpdate{FiveHourSet: true, FiveHourNanoUSD: &zero}, nil); errSet != nil {
 		t.Fatal(errSet)
 	}
 	before, _ := f.recorder.snapshot()
 	for _, path := range []string{"/responses", "/v1/responses"} {
 		response := f.request(t, http.MethodPost, path, `{"model":"`+serverRouteOpenAIModel+`","input":"test"}`, false)
-		if response.Code != http.StatusForbidden {
-			t.Fatalf("quota bypassed on %s: %d %s", path, response.Code, response.Body.String())
+		if response.Code != http.StatusOK {
+			t.Fatalf("zero unlimited quota failed on %s: %d %s", path, response.Code, response.Body.String())
 		}
 	}
 	after, _ := f.recorder.snapshot()
-	if len(after) != len(before) {
-		t.Fatal("quota rejection reached upstream")
+	if len(after) != len(before)+2 {
+		t.Fatal("zero unlimited quota did not reach upstream aliases")
 	}
 }
 

@@ -84,6 +84,13 @@ func (s *Store) PreviewRetention(ctx context.Context, operation string, cutoff t
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_requests WHERE outcome IN ('in_progress', 'incomplete')`).Scan(&inFlight); err != nil {
 			return 0, 0, err
 		}
+	case "reset_quota_windows":
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM member_quota_windows`).Scan(&requests); err != nil {
+			return 0, 0, err
+		}
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM proxy_requests WHERE outcome IN ('in_progress', 'incomplete')`).Scan(&inFlight); err != nil {
+			return 0, 0, err
+		}
 	}
 	return requests, inFlight, nil
 }
@@ -158,6 +165,12 @@ func (s *Store) ExecuteRetention(ctx context.Context, operation string, cutoff t
 			return 0, 0, rollback(tx, e)
 		}
 		deleted, err = res.RowsAffected()
+	case "reset_quota_windows":
+		res, e := tx.ExecContext(ctx, `DELETE FROM member_quota_windows`)
+		if e != nil {
+			return 0, 0, rollback(tx, e)
+		}
+		deleted, err = res.RowsAffected()
 	}
 	if err != nil {
 		return 0, 0, rollback(tx, err)
@@ -169,5 +182,5 @@ func (s *Store) ExecuteRetention(ctx context.Context, operation string, cutoff t
 }
 
 func validRetentionOperation(op string) bool {
-	return op == "usage_details" || op == "closed_periods" || op == "reset_current_period"
+	return op == "usage_details" || op == "closed_periods" || op == "reset_current_period" || op == "reset_quota_windows"
 }

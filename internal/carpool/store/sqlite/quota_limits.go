@@ -22,12 +22,13 @@ type quotaQuerier interface {
 }
 
 func memberQuotaLimits(ctx context.Context, q quotaQuerier, membershipID string) (domain.MemberQuotaLimits, error) {
-	var month, five, week, concurrent sql.NullInt64
-	err := q.QueryRowContext(ctx, `SELECT m.monthly_limit_nano_usd, m.five_hour_limit_nano_usd, m.weekly_limit_nano_usd, u.concurrency_limit FROM memberships m LEFT JOIN user_concurrency_limits u ON u.user_id=m.user_id WHERE m.id=?`, membershipID).Scan(&month, &five, &week, &concurrent)
+	var five, week int64
+	var concurrent sql.NullInt64
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(m.five_hour_limit_nano_usd,0), COALESCE(m.weekly_limit_nano_usd,0), u.concurrency_limit FROM memberships m LEFT JOIN user_concurrency_limits u ON u.user_id=m.user_id WHERE m.id=?`, membershipID).Scan(&five, &week, &concurrent)
 	if err != nil {
 		return domain.MemberQuotaLimits{}, scanError("read member quota limits", err)
 	}
-	return domain.MemberQuotaLimits{MonthlyNanoUSD: fromNullableInt64(month), FiveHourNanoUSD: fromNullableInt64(five), WeeklyNanoUSD: fromNullableInt64(week), UserConcurrency: quotaConcurrencyPointer(concurrent)}, nil
+	return domain.MemberQuotaLimits{FiveHourNanoUSD: &five, WeeklyNanoUSD: &week, UserConcurrency: quotaConcurrencyPointer(concurrent)}, nil
 }
 
 func quotaConcurrencyPointer(v sql.NullInt64) *int {
@@ -42,14 +43,14 @@ func (s *Store) SetMemberLimits(ctx context.Context, membershipID string, update
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(membershipID) == "" || !(update.MonthlySet || update.FiveHourSet || update.WeeklySet || update.UserConcurrencySet) {
+	if strings.TrimSpace(membershipID) == "" || !(update.FiveHourSet || update.WeeklySet || update.UserConcurrencySet) {
 		return domain.ErrInvalid
 	}
-	for _, v := range []struct {
+	for _, value := range []struct {
 		set   bool
 		value *int64
-	}{{update.MonthlySet, update.MonthlyNanoUSD}, {update.FiveHourSet, update.FiveHourNanoUSD}, {update.WeeklySet, update.WeeklyNanoUSD}} {
-		if v.set && v.value != nil && *v.value < 0 {
+	}{{update.FiveHourSet, update.FiveHourNanoUSD}, {update.WeeklySet, update.WeeklyNanoUSD}} {
+		if value.set && (value.value == nil || *value.value < 0) {
 			return domain.ErrInvalid
 		}
 	}
@@ -64,21 +65,15 @@ func (s *Store) SetMemberLimits(ctx context.Context, membershipID string, update
 	if err = tx.QueryRowContext(ctx, `SELECT user_id FROM memberships WHERE id=? AND ended_at IS NULL`, membershipID).Scan(&userID); err != nil {
 		return rollback(tx, scanError("read limit membership", err))
 	}
-	for _, v := range []struct {
+	for _, value := range []struct {
 		set    bool
 		column string
 		value  *int64
-	}{{update.MonthlySet, "monthly_limit_nano_usd", update.MonthlyNanoUSD}, {update.FiveHourSet, "five_hour_limit_nano_usd", update.FiveHourNanoUSD}, {update.WeeklySet, "weekly_limit_nano_usd", update.WeeklyNanoUSD}} {
-		if v.set {
-			if _, err = tx.ExecContext(ctx, `UPDATE memberships SET `+v.column+`=? WHERE id=?`, nullableInt64(v.value), membershipID); err != nil {
+	}{{update.FiveHourSet, "five_hour_limit_nano_usd", update.FiveHourNanoUSD}, {update.WeeklySet, "weekly_limit_nano_usd", update.WeeklyNanoUSD}} {
+		if value.set {
+			if _, err = tx.ExecContext(ctx, `UPDATE memberships SET `+value.column+`=? WHERE id=?`, *value.value, membershipID); err != nil {
 				return rollback(tx, classifyError(err))
 			}
-		}
-	}
-	now := s.currentTime()
-	if update.MonthlySet {
-		if _, err = tx.ExecContext(ctx, `UPDATE billing_periods SET limit_nano_usd=?, revision=revision+1 WHERE membership_id=? AND period_from<=? AND period_to>?`, nullableInt64(update.MonthlyNanoUSD), membershipID, toDatabaseTime(now), toDatabaseTime(now)); err != nil {
-			return rollback(tx, classifyError(err))
 		}
 	}
 	if update.UserConcurrencySet {
@@ -86,7 +81,7 @@ func (s *Store) SetMemberLimits(ctx context.Context, membershipID string, update
 			return rollback(tx, classifyError(err))
 		}
 	}
-	if err = insertAudit(ctx, tx, audit, now); err != nil {
+	if err = insertAudit(ctx, tx, audit, s.currentTime()); err != nil {
 		return rollback(tx, err)
 	}
 	return classifyError(tx.Commit())

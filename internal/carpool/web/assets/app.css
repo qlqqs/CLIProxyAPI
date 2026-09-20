@@ -255,12 +255,18 @@ button[aria-busy="true"] { cursor: progress; }
 /* Flat tables retain their native semantics and local horizontal scrolling. */
 .table-wrap { min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--border); border-radius: var(--panel-radius); background: var(--surface); }
 table { width: 100%; min-width: 760px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.member-usage-table { min-width: 880px; }
 th, td { padding: 15px 16px; border-bottom: 1px solid var(--border); text-align: left; font-size: 14px; vertical-align: middle; }
 th { background: var(--work); color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
 td { overflow-wrap: anywhere; }
 tr:last-child td { border-bottom: 0; }
 .numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .code-ref, code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.api-key-value { display: inline-flex; align-items: center; gap: 7px; max-width: min(440px, 60vw); }
+.api-key-value code { min-width: 0; overflow-wrap: anywhere; }
+.copy-button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); }
+.copy-button svg { width: 15px; height: 15px; }
+.clipboard-helper { position: fixed; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 .pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 2px 0; color: var(--muted); font-size: 13px; }
 
 /* Master/detail keeps long editing sessions out of modal overlays. */
@@ -428,7 +434,8 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .compact-quota-windows .member-quota-window:last-child { padding-bottom: 0; }
 .member-quota-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 18px; margin-top: 4px; font-size: 13px; }
 .member-quota-row .member-quota-window { flex: 1 1 130px; gap: 3px; padding-bottom: 0; border-bottom: 0; }
-.policy-concurrency { display: block; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.concurrency-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 7px; background: var(--work); color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
+.concurrency-badge svg { width: 13px; height: 13px; flex: 0 0 auto; }
 .member-policy { display: grid; gap: 6px; }
 .member-policy-list > div { grid-template-columns: minmax(80px, .7fr) minmax(0, 2fr) minmax(75px, .65fr) auto; align-items: start; padding-block: 14px; }
 .member-policy-list .inline-actions { grid-column: 4; }
@@ -437,7 +444,7 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
 .status::before { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--status-neutral); }
 .status.healthy::before, .status.active::before, .status.allowed::before, .status.succeeded::before { background: var(--success); }
-.status.pending_sync::before, .status.degraded::before, .status.observed::before, .status.incomplete::before { background: var(--warning); }
+.status.degraded::before, .status.observed::before, .status.incomplete::before { background: var(--warning); }
 .status.exhausted::before, .status.overage::before, .status.unavailable::before, .status.disabled::before, .status.retired::before, .status.revoked::before, .status.expired::before, .status.rejected::before, .status.exceeded::before, .status.failed::before { background: var(--danger); }
 .tag { display: inline-block; padding: 3px 8px; border-radius: 7px; background: var(--work); color: var(--muted); font-size: 12px; }
 .empty { padding: 34px 24px; border: 1px solid var(--border); border-radius: var(--panel-radius); background: var(--surface); color: var(--muted); text-align: center; }
@@ -470,6 +477,7 @@ dialog::backdrop { background: var(--backdrop); }
   .button.secondary:hover:not(:disabled) { background: var(--surface-raised); border-color: var(--border-strong); }
   .button.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger-border-hover); }
   .icon-button:hover, .nav a:hover, .nav button:hover { background: var(--surface); color: var(--ink); border-color: var(--border); }
+  .copy-button:hover { background: var(--surface-raised); color: var(--ink); border-color: var(--border-strong); }
   .period-control button:hover { color: var(--ink); background: var(--surface); }
   .quick-links a:hover { color: var(--accent); }
   tbody tr:hover { background: var(--row-hover); }

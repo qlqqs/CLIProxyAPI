@@ -95,6 +95,7 @@ type Session struct {
 
 type APIKey struct {
 	KeyID        string
+	Token        string
 	UserID       string
 	Name         string
 	SecretDigest []byte
@@ -130,10 +131,12 @@ type Membership struct {
 	EndedAt         *time.Time
 	EndedReason     string
 	CreatedByUserID string
-	// MonthlyLimitNanoUSD is nil for legacy members until an administrator sets a limit.
-	MonthlyLimitNanoUSD *int64
-	BillingTimezone     string
-	BillingAnchorAt     time.Time
+	// MonthlyLimitNanoUSD is retained only for historical compatibility.
+	MonthlyLimitNanoUSD  *int64
+	FiveHourLimitNanoUSD *int64
+	WeeklyLimitNanoUSD   *int64
+	BillingTimezone      string
+	BillingAnchorAt      time.Time
 }
 
 type MembershipMove struct {

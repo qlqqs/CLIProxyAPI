@@ -60,5 +60,5 @@ func (c *Control) RetentionJob(ctx context.Context, actor domain.User, jobID str
 }
 
 func validRetentionOperation(op string) bool {
-	return op == "usage_details" || op == "closed_periods" || op == "reset_current_period"
+	return op == "usage_details" || op == "closed_periods" || op == "reset_quota_windows"
 }

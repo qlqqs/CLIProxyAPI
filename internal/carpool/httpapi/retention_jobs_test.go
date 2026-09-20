@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 )
@@ -17,10 +16,10 @@ func TestConfirmedRetentionHTTPHandshakeAndSecurity(t *testing.T) {
 	cookie := responseCookie(t, login, sessionCookieName)
 	csrf := stringField(t, decodeResponseObject(t, login), "csrf_token")
 	const base = "/carpool/api/v1/admin/retention"
-	operation := map[string]any{"operation": "reset_current_period"}
+	operation := map[string]any{"operation": "reset_quota_windows"}
 	assertHTTPStatus(t, fixture.request(t, http.MethodPost, base+"/preview", operation, cookie, "", true), http.StatusForbidden)
 	assertHTTPStatus(t, fixture.request(t, http.MethodPost, base+"/preview", operation, cookie, csrf, false), http.StatusForbidden)
-	for _, body := range []map[string]any{{"operation": "reset_current_period", "confirm": true}, {"operation": "reset_current_period", "job_id": "unknown"}} {
+	for _, body := range []map[string]any{{"operation": "reset_quota_windows", "confirm": true}, {"operation": "reset_quota_windows", "job_id": "unknown"}} {
 		response := fixture.request(t, http.MethodPost, base+"/jobs", body, cookie, csrf, true)
 		assertHTTPStatus(t, response, http.StatusUnprocessableEntity)
 		if got := decodeResponseObject(t, response)["error"].(map[string]any)["code"]; got != "confirmation_required" {
@@ -41,20 +40,32 @@ func TestConfirmedRetentionHTTPHandshakeAndSecurity(t *testing.T) {
 		t.Fatal(err)
 	}
 	limit := int64(5_000_000_000)
-	membership, err := fixture.store.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{UserID: user.ID, CarID: car.ID, DisplayName: "Passenger", CreatedByUserID: admin.ID, MonthlyLimitNanoUSD: &limit}})
+	membership, err := fixture.store.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{UserID: user.ID, CarID: car.ID, DisplayName: "Passenger", CreatedByUserID: admin.ID, FiveHourLimitNanoUSD: &limit, WeeklyLimitNanoUSD: &limit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := fixture.store.CreateAPIKey(ctx, domain.APIKey{UserID: user.ID, Name: "retention", SecretDigest: []byte("digest")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := fixture.store.MoveAuthAssignment(ctx, domain.AuthAssignmentMove{AuthAssignment: domain.AuthAssignment{CarID: car.ID, AuthID: "retention-auth", SafeLabel: "Retention", ProviderSnapshot: "codex", CreatedByUserID: admin.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := fixture.now()
-	period, err := fixture.store.EnsureBillingPeriod(ctx, domain.BillingPeriod{MembershipID: membership.ID, MemberRefSnapshot: membership.MemberRef, CarID: car.ID, Timezone: "UTC", AnchorAt: now, From: now, To: now.Add(24 * time.Hour), LimitNanoUSD: &limit, ConfirmedNanoUSD: 225_000_000, UnknownCostEvents: 2})
+	snapshot, err := fixture.store.AuthorizeAndBeginProxyRequest(ctx, domain.ProxyAuthorization{RequestID: "retention-request", UserID: user.ID, APIKeyID: key.KeyID, SourceFormat: "openai", StartedAt: now, RuntimeAuthIDs: []string{assignment.AuthID}})
 	if err != nil {
+		t.Fatal(err)
+	}
+	cost := int64(225_000_000)
+	if _, err = fixture.store.RecordUsageEventBilled(ctx, domain.UsageEvent{EventID: "retention-event", RequestID: snapshot.Request.RequestID, AuthID: assignment.AuthID, UsageKnown: true, Model: "test"}, "", &cost, "priced", ""); err != nil {
 		t.Fatal(err)
 	}
 	preview := fixture.request(t, http.MethodPost, base+"/preview", operation, cookie, csrf, true)
 	assertHTTPStatus(t, preview, http.StatusOK)
 	previewBody := decodeResponseObject(t, preview)
 	id := stringField(t, previewBody, "job_id")
-	if previewBody["status"] != "queued" || previewBody["expected_count"] != float64(1) || previewBody["batch_limit"] != float64(1000) || previewBody["confirmation_required"] != true || previewBody["expires_at"] == nil {
+	if previewBody["status"] != "queued" || previewBody["expected_count"] != float64(2) || previewBody["batch_limit"] != float64(1000) || previewBody["confirmation_required"] != true || previewBody["expires_at"] == nil {
 		t.Fatalf("preview contract=%+v", previewBody)
 	}
 	if _, exists := previewBody["confirmation"]; exists {
@@ -68,17 +79,17 @@ func TestConfirmedRetentionHTTPHandshakeAndSecurity(t *testing.T) {
 	next := fixture.request(t, http.MethodPost, base+"/preview", operation, cookie, csrf, true)
 	assertHTTPStatus(t, next, http.StatusOK)
 	nextID := stringField(t, decodeResponseObject(t, next), "job_id")
-	confirm := map[string]any{"operation": "reset_current_period", "job_id": id, "confirm": true}
+	confirm := map[string]any{"operation": "reset_quota_windows", "job_id": id, "confirm": true}
 	assertHTTPStatus(t, fixture.request(t, http.MethodPost, base+"/jobs", confirm, cookie, "", true), http.StatusForbidden)
 	result := fixture.request(t, http.MethodPost, base+"/jobs", confirm, cookie, csrf, true)
 	assertHTTPStatus(t, result, http.StatusAccepted)
 	resultBody := decodeResponseObject(t, result)
-	if resultBody["status"] != "completed" || resultBody["deleted_count"] != float64(1) {
+	if resultBody["status"] != "completed" || resultBody["deleted_count"] != float64(2) {
 		t.Fatalf("result=%+v", resultBody)
 	}
-	current, err := fixture.store.GetBillingPeriod(ctx, membership.ID, now)
-	if err != nil || current.ResetBaselineNanoUSD != period.ConfirmedNanoUSD || current.UnknownCostEvents != 0 {
-		t.Fatalf("HTTP reset did not mutate amount: %+v err=%v", current, err)
+	windows, err := fixture.store.MemberQuotaWindows(ctx, membership.ID, now)
+	if err != nil || len(windows) != 2 || !windows[0].From.IsZero() || !windows[1].From.IsZero() {
+		t.Fatalf("HTTP reset did not clear both local windows: %+v err=%v", windows, err)
 	}
 	repeated := fixture.request(t, http.MethodPost, base+"/jobs", confirm, cookie, csrf, true)
 	assertHTTPStatus(t, repeated, http.StatusAccepted)
@@ -87,11 +98,7 @@ func TestConfirmedRetentionHTTPHandshakeAndSecurity(t *testing.T) {
 	if !reflect.DeepEqual(resultBody, decodeResponseObject(t, repeated)) || !reflect.DeepEqual(resultBody, decodeResponseObject(t, fetched)) {
 		t.Fatal("duplicate/read result differs")
 	}
-	limit++
-	if _, err = fixture.store.SetMonthlyLimit(ctx, membership.ID, &limit, nil); err != nil {
-		t.Fatal(err)
-	}
-	stale := fixture.request(t, http.MethodPost, base+"/jobs", map[string]any{"operation": "reset_current_period", "job_id": nextID, "confirm": true}, cookie, csrf, true)
+	stale := fixture.request(t, http.MethodPost, base+"/jobs", map[string]any{"operation": "reset_quota_windows", "job_id": nextID, "confirm": true}, cookie, csrf, true)
 	assertHTTPStatus(t, stale, http.StatusConflict)
 	if code := decodeResponseObject(t, stale)["error"].(map[string]any)["code"]; code != "retention_preview_invalid" {
 		t.Fatalf("stale code=%v", code)

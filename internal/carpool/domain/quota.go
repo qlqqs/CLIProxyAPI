@@ -8,6 +8,7 @@ const (
 )
 
 type MemberQuotaLimits struct {
+	// MonthlyNanoUSD is retained for source compatibility and is not active.
 	MonthlyNanoUSD  *int64
 	FiveHourNanoUSD *int64
 	WeeklyNanoUSD   *int64
@@ -15,20 +16,17 @@ type MemberQuotaLimits struct {
 }
 
 type MemberLimitsUpdate struct {
-	MonthlySet, FiveHourSet, WeeklySet, UserConcurrencySet bool
-	MonthlyNanoUSD, FiveHourNanoUSD, WeeklyNanoUSD         *int64
-	UserConcurrency                                        *int
-}
-
-type QuotaWindowObservation struct {
-	AuthID, Kind              string
-	From, ResetAt, ObservedAt time.Time
+	// Monthly fields are ignored by active quota writes.
+	MonthlySet                                 bool
+	MonthlyNanoUSD                             *int64
+	FiveHourSet, WeeklySet, UserConcurrencySet bool
+	FiveHourNanoUSD, WeeklyNanoUSD             *int64
+	UserConcurrency                            *int
 }
 
 type MemberQuotaWindow struct {
 	Kind                                string
 	LimitNanoUSD                        *int64
 	ConfirmedNanoUSD, UnknownCostEvents int64
-	From, ResetAt, CoverageFrom         time.Time
-	PendingSync                         bool
+	From, ResetAt                       time.Time
 }

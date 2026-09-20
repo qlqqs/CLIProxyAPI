@@ -33,7 +33,7 @@ async function nav(page, route) {
 }
 async function shot(page, name) {
   await page.waitForFunction(() => !document.querySelector('.toast'));
-  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, mask: [page.locator('.api-key-value code')] });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: page overflow`);
 }
 async function api(page, path) {
@@ -53,7 +53,8 @@ async function manageCar(admin) {
 async function quota(admin, value) {
   await manageCar(admin);
   await admin.locator('[data-edit-member-limit][data-member-name="QA Passenger 1"]').click();
-  await admin.locator('#member-quota-value').fill(value);
+  await admin.locator('#member-five-hour').fill(value);
+  await admin.locator('#member-weekly').fill(value);
   await admin.locator('#member-quota-form button[type=submit]').click();
   await admin.locator('#member-quota-form').waitFor({ state: 'detached' });
 }
@@ -81,11 +82,13 @@ try {
   await admin.locator('[data-finish]').click();
   await manageCar(admin);
   await admin.locator('#member-user').selectOption({ label: 'QA New Member · qa-new-member' });
-  await admin.locator('#member-limit').fill('');
-  assert.equal(await admin.locator('#member-limit').evaluate(el => el.checkValidity()), false);
-  await admin.locator('#member-limit').fill('-1');
-  assert.equal(await admin.locator('#member-limit').evaluate(el => el.checkValidity()), false);
-  await admin.locator('#member-limit').fill('0');
+  for (const selector of ['#member-five-hour-new', '#member-weekly-new']) {
+    await admin.locator(selector).fill('');
+    assert.equal(await admin.locator(selector).evaluate(el => el.checkValidity()), false);
+    await admin.locator(selector).fill('-1');
+    assert.equal(await admin.locator(selector).evaluate(el => el.checkValidity()), false);
+    await admin.locator(selector).fill('0');
+  }
   await admin.locator('#add-member button[type=submit]').click();
   await admin.locator('#add-member').waitFor({ state: 'detached' });
   checks.push('创建用户、上车必填/负数校验、零额度上车');
@@ -93,15 +96,15 @@ try {
   await passenger.locator('#create-key').click();
   await passenger.locator('#key-name').fill('Synthetic Browser QA');
   await passenger.locator('#key-form button[type=submit]').click();
-  await passenger.locator('.secret-box').waitFor();
-  const key = await passenger.locator('.secret-box').innerText();
-  await passenger.locator('[data-finish]').click();
+  await passenger.locator('#key-form').waitFor({ state: 'detached' });
+  const key = await passenger.locator('.api-key-value code').first().innerText();
+  assert(key.startsWith('cpk_v1_'));
   const models = await passenger.evaluate(async key => (await (await fetch('/v1/models', { headers: { Authorization: `Bearer ${key}` } })).json()), key);
   assert(!JSON.stringify(models).includes('qa-isolated-only'));
   assert.equal((await generate(passenger, key)).status, 200);
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '0.045');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '0.045');
   assert.equal((await generate(passenger, key, fixture.model, true)).status, 200);
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '0.09');
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '0.09');
   const calls = () => passenger.evaluate(async () => (await (await fetch('/__fixture/calls')).json()).calls);
   const before = await calls();
   const missing = await generate(passenger, key, fixture.missing_model);
@@ -139,7 +142,7 @@ try {
   await retentionDays(180);
   // Permanent retention disables automatic expiry; manual cleanup still removes completed details.
   await retentionDays(0);
-  const billed = (await api(passenger, '/me/car')).body.billing.used_usd;
+  const billed = (await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd;
   const previewResponse = admin.waitForResponse(response => response.url().endsWith('/admin/retention/preview') && response.request().method() === 'POST');
   await admin.locator('[data-retention-op="usage_details"]').click();
   assert((await (await previewResponse).json()).expected_count > 0, 'manual detail cleanup must preview real records');
@@ -151,7 +154,7 @@ try {
   assert.equal(cleanup.status, 'completed');
   assert(cleanup.deleted_count > 0, 'manual detail cleanup must delete real records');
   await admin.locator('[data-retention-confirm]').waitFor({ state: 'detached' });
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, billed);
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, billed);
   assert.equal((await api(admin, '/admin/usage/requests?period=30d')).body.total, 0);
   // Keep a nonzero detail-retention policy while exercising current-period reset.
   await retentionDays(180);
@@ -172,7 +175,7 @@ try {
   await passenger.locator('#password-form button').click();
   await login(passenger, credentials);
   await nav(passenger, '/');
-  assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, billed);
+  assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, billed);
   assert.equal((await generate(passenger, key)).status, 200);
   checks.push('管理员重置密码、旧会话失效、强制改密期间工作台拦截、改密后Key及金额保留');
   for (const width of [390, 360]) {
@@ -194,12 +197,12 @@ try {
     await admin.locator('.request-row').first().locator('summary').click();
     await shot(admin, `mobile-${width}-requests`);
     await nav(admin, '/retention');
-    await admin.locator('[data-retention-op="reset_current_period"]').click();
+    await admin.locator('[data-retention-op="reset_quota_windows"]').click();
     await shot(admin, `mobile-${width}-reset-preview`);
     await admin.locator('[data-retention-confirm]').click();
     await admin.locator('[data-retention-confirm]').waitFor({ state: 'detached' });
-    assert.equal((await api(passenger, '/me/car')).body.billing.used_usd, '0');
-    assert.equal((await api(passenger, '/me/car')).body.billing.limit_usd, '3');
+    assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').used_usd, '0');
+    assert.equal((await api(passenger, '/me/car')).body.quota_windows.find(window => window.kind === '7d').limit_usd, '3');
   }
   await passenger.setViewportSize({ width: 1440, height: 900 });
   await passenger.evaluate(() => { document.documentElement.style.zoom = '2'; });

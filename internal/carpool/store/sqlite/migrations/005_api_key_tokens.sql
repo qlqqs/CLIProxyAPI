@@ -1,0 +1,1 @@
+ALTER TABLE user_api_keys ADD COLUMN token TEXT NOT NULL DEFAULT '';

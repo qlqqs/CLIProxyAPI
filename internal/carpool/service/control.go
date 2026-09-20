@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	carpoolbilling "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/billing"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/pricing"
 	carpoolruntime "github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/runtime"
@@ -56,8 +55,7 @@ type Repository interface {
 	GetUserConcurrency(context.Context, string) (*int, error)
 	GetAccountConcurrency(context.Context, string) (*int, error)
 	SetAccountConcurrency(context.Context, string, *int, *domain.AuditEvent) error
-	ObserveQuotaWindows(context.Context, []domain.QuotaWindowObservation) error
-	MemberQuotaWindows(context.Context, string, string, time.Time) ([]domain.MemberQuotaWindow, error)
+	MemberQuotaWindows(context.Context, string, time.Time) ([]domain.MemberQuotaWindow, error)
 
 	BootstrapAdmin(context.Context, domain.User, *domain.AuditEvent) (domain.User, error)
 	CreateUser(context.Context, domain.User, ...*domain.AuditEvent) (domain.User, error)
@@ -90,9 +88,6 @@ type Repository interface {
 
 	CurrentMembership(context.Context, string) (domain.Membership, error)
 	ListCurrentMembershipsByCar(context.Context, string) ([]domain.Membership, error)
-	SetMonthlyLimit(context.Context, string, *int64, *domain.AuditEvent) (domain.Membership, error)
-	EnsureBillingPeriod(context.Context, domain.BillingPeriod) (domain.BillingPeriod, error)
-	GetBillingPeriod(context.Context, string, time.Time) (domain.BillingPeriod, error)
 	MoveMembership(context.Context, domain.MembershipMove) (domain.Membership, error)
 	EndMembership(context.Context, string, string, time.Time, *domain.AuditEvent) error
 
@@ -209,7 +204,6 @@ type MemberView struct {
 	QuotaWindows []domain.MemberQuotaWindow
 	Membership   domain.Membership
 	Usage        domain.MemberUsageAggregate
-	Billing      domain.BillingSnapshot
 	Left         bool
 }
 
@@ -649,7 +643,7 @@ func (c *Control) CreateAPIKey(ctx context.Context, user domain.User, name strin
 		return CreateAPIKeyResult{}, errSecret
 	}
 	audit := c.audit(sessionAuditActorType, user.UserRef, "create_api_key", "api_key", secret.KeyID, "succeeded", "")
-	key, errCreate := c.repository.CreateAPIKey(ctx, domain.APIKey{KeyID: secret.KeyID, UserID: user.ID, Name: name, SecretDigest: secret.Digest, CreatedAt: now, ExpiresAt: expiresAt}, &audit)
+	key, errCreate := c.repository.CreateAPIKey(ctx, domain.APIKey{KeyID: secret.KeyID, Token: secret.Token, UserID: user.ID, Name: name, SecretDigest: secret.Digest, CreatedAt: now, ExpiresAt: expiresAt}, &audit)
 	if errCreate != nil {
 		return CreateAPIKeyResult{}, errCreate
 	}
@@ -816,23 +810,16 @@ func (c *Control) UpdateCar(ctx context.Context, actor domain.User, carRef strin
 }
 
 func (c *Control) MoveMember(ctx context.Context, actor domain.User, carRef, userRef, displayName string) (domain.Membership, error) {
-	return c.moveMember(ctx, actor, carRef, userRef, displayName, nil)
+	zero := int64(0)
+	return c.MoveMemberWithLimits(ctx, actor, carRef, userRef, displayName, &zero, &zero)
 }
 
-// MoveMemberWithLimit boards a passenger and assigns the optional monthly USD limit.
-// The legacy wrapper remains available for database migrations and older clients.
-func (c *Control) MoveMemberWithLimit(ctx context.Context, actor domain.User, carRef, userRef, displayName string, limitNanoUSD *int64) (domain.Membership, error) {
-	if limitNanoUSD == nil {
-		return domain.Membership{}, domain.ErrInvalid
-	}
-	return c.moveMember(ctx, actor, carRef, userRef, displayName, limitNanoUSD)
-}
-
-func (c *Control) moveMember(ctx context.Context, actor domain.User, carRef, userRef, displayName string, limitNanoUSD *int64) (domain.Membership, error) {
+// MoveMemberWithLimits boards a passenger with local 5h and 7d limits.
+func (c *Control) MoveMemberWithLimits(ctx context.Context, actor domain.User, carRef, userRef, displayName string, fiveHourNanoUSD, weeklyNanoUSD *int64) (domain.Membership, error) {
 	if actor.Role != domain.UserRoleAdmin {
 		return domain.Membership{}, ErrForbidden
 	}
-	if limitNanoUSD != nil && *limitNanoUSD < 0 {
+	if fiveHourNanoUSD == nil || weeklyNanoUSD == nil || *fiveHourNanoUSD < 0 || *weeklyNanoUSD < 0 {
 		return domain.Membership{}, domain.ErrInvalid
 	}
 	car, errCar := c.carByRef(ctx, carRef)
@@ -859,33 +846,11 @@ func (c *Control) moveMember(ctx context.Context, actor domain.User, carRef, use
 		return domain.Membership{}, errCurrent
 	}
 	audit := c.audit(sessionAuditActorType, actor.UserRef, "move_member", "user", user.UserRef, "succeeded", "")
-	return c.repository.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{MemberRef: memberRef, UserID: user.ID, CarID: car.ID, DisplayName: displayName, DisplayNameKey: displayKey, StartedAt: c.currentTime(), CreatedByUserID: actor.ID, MonthlyLimitNanoUSD: copyInt64(limitNanoUSD)}, ExpectedCurrentID: expected, EndCurrentReason: "moved", Audit: &audit})
-}
-
-// SetMemberMonthlyLimit updates the current membership limit immediately.
-func (c *Control) SetMemberMonthlyLimit(ctx context.Context, actor domain.User, carRef, memberRef string, limitNanoUSD *int64) (domain.Membership, error) {
-	if actor.Role != domain.UserRoleAdmin {
-		return domain.Membership{}, ErrForbidden
-	}
-	if limitNanoUSD == nil || *limitNanoUSD < 0 {
-		return domain.Membership{}, domain.ErrInvalid
-	}
-	car, errCar := c.carByRef(ctx, carRef)
-	if errCar != nil {
-		return domain.Membership{}, errCar
-	}
-	members, errMembers := c.repository.ListCurrentMembershipsByCar(ctx, car.ID)
-	if errMembers != nil {
-		return domain.Membership{}, errMembers
-	}
-	for _, member := range members {
-		if member.MemberRef != strings.TrimSpace(memberRef) {
-			continue
-		}
-		audit := c.audit(sessionAuditActorType, actor.UserRef, "update_member_limit", "membership", member.MemberRef, "succeeded", "")
-		return c.repository.SetMonthlyLimit(ctx, member.ID, limitNanoUSD, &audit)
-	}
-	return domain.Membership{}, domain.ErrNotFound
+	return c.repository.MoveMembership(ctx, domain.MembershipMove{Membership: domain.Membership{
+		MemberRef: memberRef, UserID: user.ID, CarID: car.ID, DisplayName: displayName,
+		DisplayNameKey: displayKey, StartedAt: c.currentTime(), CreatedByUserID: actor.ID,
+		FiveHourLimitNanoUSD: copyInt64(fiveHourNanoUSD), WeeklyLimitNanoUSD: copyInt64(weeklyNanoUSD),
+	}, ExpectedCurrentID: expected, EndCurrentReason: "moved", Audit: &audit})
 }
 
 func (c *Control) RemoveMember(ctx context.Context, actor domain.User, carRef, memberRef string) error {
@@ -921,10 +886,8 @@ func (c *Control) ListMembers(ctx context.Context, actor domain.User, carRef str
 	return c.repository.ListCurrentMembershipsByCar(ctx, car.ID)
 }
 
-// ListMembersWithBilling returns current members with their live monthly billing projection.
-// The projection is built from the same ledger used by passenger views so both roles see
-// identical limits, confirmed spend, and period boundaries.
-func (c *Control) ListMembersWithBilling(ctx context.Context, actor domain.User, carRef string) ([]MemberView, error) {
+// ListMembersWithQuotas returns current members with their local quota projections.
+func (c *Control) ListMembersWithQuotas(ctx context.Context, actor domain.User, carRef string) ([]MemberView, error) {
 	if actor.Role != domain.UserRoleAdmin {
 		return nil, ErrForbidden
 	}
@@ -938,15 +901,11 @@ func (c *Control) ListMembersWithBilling(ctx context.Context, actor domain.User,
 	}
 	views := make([]MemberView, 0, len(members))
 	for _, member := range members {
-		billing, errBilling := c.billingSnapshot(ctx, member)
-		if errBilling != nil {
-			return nil, errBilling
-		}
 		limits, windows, errLimits := c.memberLimitsView(ctx, member)
 		if errLimits != nil {
 			return nil, errLimits
 		}
-		views = append(views, MemberView{Membership: member, Billing: billing, Limits: limits, QuotaWindows: windows})
+		views = append(views, MemberView{Membership: member, Limits: limits, QuotaWindows: windows})
 	}
 	return views, nil
 }
@@ -1157,15 +1116,11 @@ func (c *Control) PassengerMembers(ctx context.Context, user domain.User, period
 		if !ok {
 			aggregate = domain.MemberUsageAggregate{MembershipID: member.ID, MemberRef: member.MemberRef, DisplayName: member.DisplayName}
 		}
-		billingSnapshot, errBilling := c.billingSnapshot(ctx, member)
-		if errBilling != nil {
-			return ReportPeriod{}, nil, errBilling
-		}
 		limits, windows, errLimits := c.memberLimitsView(ctx, member)
 		if errLimits != nil {
 			return ReportPeriod{}, nil, errLimits
 		}
-		views = append(views, MemberView{Membership: member, Usage: aggregate, Billing: billingSnapshot, Limits: limits, QuotaWindows: windows})
+		views = append(views, MemberView{Membership: member, Usage: aggregate, Limits: limits, QuotaWindows: windows})
 		seen[member.ID] = struct{}{}
 	}
 	for _, aggregate := range aggregates {
@@ -1176,45 +1131,6 @@ func (c *Control) PassengerMembers(ctx context.Context, user domain.User, period
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].Usage.DisplayName < views[j].Usage.DisplayName })
 	return period, views, nil
-}
-
-// billingSnapshot ensures the current monthly ledger exists before projecting it.
-func (c *Control) billingSnapshot(ctx context.Context, membership domain.Membership) (domain.BillingSnapshot, error) {
-	now := c.currentTime()
-	anchor := membership.BillingAnchorAt
-	if anchor.IsZero() {
-		anchor = membership.StartedAt
-	}
-	location := c.reportLocation
-	if strings.TrimSpace(membership.BillingTimezone) != "" {
-		if loaded, errLoad := time.LoadLocation(strings.TrimSpace(membership.BillingTimezone)); errLoad == nil {
-			location = loaded
-		}
-	}
-	period, errPeriod := carpoolbilling.MonthlyPeriod(anchor, now, location)
-	if errPeriod != nil {
-		return domain.BillingSnapshot{}, errPeriod
-	}
-	stored, errEnsure := c.repository.EnsureBillingPeriod(ctx, domain.BillingPeriod{
-		MembershipID: membership.ID, MemberRefSnapshot: membership.MemberRef, CarID: membership.CarID,
-		Timezone: location.String(), AnchorAt: anchor, From: period.From, To: period.To,
-		LimitNanoUSD: copyInt64(membership.MonthlyLimitNanoUSD), Revision: 1,
-	})
-	if errEnsure != nil {
-		return domain.BillingSnapshot{}, errEnsure
-	}
-	return carpoolbilling.Snapshot(carpoolbilling.Period{From: stored.From, To: stored.To}, stored.LimitNanoUSD,
-		stored.ConfirmedNanoUSD, stored.ResetBaselineNanoUSD, stored.UnknownCostEvents, stored.Timezone, nil), nil
-}
-
-// PassengerBilling returns the current passenger ledger projection.
-func (c *Control) PassengerBilling(ctx context.Context, user domain.User) (domain.Membership, domain.BillingSnapshot, error) {
-	_, membership, errCar := c.PassengerCar(ctx, user)
-	if errCar != nil {
-		return domain.Membership{}, domain.BillingSnapshot{}, errCar
-	}
-	snapshot, errSnapshot := c.billingSnapshot(ctx, membership)
-	return membership, snapshot, errSnapshot
 }
 
 func (c *Control) PassengerAccounts(ctx context.Context, user domain.User, periodName string) (ReportPeriod, []AccountView, error) {
@@ -1599,16 +1515,6 @@ func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 			return nil, errPolicy
 		}
 	}
-	if authID != "" {
-		if errSync := c.SyncQuotaWindows(ctx, authID); errSync != nil {
-			return nil, errSync
-		}
-		preliminary, errCheck = c.repository.AuthorizeAndBeginProxyRequest(ctx, input)
-		if errCheck != nil {
-			recordRejection(preliminary.Request.ReasonCode)
-			return nil, admissionResult(preliminary, errCheck)
-		}
-	}
 	var permit *carpoolruntime.ConcurrencyPermit
 	if !nonBillable {
 		if errPolicy := c.loadConcurrencyPolicy(ctx, userID, authID); errPolicy != nil {
@@ -1642,11 +1548,6 @@ func (c *Control) authorizeProxy(ctx context.Context, userID, apiKeyID, callerSc
 		if errAccounting := c.accountingAdmission(ctx); errAccounting != nil {
 			recordRejection("accounting_unavailable")
 			return nil, errAccounting
-		}
-	}
-	if authID != "" {
-		if errSync := c.SyncQuotaWindows(ctx, authID); errSync != nil {
-			return nil, errSync
 		}
 	}
 	// Freeze prices and billing time only when the waiting request is admitted.

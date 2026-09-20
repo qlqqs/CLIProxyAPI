@@ -124,8 +124,8 @@ func TestQuotaServiceFreezesAdmissionTimeAndPricesAfterWaiting(t *testing.T) {
 		if errFirst != nil || errSecond != nil {
 			t.Fatalf("request detail errors = %v, %v", errFirst, errSecond)
 		}
-		if !second.Request.StartedAt.Equal(admittedAt) || second.Request.PricingCatalogHash != catalogB.Hash || second.Request.PricingCoverageFrom == nil || !second.Request.PricingCoverageFrom.Equal(admittedAt) || first.Request.BillingPeriodID == second.Request.BillingPeriodID {
-			t.Fatalf("admission did not freeze new month/time/prices: first=%+v second=%+v", first.Request, second.Request)
+		if !second.Request.StartedAt.Equal(admittedAt) || second.Request.PricingCatalogHash != catalogB.Hash || second.Request.PricingCoverageFrom == nil || !second.Request.PricingCoverageFrom.Equal(admittedAt) {
+			t.Fatalf("admission did not freeze post-queue time/prices: first=%+v second=%+v", first.Request, second.Request)
 		}
 		got.snapshot.Release()
 		f.assertIdle(t)
@@ -133,7 +133,7 @@ func TestQuotaServiceFreezesAdmissionTimeAndPricesAfterWaiting(t *testing.T) {
 }
 
 func TestQuotaServiceRechecksAuthorizationAfterWaiting(t *testing.T) {
-	for _, scenario := range []string{"monthly limit", "revoked key", "disabled user", "moved account", "writer failure"} {
+	for _, scenario := range []string{"five-hour limit", "revoked key", "disabled user", "moved account", "writer failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newQuotaServiceFixture(t)
@@ -144,10 +144,13 @@ func TestQuotaServiceRechecksAuthorizationAfterWaiting(t *testing.T) {
 				ctx := context.Background()
 				wantReason := ""
 				switch scenario {
-				case "monthly limit":
-					zero := int64(0)
-					f.setMemberLimits(t, 0, domain.MemberLimitsUpdate{MonthlySet: true, MonthlyNanoUSD: &zero})
-					wantReason = "quota_exceeded"
+				case "five-hour limit":
+					limit := int64(1)
+					f.setMemberLimits(t, 0, domain.MemberLimitsUpdate{FiveHourSet: true, FiveHourNanoUSD: &limit})
+					if _, errBill := f.store.RecordUsageEventBilled(ctx, domain.UsageEvent{EventID: "queued-quota-event", RequestID: active.RequestID(), AuthID: f.assignment.AuthID, Model: "quota-model", UsageKnown: true}, "", &limit, "", ""); errBill != nil {
+						t.Fatal(errBill)
+					}
+					wantReason = "five_hour_quota_exhausted"
 				case "revoked key":
 					if errRevoke := f.control.RevokeAPIKey(ctx, f.admin, f.users[0], f.keys[0][1].KeyID); errRevoke != nil {
 						t.Fatal(errRevoke)
@@ -207,66 +210,6 @@ func TestQuotaServiceRechecksAuthorizationAfterWaiting(t *testing.T) {
 	}
 }
 
-func TestQuotaServicePendingShortWindowsDoNotBypassMonthlyLimit(t *testing.T) {
-	for _, kind := range []string{"5h", "7d"} {
-		t.Run(kind, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				f := newQuotaServiceFixture(t)
-				zero := int64(0)
-				update := domain.MemberLimitsUpdate{FiveHourSet: true, FiveHourNanoUSD: &zero}
-				wantReason := "five_hour_quota_exhausted"
-				if kind == "7d" {
-					update = domain.MemberLimitsUpdate{WeeklySet: true, WeeklyNanoUSD: &zero}
-					wantReason = "weekly_quota_exhausted"
-				}
-				f.setMemberLimits(t, 0, update)
-				_, windows, errView := f.control.PassengerQuota(context.Background(), f.users[0])
-				if errView != nil || len(windows) != 2 || !windows[0].PendingSync || !windows[1].PendingSync {
-					t.Fatalf("missing-window projection = %+v, %v", windows, errView)
-				}
-				f.admit(t, 0, 0).Release()
-				f.setMemberLimits(t, 0, domain.MemberLimitsUpdate{MonthlySet: true, MonthlyNanoUSD: &zero})
-				_, errMonthly := f.authorize(context.Background(), 0, 0)
-				var rejected *ProxyAdmissionError
-				if !errors.As(errMonthly, &rejected) || rejected.Reason != "quota_exceeded" {
-					t.Fatalf("pending short window bypassed monthly quota: %v", errMonthly)
-				}
-				monthly := int64(100_000_000_000)
-				f.setMemberLimits(t, 0, domain.MemberLimitsUpdate{MonthlySet: true, MonthlyNanoUSD: &monthly})
-				reset := f.now().Add(time.Hour)
-				f.observe(t, kind, reset)
-				// Authorization itself must sync the first provider signal before admission.
-				_, errShort := f.authorize(context.Background(), 0, 0)
-				if !errors.As(errShort, &rejected) || rejected.Reason != wantReason {
-					t.Fatalf("observed short-window rejection = %v, want %s", errShort, wantReason)
-				}
-				_, windows, errView = f.control.PassengerQuota(context.Background(), f.users[0])
-				if errView != nil {
-					t.Fatal(errView)
-				}
-				for _, window := range windows {
-					if window.Kind == kind && (window.PendingSync || !window.ResetAt.Equal(reset)) {
-						t.Fatalf("observed projection = %+v", window)
-					}
-				}
-				// No valid next observation: expiration returns to pending, not a fabricated period.
-				f.clock.Store(reset.Add(time.Second).UnixMicro())
-				f.admit(t, 0, 0).Release()
-				_, windows, errView = f.control.PassengerQuota(context.Background(), f.users[0])
-				if errView != nil {
-					t.Fatal(errView)
-				}
-				for _, window := range windows {
-					if window.Kind == kind && !window.PendingSync {
-						t.Fatalf("expired window was silently renewed: %+v", window)
-					}
-				}
-				f.assertIdle(t)
-			})
-		})
-	}
-}
-
 func TestQuotaServiceFirstObservationIncludesPendingCharges(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := newQuotaServiceFixture(t)
@@ -277,7 +220,6 @@ func TestQuotaServiceFirstObservationIncludesPendingCharges(t *testing.T) {
 			t.Fatal(errBill)
 		}
 		active.Release()
-		f.observe(t, "5h", f.now().Add(time.Hour))
 		_, errAuthorize := f.authorize(context.Background(), 0, 1)
 		var rejected *ProxyAdmissionError
 		if !errors.As(errAuthorize, &rejected) || rejected.Reason != "five_hour_quota_exhausted" {
@@ -288,7 +230,7 @@ func TestQuotaServiceFirstObservationIncludesPendingCharges(t *testing.T) {
 			t.Fatal(errView)
 		}
 		for _, window := range windows {
-			if window.Kind == "5h" && (window.PendingSync || window.ConfirmedNanoUSD != limit) {
+			if window.Kind == "5h" && window.ConfirmedNanoUSD != limit {
 				t.Fatalf("pending charge projection = %+v", window)
 			}
 		}
@@ -341,7 +283,6 @@ func TestQuotaServiceModelQueriesDoNotConsumeGenerationPermits(t *testing.T) {
 		active := f.admit(t, 0, 0)
 		zero := int64(0)
 		f.setMemberLimits(t, 0, domain.MemberLimitsUpdate{FiveHourSet: true, FiveHourNanoUSD: &zero})
-		f.observe(t, "5h", f.now().Add(time.Hour))
 		f.unhealthy.Store(true)
 		models, errModels := f.control.AuthorizeProxy(context.Background(), f.users[0].ID, f.keys[0][1].KeyID, "synthetic-scope", http.MethodGet, "/v1/models", false)
 		if errModels != nil || models == nil {

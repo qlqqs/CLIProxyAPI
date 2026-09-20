@@ -29,7 +29,7 @@ async function nav(route) {
   await page.waitForFunction(route => document.querySelector('#content')?.dataset.page === route && !document.querySelector('#content .loading'), route);
 }
 async function shot(name) {
-  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${output}/${name}.png`, fullPage: true, mask: [page.locator('.api-key-value code')] });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: page overflow`);
 }
 async function closeDialog() {

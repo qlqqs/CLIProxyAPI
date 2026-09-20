@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/carpool-guidelines.md","reason":"约束 Carpool API、SQLite 迁移、凭据隔离、用量和浏览器验收"}
+{"file":".trellis/spec/backend/carpool-quota-concurrency-guidelines.md","reason":"现有月额度、短周期账本、准入、并发和生命周期合同，需要按新模型修订"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨存储、服务、HTTP DTO、前端和测试，需要完整数据流核对"}
+{"file":".trellis/tasks/09-19-remove-monthly-quota/research/sub2api-benchmark.md","reason":"用户指定的 Sub2API 5h/7d 对标证据与转译边界"}

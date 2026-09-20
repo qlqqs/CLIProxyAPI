@@ -38,7 +38,7 @@ test("admin usage details retain incomplete and unknown statistics", () => {
 
 test("billing completeness and exhaustion warnings remain", () => {
   assert.match(source, /费用数据不完整，已用金额仅为已确认小计。/);
-  assert.match(source, /本月额度已用尽，新的请求将被拒绝。/);
+  assert.match(source, /7 天额度已用尽，新的请求将被拒绝。/);
   const markup = context.billingMarkup({ limit_usd: "10", used_usd: "1", unknown_cost_events: 2 });
   assert.match(markup, /2 条费用未知/);
 });

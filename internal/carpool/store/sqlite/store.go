@@ -26,11 +26,13 @@ type Config struct {
 	BusyTimeout        time.Duration
 	MaxOpenConnections int
 	Now                func() time.Time
+	Location           *time.Location
 }
 
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db       *sql.DB
+	now      func() time.Time
+	location *time.Location
 }
 
 func Open(ctx context.Context, cfg Config) (*Store, error) {
@@ -76,7 +78,11 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	db.SetMaxOpenConns(maxOpenConnections)
 	db.SetMaxIdleConns(maxOpenConnections)
 
-	store := &Store{db: db, now: now}
+	location := cfg.Location
+	if location == nil {
+		location = time.UTC
+	}
+	store := &Store{db: db, now: now, location: location}
 	if errPing := db.PingContext(ctx); errPing != nil {
 		return nil, closeAfterOpenError(db, fmt.Errorf("sqlite store: ping database: %w", classifyError(errPing)))
 	}

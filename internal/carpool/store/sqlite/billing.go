@@ -5,27 +5,33 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 )
 
-// SetMonthlyLimit changes the current member limit and the current period limit
-// atomically. A nil limit leaves the member in the legacy, not-configured state.
+// SetMonthlyLimit only updates the retained historical field.
 func (s *Store) SetMonthlyLimit(ctx context.Context, membershipID string, limit *int64, audit *domain.AuditEvent) (domain.Membership, error) {
-	if err := s.SetMemberLimits(ctx, membershipID, domain.MemberLimitsUpdate{MonthlySet: true, MonthlyNanoUSD: limit}, audit); err != nil {
-		return domain.Membership{}, err
+	if limit != nil && *limit < 0 {
+		return domain.Membership{}, domain.ErrInvalid
 	}
-	return s.membershipByID(ctx, membershipID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Membership{}, classifyError(err)
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE memberships SET monthly_limit_nano_usd=? WHERE id=?`, nullableInt64(limit), membershipID); err != nil {
+		return domain.Membership{}, rollback(tx, classifyError(err))
+	}
+	if err = insertAudit(ctx, tx, audit, s.currentTime()); err != nil {
+		return domain.Membership{}, rollback(tx, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return domain.Membership{}, classifyError(err)
+	}
+	return scanMembership(s.db.QueryRowContext(ctx, `SELECT id, member_ref, user_id, car_id, display_name, display_name_key, started_at, ended_at, ended_reason, created_by_user_id, monthly_limit_nano_usd, billing_timezone, billing_anchor_at FROM memberships WHERE id=?`, membershipID))
 }
 
-func (s *Store) membershipByID(ctx context.Context, id string) (domain.Membership, error) {
-	return scanMembership(s.db.QueryRowContext(ctx, `SELECT id, member_ref, user_id, car_id, display_name, display_name_key, started_at, ended_at, ended_reason, created_by_user_id, monthly_limit_nano_usd, billing_timezone, billing_anchor_at FROM memberships WHERE id = ?`, id))
-}
-
-// EnsureBillingPeriod creates a period once and returns the stored immutable facts.
 func (s *Store) EnsureBillingPeriod(ctx context.Context, period domain.BillingPeriod) (domain.BillingPeriod, error) {
 	if err := s.ready(); err != nil {
 		return domain.BillingPeriod{}, err
@@ -110,14 +116,6 @@ func (s *Store) RecordUsageEventBilled(ctx context.Context, event domain.UsageEv
 	if !errors.Is(errReceipt, sql.ErrNoRows) {
 		return domain.UsageEvent{}, rollback(tx, scanError("read billed receipt", errReceipt))
 	}
-	if strings.TrimSpace(periodID) == "" {
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(billing_period_id, '') FROM proxy_requests WHERE request_id = ?`, event.RequestID).Scan(&periodID); err != nil {
-			return domain.UsageEvent{}, rollback(tx, scanError("read request billing period", err))
-		}
-		if strings.TrimSpace(periodID) == "" {
-			return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: request has no billing period: %w", domain.ErrInvalid))
-		}
-	}
 	if err = populateUsageScope(ctx, tx, &event); err != nil {
 		return domain.UsageEvent{}, rollback(tx, err)
 	}
@@ -136,41 +134,22 @@ func (s *Store) RecordUsageEventBilled(ctx context.Context, event domain.UsageEv
 		return domain.UsageEvent{}, rollback(tx, err)
 	}
 	if affected == 1 {
-		if errQuota := recordQuotaFeeTx(ctx, tx, event, cost, pricingStatus, pricingReason); errQuota != nil {
+		if errQuota := recordQuotaFeeTx(ctx, tx, event, cost, pricingStatus, pricingReason, s.location); errQuota != nil {
 			return domain.UsageEvent{}, rollback(tx, errQuota)
 		}
-		var query string
-		var args []any
+		var errUpdate error
 		if cost == nil {
-			query = `UPDATE billing_periods SET unknown_cost_events = unknown_cost_events + 1, revision = revision + 1 WHERE id = ?`
-			args = []any{periodID}
+			_, errUpdate = tx.ExecContext(ctx, `UPDATE proxy_requests SET billing_status = 'unknown' WHERE request_id = ?`, event.RequestID)
 		} else {
-			query = `UPDATE billing_periods SET confirmed_nano_usd = confirmed_nano_usd + ?, revision = revision + 1 WHERE id = ?`
-			args = []any{*cost, periodID}
-		}
-		upd, e := tx.ExecContext(ctx, query, args...)
-		if e != nil {
-			return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: update billed period: %w", classifyError(e)))
-		}
-		n, e := upd.RowsAffected()
-		if e != nil || n != 1 {
-			if e == nil {
-				e = domain.ErrNotFound
-			}
-			return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: billing period missing: %w", e))
-		}
-		if cost == nil {
-			_, e = tx.ExecContext(ctx, `UPDATE proxy_requests SET billing_status = 'unknown' WHERE request_id = ?`, event.RequestID)
-		} else {
-			_, e = tx.ExecContext(ctx, `UPDATE proxy_requests
+			_, errUpdate = tx.ExecContext(ctx, `UPDATE proxy_requests
 				SET billing_status = CASE WHEN billing_status = 'unknown' OR EXISTS (
 					SELECT 1 FROM usage_events WHERE request_id = ? AND pricing_status = 'unknown'
 				) THEN 'unknown' ELSE 'priced' END,
 				billed_nano_usd = COALESCE(billed_nano_usd, 0) + ?
 				WHERE request_id = ?`, event.RequestID, *cost, event.RequestID)
 		}
-		if e != nil {
-			return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: update request billing: %w", classifyError(e)))
+		if errUpdate != nil {
+			return domain.UsageEvent{}, rollback(tx, fmt.Errorf("sqlite store: update request billing: %w", classifyError(errUpdate)))
 		}
 	}
 	if err = tx.Commit(); err != nil {

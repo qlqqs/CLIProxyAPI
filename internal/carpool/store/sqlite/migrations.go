@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 )
@@ -27,6 +28,8 @@ const migration002Checksum = "60df97c5bb326f4e2216e54f47910e5654dd56bdd83cac0cfd
 const migration003Checksum = "eb1af0994dc20b154360ccbe69b9365c50a9f3c7a9a71ac5a2382882015fb8d5"
 
 const migration004Checksum = "9d5cfedf1bbaab5240f9dd5e4522f6ed69c44f6502240ee8dfc149e978f04134"
+const migration005Checksum = "0b882060587a09d09ae4ba6b04626babb28aad57a912253d977c4c13c0917395"
+const migration006Checksum = "c3c2f4e5d12ee836422ebf142257d69b3674b5ad49e5caf3bb8505611fae82c8"
 
 var embeddedMigrationDefinitions = []migration{
 	{
@@ -45,6 +48,8 @@ var embeddedMigrationDefinitions = []migration{
 		checksum: migration003Checksum,
 	},
 	{version: 4, name: "quota", checksum: migration004Checksum},
+	{version: 5, name: "api_key_tokens", checksum: migration005Checksum},
+	{version: 6, name: "local_quotas", checksum: migration006Checksum},
 }
 
 func loadEmbeddedMigrations() ([]migration, error) {
@@ -93,6 +98,11 @@ func (s *Store) applyMigrations(ctx context.Context, migrations []migration) err
 		if _, errExec := tx.ExecContext(ctx, next.sql); errExec != nil {
 			return rollback(tx, fmt.Errorf("sqlite store: apply migration %d: %w", next.version, classifyError(errExec)))
 		}
+		if next.version == 6 {
+			if errBackfill := backfillLocalQuotaWindows(ctx, tx, s.currentTime(), s.location); errBackfill != nil {
+				return rollback(tx, fmt.Errorf("sqlite store: backfill local quota windows: %w", errBackfill))
+			}
+		}
 		if _, errRecord := tx.ExecContext(ctx,
 			"INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)",
 			next.version, next.name, next.checksum, toDatabaseTime(s.currentTime())); errRecord != nil {
@@ -100,6 +110,69 @@ func (s *Store) applyMigrations(ctx context.Context, migrations []migration) err
 		}
 		if errCommit := tx.Commit(); errCommit != nil {
 			return fmt.Errorf("sqlite store: commit migration %d: %w", next.version, classifyError(errCommit))
+		}
+	}
+	return nil
+}
+
+func backfillLocalQuotaWindows(ctx context.Context, tx *sql.Tx, at time.Time, location *time.Location) error {
+	if location == nil {
+		location = time.UTC
+	}
+	for _, item := range []struct {
+		kind   string
+		column string
+	}{{domain.QuotaWindowFiveHour, "five_hour_window_id"}, {domain.QuotaWindowWeekly, "weekly_window_id"}} {
+		query := `INSERT INTO member_quota_windows(membership_id,kind,window_from,reset_at,confirmed_nano_usd,unknown_cost_events,updated_at)
+			SELECT f.membership_id,?,MIN(w.window_from),MAX(w.reset_at),SUM(f.confirmed_nano_usd),SUM(f.unknown_cost_events),?
+			FROM quota_request_fees f JOIN quota_windows w ON w.id=f.` + item.column + ` AND w.kind=?
+			WHERE w.reset_at>?
+			GROUP BY f.membership_id`
+		if _, errExec := tx.ExecContext(ctx, query, item.kind, toDatabaseTime(at), item.kind, toDatabaseTime(at)); errExec != nil {
+			return classifyError(errExec)
+		}
+		query = `SELECT membership_id,MIN(started_at),SUM(confirmed_nano_usd),SUM(unknown_cost_events)
+			FROM quota_request_fees WHERE ` + item.column + ` IS NULL
+			GROUP BY membership_id HAVING SUM(confirmed_nano_usd)>0`
+		rows, errQuery := tx.QueryContext(ctx, query)
+		if errQuery != nil {
+			return classifyError(errQuery)
+		}
+		for rows.Next() {
+			var membershipID string
+			var startedAt, confirmed, unknown int64
+			if errScan := rows.Scan(&membershipID, &startedAt, &confirmed, &unknown); errScan != nil {
+				rows.Close()
+				return classifyError(errScan)
+			}
+			started := fromDatabaseTime(startedAt)
+			from, reset := localQuotaWindowBounds(started, item.kind, location)
+			if !reset.After(at) {
+				continue
+			}
+			result, errUpdate := tx.ExecContext(ctx, `UPDATE member_quota_windows SET confirmed_nano_usd=confirmed_nano_usd+?,unknown_cost_events=unknown_cost_events+?,revision=revision+1,updated_at=? WHERE membership_id=? AND kind=?`, confirmed, unknown, toDatabaseTime(at), membershipID, item.kind)
+			if errUpdate != nil {
+				rows.Close()
+				return classifyError(errUpdate)
+			}
+			affected, errRows := result.RowsAffected()
+			if errRows != nil {
+				rows.Close()
+				return errRows
+			}
+			if affected == 0 {
+				if _, errInsert := tx.ExecContext(ctx, `INSERT INTO member_quota_windows(membership_id,kind,window_from,reset_at,confirmed_nano_usd,unknown_cost_events,updated_at) VALUES(?,?,?,?,?,?,?)`, membershipID, item.kind, toDatabaseTime(from), toDatabaseTime(reset), confirmed, unknown, toDatabaseTime(at)); errInsert != nil {
+					rows.Close()
+					return classifyError(errInsert)
+				}
+			}
+		}
+		if errRows := rows.Err(); errRows != nil {
+			rows.Close()
+			return classifyError(errRows)
+		}
+		if errClose := rows.Close(); errClose != nil {
+			return classifyError(errClose)
 		}
 	}
 	return nil

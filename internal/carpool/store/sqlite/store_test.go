@@ -35,8 +35,8 @@ func TestOpenAppliesMigrationAndConnectionSettings(t *testing.T) {
 	if errVersion != nil {
 		t.Fatalf("SchemaVersion() error = %v", errVersion)
 	}
-	if version != 4 {
-		t.Fatalf("SchemaVersion() = %d, want 4", version)
+	if version != 6 {
+		t.Fatalf("SchemaVersion() = %d, want 6", version)
 	}
 	var recordedChecksum string
 	if errQuery := store.db.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE version = 1").Scan(&recordedChecksum); errQuery != nil {
@@ -67,7 +67,7 @@ func TestOpenAppliesMigrationAndConnectionSettings(t *testing.T) {
 	}
 
 	wantTables := []string{
-		"account_concurrency_limits", "audit_events", "billed_event_receipts", "billing_periods", "car_auth_assignments", "carpool_billing_settings", "cars", "memberships", "pricing_catalogs", "proxy_request_auth_scopes",
+		"account_concurrency_limits", "audit_events", "billed_event_receipts", "billing_periods", "car_auth_assignments", "carpool_billing_settings", "cars", "member_quota_windows", "memberships", "pricing_catalogs", "proxy_request_auth_scopes",
 		"proxy_requests", "quota_request_fees", "quota_windows", "retention_jobs", "schema_migrations", "sessions", "usage_events", "user_api_keys", "user_concurrency_limits", "users",
 	}
 	rows, errQuery := connections[0].QueryContext(ctx, `

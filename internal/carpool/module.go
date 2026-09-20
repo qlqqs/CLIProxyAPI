@@ -72,7 +72,7 @@ func Open(ctx context.Context, cfg *config.Config, configPath string, authCatalo
 		return nil, errProxies
 	}
 
-	store, errStore := carpoolsqlite.Open(ctx, carpoolsqlite.Config{Path: databasePath})
+	store, errStore := carpoolsqlite.Open(ctx, carpoolsqlite.Config{Path: databasePath, Location: reportLocation})
 	if errStore != nil {
 		return nil, fmt.Errorf("carpool: open database: %w", errStore)
 	}
@@ -222,11 +222,6 @@ func (m *Module) observeRequestCompletion(ctx context.Context, completion plugin
 	snapshot.CompleteOnce(func() {
 		completion.RequestID = snapshot.RequestID()
 		m.writer.HandleRequestCompletion(ctx, completion)
-		if m.control != nil {
-			if errSync := m.control.SyncQuotaWindows(context.WithoutCancel(ctx), snapshot.AuthIDs()...); errSync != nil {
-				log.WithError(errSync).Warn("carpool quota period observation failed")
-			}
-		}
 	})
 }
 

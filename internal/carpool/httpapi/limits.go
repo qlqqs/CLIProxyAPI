@@ -8,7 +8,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/carpool/domain"
 )
 
-// memberLimitsRequest distinguishes omitted fields from explicitly removed limits.
+// memberLimitsRequest distinguishes omitted fields from explicitly supplied limits.
 type memberLimitsRequest struct {
 	Monthly     optionalJSON[string] `json:"monthly_limit_usd"`
 	FiveHour    optionalJSON[string] `json:"five_hour_limit_usd"`
@@ -17,25 +17,19 @@ type memberLimitsRequest struct {
 }
 
 func (r memberLimitsRequest) update() (domain.MemberLimitsUpdate, error) {
-	update := domain.MemberLimitsUpdate{MonthlySet: r.Monthly.Set, FiveHourSet: r.FiveHour.Set, WeeklySet: r.Weekly.Set, UserConcurrencySet: r.Concurrency.Set}
-	if !r.Monthly.Set && !r.FiveHour.Set && !r.Weekly.Set && !r.Concurrency.Set {
+	update := domain.MemberLimitsUpdate{FiveHourSet: r.FiveHour.Set, WeeklySet: r.Weekly.Set, UserConcurrencySet: r.Concurrency.Set}
+	if !r.FiveHour.Set && !r.Weekly.Set && !r.Concurrency.Set {
 		return update, domain.ErrInvalid
 	}
 	for _, field := range []struct {
-		source   optionalJSON[string]
-		target   **int64
-		required bool
-	}{
-		{r.Monthly, &update.MonthlyNanoUSD, true}, {r.FiveHour, &update.FiveHourNanoUSD, false}, {r.Weekly, &update.WeeklyNanoUSD, false},
-	} {
+		source optionalJSON[string]
+		target **int64
+	}{{r.FiveHour, &update.FiveHourNanoUSD}, {r.Weekly, &update.WeeklyNanoUSD}} {
 		if !field.source.Set {
 			continue
 		}
 		if field.source.Null {
-			if field.required {
-				return update, domain.ErrInvalid
-			}
-			continue
+			return update, domain.ErrInvalid
 		}
 		value, errParse := carpoolbilling.ParseNanoUSD(field.source.Value)
 		if errParse != nil {
@@ -66,35 +60,31 @@ func appendMemberLimits(response gin.H, limits domain.MemberQuotaLimits, windows
 func memberQuotaWindowsResponse(windows []domain.MemberQuotaWindow) []gin.H {
 	result := make([]gin.H, 0, len(windows))
 	for _, window := range windows {
-		status := "active"
-		var used, remaining, overage *int64
-		if window.PendingSync {
-			status = "pending_sync"
-		} else {
-			used = pointerInt64(window.ConfirmedNanoUSD)
-			overage = pointerInt64(0)
-			if window.LimitNanoUSD != nil {
-				left := *window.LimitNanoUSD - window.ConfirmedNanoUSD
-				if left <= 0 {
-					status = "exhausted"
-				}
-				if left < 0 {
-					status = "overage"
-					overage = pointerInt64(-left)
-					left = 0
-				}
-				remaining = &left
-			}
-		}
-		if window.LimitNanoUSD == nil && !window.PendingSync {
+		status := "not_started"
+		used := window.ConfirmedNanoUSD
+		var remaining, overage *int64
+		if window.LimitNanoUSD != nil && *window.LimitNanoUSD == 0 {
 			status = "unlimited"
+		} else if !window.From.IsZero() && window.LimitNanoUSD != nil {
+			status = "active"
+			left := *window.LimitNanoUSD - used
+			if left <= 0 {
+				status = "exhausted"
+			}
+			if left < 0 {
+				status = "overage"
+				overage = pointerInt64(-left)
+				left = 0
+			}
+			remaining = &left
+		} else if window.LimitNanoUSD != nil {
+			remaining = pointerInt64(*window.LimitNanoUSD)
 		}
-		complete := !window.PendingSync && window.UnknownCostEvents == 0 && !window.CoverageFrom.After(window.From)
 		result = append(result, gin.H{
 			"kind": window.Kind, "status": status, "limit_usd": formatNanoUSD(window.LimitNanoUSD),
-			"used_usd": formatNanoUSD(used), "remaining_usd": formatNanoUSD(remaining), "overage_usd": formatNanoUSD(overage),
-			"period_from": optionalTime(window.From), "reset_at": optionalTime(window.ResetAt), "coverage_from": optionalTime(window.CoverageFrom),
-			"unknown_cost_events": window.UnknownCostEvents, "data_complete": complete,
+			"used_usd": formatNanoUSD(&used), "remaining_usd": formatNanoUSD(remaining), "overage_usd": formatNanoUSD(overage),
+			"period_from": optionalTime(window.From), "reset_at": optionalTime(window.ResetAt),
+			"unknown_cost_events": window.UnknownCostEvents, "data_complete": window.UnknownCostEvents == 0,
 		})
 	}
 	return result

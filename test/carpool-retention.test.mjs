@@ -47,7 +47,7 @@ function harness(respond = async () => null, hash = "") {
   const context = vm.createContext({
     location: { hash }, Headers, URLSearchParams,
     window: { addEventListener() {} },
-    document: { createElement: () => new Element() },
+    document: { documentElement: { dataset: {} }, querySelector: () => null, querySelectorAll: () => [], createElement: () => new Element() },
     fetch: () => new Promise(() => {}),
   });
   vm.runInContext(source, context);
@@ -75,7 +75,7 @@ function confirmation(h, value = preview()) {
 }
 function failure(status) { return Object.assign(new Error("SECRET_CANARY"), { status }); }
 
-for (const [operation, action, unit] of [["usage_details", "删除", "逻辑请求"], ["closed_periods", "删除", "账期"], ["reset_current_period", "重置", "账期"]]) {
+for (const [operation, action, unit] of [["usage_details", "删除", "逻辑请求"], ["closed_periods", "删除", "账期"], ["reset_quota_windows", "重置", "额度窗口"]]) {
   test(`${operation}: confirmation binds preview and shows actual completed count`, async () => {
     const h = harness(async () => completed(operation));
     const ui = confirmation(h, preview(operation));

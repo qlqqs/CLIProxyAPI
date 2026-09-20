@@ -162,11 +162,11 @@ func TestCarpoolHTTPAdministratorAndPassengerFlow(t *testing.T) {
 	carRef := stringField(t, decodeResponseObject(t, carCreate), "car_ref")
 
 	memberCreate := fixture.request(t, http.MethodPost, "/carpool/api/v1/admin/cars/"+carRef+"/members", map[string]any{
-		"user_ref": passengerRef, "display_name": "一号乘客", "monthly_limit_usd": "25.00",
+		"user_ref": passengerRef, "display_name": "一号乘客", "five_hour_limit_usd": "0", "weekly_limit_usd": "25.00",
 	}, adminCookie, adminCSRF, true)
 	assertHTTPStatus(t, memberCreate, http.StatusCreated)
 	overCapacity := fixture.request(t, http.MethodPost, "/carpool/api/v1/admin/cars/"+carRef+"/members", map[string]any{
-		"user_ref": stringField(t, secondBody, "user_ref"), "display_name": "二号乘客", "monthly_limit_usd": "25.00",
+		"user_ref": stringField(t, secondBody, "user_ref"), "display_name": "二号乘客", "five_hour_limit_usd": "0", "weekly_limit_usd": "25.00",
 	}, adminCookie, adminCSRF, true)
 	assertHTTPStatus(t, overCapacity, http.StatusConflict)
 
@@ -214,8 +214,8 @@ func TestCarpoolHTTPAdministratorAndPassengerFlow(t *testing.T) {
 
 	keyList := fixture.request(t, http.MethodGet, "/carpool/api/v1/me/api-keys", nil, passengerCookie, "", false)
 	assertHTTPStatus(t, keyList, http.StatusOK)
-	if strings.Contains(keyList.Body.String(), firstToken) || strings.Contains(keyList.Body.String(), secondToken) {
-		t.Fatalf("API key list exposes a token: %s", keyList.Body.String())
+	if !strings.Contains(keyList.Body.String(), firstToken) || !strings.Contains(keyList.Body.String(), secondToken) {
+		t.Fatalf("API key list does not include reusable tokens: %s", keyList.Body.String())
 	}
 	assertProviderAuthentication(t, fixture.provider, firstToken, true)
 	assertProviderAuthentication(t, fixture.provider, secondToken, true)
@@ -254,7 +254,10 @@ func TestAPIKeyResponseUsesInjectedClock(t *testing.T) {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	api := &API{now: func() time.Time { return now }}
 	expiresAt := now
-	response := api.apiKeyResponse(domain.APIKey{KeyID: "key", ExpiresAt: &expiresAt})
+	response := api.apiKeyResponse(domain.APIKey{KeyID: "key", Token: "secret", ExpiresAt: &expiresAt}, false)
+	if _, exposed := response["api_key"]; exposed {
+		t.Fatalf("administrator response exposes API key: %#v", response)
+	}
 	if response["status"] != "expired" {
 		t.Fatalf("status = %#v, want expired", response["status"])
 	}

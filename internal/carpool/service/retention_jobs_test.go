@@ -59,10 +59,10 @@ func TestConfirmedRetentionServiceRequiresAdminBoundJobAndPropagatesErrors(t *te
 	if _, err = control.PreviewRetention(ctx, admin, "usage_details"); !errors.Is(err, failure) {
 		t.Fatalf("settings error swallowed: %v", err)
 	}
-	if _, err = control.PreviewRetention(ctx, admin, "reset_current_period"); err != nil {
-		t.Fatalf("period operation depended on detail settings: %v", err)
+	if _, err = control.PreviewRetention(ctx, admin, "reset_quota_windows"); err != nil {
+		t.Fatalf("quota reset depended on detail settings: %v", err)
 	}
-	if _, err = control.RunRetention(ctx, admin, "reset_current_period", "bound-job"); !errors.Is(err, failure) {
+	if _, err = control.RunRetention(ctx, admin, "reset_quota_windows", "bound-job"); !errors.Is(err, failure) {
 		t.Fatalf("transaction error swallowed: %v", err)
 	}
 	admin.UserRef = "usr_other"

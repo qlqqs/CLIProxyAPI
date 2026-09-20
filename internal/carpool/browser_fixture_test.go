@@ -109,7 +109,7 @@ func TestCarpoolBrowserFixture(t *testing.T) {
 		}
 		passengers = append(passengers, login{passenger.User.Username, passenger.TemporaryPassword})
 		limit := int64(1_000_000_000)
-		if _, errMember := module.Control().MoveMemberWithLimit(ctx, admin, car.CarRef, passenger.User.UserRef, passenger.User.DefaultDisplayName, &limit); errMember != nil {
+		if _, errMember := module.Control().MoveMemberWithLimits(ctx, admin, car.CarRef, passenger.User.UserRef, passenger.User.DefaultDisplayName, &limit, &limit); errMember != nil {
 			t.Fatal(errMember)
 		}
 		authID := fmt.Sprintf("qa-fake-openai-%d", index+1)

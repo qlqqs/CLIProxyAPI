@@ -321,11 +321,21 @@ func TestLoginSessionKeyAndCRUDRepository(t *testing.T) {
 		t.Fatalf("GetSessionByDigest() = (%#v, %v)", loadedSession, errLoadedSession)
 	}
 
-	firstKey, _ := store.CreateAPIKey(ctx, domain.APIKey{UserID: passenger.ID, Name: "one", SecretDigest: []byte("one")})
+	firstKey, _ := store.CreateAPIKey(ctx, domain.APIKey{Token: "cpk_v1_first.full-token", UserID: passenger.ID, Name: "one", SecretDigest: []byte("one")})
 	secondKey, _ := store.CreateAPIKey(ctx, domain.APIKey{UserID: passenger.ID, Name: "two", SecretDigest: []byte("two")})
 	keys, errKeys := store.ListAPIKeysForUser(ctx, passenger.ID, "", "", 10)
 	if errKeys != nil || len(keys) != 2 {
 		t.Fatalf("ListAPIKeysForUser() = (%d, %v), want (2, nil)", len(keys), errKeys)
+	}
+	var loadedFirst domain.APIKey
+	for _, key := range keys {
+		if key.KeyID == firstKey.KeyID {
+			loadedFirst = key
+			break
+		}
+	}
+	if loadedFirst.Token != firstKey.Token {
+		t.Fatalf("ListAPIKeysForUser() token = %q, want %q", loadedFirst.Token, firstKey.Token)
 	}
 	used, errUsed := store.TouchAPIKeyLastUsed(ctx, firstKey.KeyID, now.Add(time.Minute), 30*time.Second)
 	if errUsed != nil || !used {
@@ -431,19 +441,6 @@ func TestAuthorizeAndBeginProxyRequestFreezesFilteredScope(t *testing.T) {
 	if persistedScopes[0].AssignmentID != second.ID || persistedScopes[0].SafeLabelSnapshot != "Second" {
 		t.Fatalf("frozen scope changed after assignment move: %#v", persistedScopes[0])
 	}
-	if _, errSetLegacy := store.SetMonthlyLimit(ctx, membership.ID, nil, nil); errSetLegacy != nil {
-		t.Fatalf("SetMonthlyLimit(nil) error = %v", errSetLegacy)
-	}
-	legacy, errLegacy := store.AuthorizeAndBeginProxyRequest(ctx, domain.ProxyAuthorization{
-		RequestID: "legacy-limit-request", UserID: passenger.ID, APIKeyID: key.KeyID,
-		SourceFormat: "openai", RuntimeAuthIDs: []string{"auth-1"},
-	})
-	if !errors.Is(errLegacy, domain.ErrAuthorizationRejected) || legacy.Request.ReasonCode != "quota_not_configured" {
-		t.Fatalf("legacy limit authorization = (%#v, %v), want quota_not_configured rejection", legacy.Request, errLegacy)
-	}
-	if _, errRestore := store.SetMonthlyLimit(ctx, membership.ID, &limitNanoUSD, nil); errRestore != nil {
-		t.Fatalf("restore monthly limit error = %v", errRestore)
-	}
 
 	rejected, errRejected := store.AuthorizeAndBeginProxyRequest(ctx, domain.ProxyAuthorization{
 		RequestID: "rejected-request", UserID: passenger.ID, APIKeyID: key.KeyID,
@@ -477,8 +474,8 @@ func TestAuthorizeAndBeginProxyRequestFreezesFilteredScope(t *testing.T) {
 	if errAudits != nil {
 		t.Fatalf("ListAuditEvents() error = %v", errAudits)
 	}
-	if len(audits) != 3 {
-		t.Fatalf("authorization audit count = %d, want 3", len(audits))
+	if len(audits) != 2 {
+		t.Fatalf("authorization audit count = %d, want 2", len(audits))
 	}
 	auditsByRequest := make(map[string]domain.AuditEvent, len(audits))
 	for _, audit := range audits {
