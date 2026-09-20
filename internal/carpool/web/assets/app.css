@@ -432,8 +432,13 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .compact-quota-windows { gap: 8px; margin-top: 10px; font-size: 13px; }
 .compact-quota-windows .member-quota-window { gap: 3px; padding-bottom: 8px; }
 .compact-quota-windows .member-quota-window:last-child { padding-bottom: 0; }
-.member-quota-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 18px; margin-top: 4px; font-size: 13px; }
-.member-quota-row .member-quota-window { flex: 1 1 130px; gap: 3px; padding-bottom: 0; border-bottom: 0; }
+.member-quota-row { display: grid; gap: 6px; min-width: 170px; }
+.member-quota-table-window { display: grid; grid-template-columns: 24px minmax(110px, 160px); align-items: center; gap: 8px; min-width: 0; }
+.member-quota-table-window > strong { font-size: 12px; font-weight: 500; }
+.member-quota-table-meter { gap: 7px; }
+.member-quota-table-meter .quota-meter-track { height: 5px; }
+.member-quota-table-meter b { min-width: 34px; font-size: 11px; }
+.member-quota-meter-empty { opacity: .65; }
 .concurrency-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 7px; background: var(--work); color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.5; white-space: nowrap; }
 .concurrency-badge svg { width: 13px; height: 13px; flex: 0 0 auto; }
 .member-policy { display: grid; gap: 6px; }

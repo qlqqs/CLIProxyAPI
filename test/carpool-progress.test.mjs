@@ -118,7 +118,9 @@ test("member usage renders concurrency in its own Sub2API-style column", () => {
   assert.match(markup, /concurrency-badge[^>]*>[\s\S]*?不限<\/span>/);
   assert.match(markup, /concurrency-badge[^>]*>[\s\S]*?3 个请求<\/span>/);
   assert.doesNotMatch(markup, /用户并发：/);
-  assert.match(markup, /离车成员[\s\S]*?<td><span class="muted">—<\/span><\/td>/);
+  assert.equal((markup.match(/member-quota-table-window/g) || []).length, 6);
+  assert.doesNotMatch(markup, /member-quota-table-window[\s\S]*?(?:已确认|剩余|重置|费用未知|历史用量统计)/);
+  assert.match(markup, /离车成员[\s\S]*?aria-label="5h 已用比例不可用"[\s\S]*?aria-label="7d 已用比例不可用"[\s\S]*?<td><span class="muted">—<\/span><\/td>/);
 });
 
 
@@ -265,12 +267,43 @@ test("local quota windows render not-started, active, and unlimited states witho
   assert.doesNotMatch(markup, /本月|pending_sync/);
 });
 
-test("member quota row contains exactly the 5h and 7d local windows", () => {
-  const markup = context.memberQuotaRow({ five_hour_limit_usd: "2", weekly_limit_usd: "10", quota_windows: [] });
-  assert.equal((markup.match(/member-quota-window/g) || []).length, 2);
-  assert.match(markup, /5 小时/);
-  assert.match(markup, /7 天/);
-  assert.doesNotMatch(markup, /本月/);
+test("member quota table cell contains only ordered 5h and 7d meters", () => {
+  const markup = context.memberQuotaRow({
+    quota_windows: [
+      { kind: "5h", status: "active", limit_usd: "2", used_usd: "1", remaining_usd: "1", reset_at: "2026-09-20T05:00:00Z", unknown_cost_events: 2 },
+      { kind: "7d", status: "overage", limit_usd: "10", used_usd: "12", remaining_usd: "0", overage_usd: "2", reset_at: "2026-09-27T00:00:00Z" },
+    ],
+  });
+  assert.equal((markup.match(/member-quota-table-window/g) || []).length, 2);
+  assert.ok(markup.indexOf("<strong>5h</strong>") < markup.indexOf("<strong>7d</strong>"));
+  assert.match(markup, /<b>50%<\/b>/);
+  assert.match(markup, /<b>120%<\/b>/);
+  assert.doesNotMatch(markup, /\$|已确认|剩余|超额|重置|费用未知|额度可用|已超额|本月/);
+});
+
+test("unlimited and not-started table quotas do not fabricate percentages or status text", () => {
+  const markup = context.memberQuotaRow({
+    quota_windows: [
+      { kind: "5h", status: "not_started", limit_usd: "2", used_usd: "0", reset_at: null },
+      { kind: "7d", status: "unlimited", limit_usd: "0", used_usd: "3", reset_at: null },
+    ],
+  });
+  assert.doesNotMatch(markup, /<progress|%|不限|尚未开始/);
+  assert.equal((markup.match(/aria-label="(?:5h|7d) 已用比例不可用"/g) || []).length, 2);
+  assert.equal((markup.match(/<b>—<\/b>/g) || []).length, 2);
+});
+
+test("member quota table markup escapes names and never emits untrusted quota fields", () => {
+  const hostile = '\"><img src=x onerror=alert(1)>';
+  const markup = context.memberTable([{
+    display_name: hostile,
+    five_hour_limit_usd: hostile,
+    weekly_limit_usd: hostile,
+    quota_windows: [{ kind: "5h", status: hostile, limit_usd: hostile, used_usd: hostile }],
+  }]);
+  assert.doesNotMatch(markup, /<img/);
+  assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.equal((markup.match(/member-quota-table-window/g) || []).length, 2);
 });
 
 test("quota patch uses zero as unlimited and never submits monthly quota", () => {

@@ -613,8 +613,8 @@ async function renderPassengerRoute(content) {
 
 function memberTable(items) {
   if (!items.length) return `<div class="empty">该周期暂无成员用量</div>`;
-  return `<div class="table-wrap"><table class="member-usage-table"><thead><tr><th>成员</th><th>个人额度 · USD</th><th>并发</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
-    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${item.left ? `<span class="muted">历史用量统计</span>` : memberQuotaRow(item, { showAmounts: false, showCoverageWarning: false })}</td><td>${item.left ? `<span class="muted">—</span>` : concurrencyBadgeMarkup(item.concurrency_limit)}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
+  return `<div class="table-wrap"><table class="member-usage-table"><thead><tr><th>成员</th><th>个人额度</th><th>并发</th><th class="numeric">请求</th><th class="numeric">成功</th><th class="numeric">失败</th><th class="numeric">Token</th><th class="numeric">未知</th></tr></thead><tbody>
+    ${items.map(item => `<tr><td><strong>${escapeHTML(item.display_name)}</strong><br><span class="tag">${item.left ? "已离车" : "当前"}</span></td><td>${memberQuotaRow(item)}</td><td>${item.left ? `<span class="muted">—</span>` : concurrencyBadgeMarkup(item.concurrency_limit)}</td><td class="numeric">${formatNumber(item.logical_requests)}</td><td class="numeric">${formatNumber(item.succeeded)}</td><td class="numeric">${formatNumber(item.failed)}</td><td class="numeric">${formatNumber(item.known_total_tokens)}</td><td class="numeric">${formatNumber(item.unknown_usage_events)}</td></tr>`).join("")}
   </tbody></table></div>`;
 }
 
@@ -666,12 +666,25 @@ function memberQuotaMarkup(member, compact = false) {
   return `<div class="member-quota-windows${compact ? " compact-quota-windows" : ""}">${memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(member, windows, kind, label, field, compact, true, false)).join("")}</div>`;
 }
 
-function memberQuotaRow(item, options = {}) {
+function memberQuotaTableWindow(item, windows, kind, field) {
+  const window = windows.find(candidate => candidate.kind === kind) || {};
+  const limit = window.limit_usd ?? item[field] ?? "0";
+  const status = item.left ? "unavailable" : (Object.hasOwn(memberQuotaStatusLabels, window.status) ? window.status : (String(limit) === "0" ? "unlimited" : "not_started"));
+  const usedValue = Number.parseFloat(window.used_usd);
+  const limitValue = Number.parseFloat(limit);
+  const percentage = status !== "unlimited" && status !== "not_started" && Number.isFinite(usedValue) && usedValue >= 0 && Number.isFinite(limitValue) && limitValue > 0
+    ? (usedValue / limitValue) * 100
+    : null;
+  const label = kind === "5h" ? "5h" : "7d";
+  const meter = percentage == null
+    ? `<div class="quota-meter member-quota-table-meter"><span class="quota-meter-track member-quota-meter-empty" role="img" aria-label="${label} 已用比例不可用"></span><b>—</b></div>`
+    : `<div class="quota-meter member-quota-table-meter">${percentageMeter(percentage, `${label} 已用比例`)}<b>${escapeHTML(formatQuotaPercent(percentage))}</b></div>`;
+  return `<div class="member-quota-table-window"><strong>${label}</strong>${meter}</div>`;
+}
+
+function memberQuotaRow(item) {
   const windows = Array.isArray(item.quota_windows) ? item.quota_windows : [];
-  const showAmounts = options.showAmounts !== false;
-  const showCoverageWarning = options.showCoverageWarning !== false;
-  const shorts = memberShortWindowSpecs.map(([kind, label, field]) => memberShortWindow(item, windows, kind, label, field, true, showAmounts, showCoverageWarning)).join("");
-  return `<div class="member-quota-row">${shorts}</div>`;
+  return `<div class="member-quota-row">${memberShortWindowSpecs.map(([kind, , field]) => memberQuotaTableWindow(item, windows, kind, field)).join("")}</div>`;
 }
 
 function optionalConcurrency(value) {

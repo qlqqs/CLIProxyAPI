@@ -70,3 +70,11 @@
 - 已通过：`gofmt -w .`、`git diff --check`、`node --check internal/carpool/web/assets/app.js`、`node --test test/*.test.mjs`（108+ 项，0 skip）、`go test ./internal/carpool/...`、`go test ./...`、`go vet ./...`、`go test -race ./internal/carpool/...`、普通与 `CGO_ENABLED=0` server build。
 - 浏览器 fixture 的 build tag 编译通过，并已更新创建成员的 5h/7d 字段与脚本选择器；当前环境没有 Playwright/Chromium，Paseo 也没有连接浏览器自动化 host，因此桌面 1440px 与移动 390/360px 截图验收仍为 missing evidence，不能声称已完成真实视觉验收。
 - 当前工作树混有此前 API Key token 持久化与成员并发列改动，尚未提交或归档；提交前必须按归属拆分或明确合并范围。
+
+
+## 界面精简补充（2026-09-20）
+
+- 管理端与乘客端所有成员/用户表格的“个人额度”单元格统一为两行紧凑视图：`5h` 进度条 + 百分比、`7d` 进度条 + 百分比。
+- 表格额度单元格不再显示金额、状态、剩余、超额、重置时间和费用警告；并发仍保持独立列。
+- 不限、未开始、离车或缺少有效分母时使用空轨道和 `—`，不伪造百分比；概览额度卡片保持原信息结构。
+- Node 全量测试 114 项通过，0 skip；真实浏览器视觉验收仍因环境缺少 Playwright/Chromium 而为 missing evidence。

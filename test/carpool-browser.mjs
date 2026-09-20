@@ -50,6 +50,18 @@ async function manageCar(admin) {
   await admin.locator('tr').filter({ hasText: 'QA Shared Car' }).locator('[data-manage-car]').click();
   await admin.locator('#add-member').waitFor();
 }
+async function assertMemberQuotaRows(page, selector) {
+  const rows = page.locator(selector);
+  assert(await rows.count() > 0, `${selector}: expected member quota rows`);
+  for (let index = 0; index < await rows.count(); index++) {
+    const row = rows.nth(index);
+    assert.deepEqual(await row.locator('.member-quota-table-window > strong').allInnerTexts(), ['5h', '7d']);
+    assert.equal(await row.locator('.member-quota-table-window').count(), 2);
+    assert.doesNotMatch(await row.innerText(), /已确认|剩余|超额|重置|费用未知|额度可用|已用尽|尚未开始|不限|\$/);
+    const meters = row.locator('progress');
+    for (let meter = 0; meter < await meters.count(); meter++) assert.match(await meters.nth(meter).locator('xpath=following-sibling::b[1]').innerText(), /^\d+(?:\.\d+)?%$/);
+  }
+}
 async function quota(admin, value) {
   await manageCar(admin);
   await admin.locator('[data-edit-member-limit][data-member-name="QA Passenger 1"]').click();
@@ -81,6 +93,7 @@ try {
   await admin.locator('.secret-box').waitFor();
   await admin.locator('[data-finish]').click();
   await manageCar(admin);
+  await assertMemberQuotaRows(admin, '.member-policy .member-quota-row');
   await admin.locator('#member-user').selectOption({ label: 'QA New Member · qa-new-member' });
   for (const selector of ['#member-five-hour-new', '#member-weekly-new']) {
     await admin.locator(selector).fill('');
@@ -121,7 +134,9 @@ try {
   assert.equal((await generate(passenger, key)).status, 200);
   await nav(passenger, '/');
   await shot(passenger, 'desktop-billing');
-  checks.push('调低立即拦截、调高立即恢复');
+  await nav(passenger, '/members');
+  await assertMemberQuotaRows(passenger, '.member-usage-table tbody .member-quota-row');
+  checks.push('调低立即拦截、调高立即恢复；管理端与乘客端成员额度单元格仅显示 5h/7d 进度');
   await nav(passenger, '/accounts');
   await shot(passenger, 'desktop-accounts');
   const statusOnly = passenger.locator('.quota-window').filter({ hasText: '已拒绝' });
