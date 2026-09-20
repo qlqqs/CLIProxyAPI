@@ -1,3 +1,15 @@
+import {
+  bannerMarkup,
+  buttonMarkup,
+  dialogContentMarkup,
+  emptyStateMarkup,
+  escapeHTML,
+  loadingMarkup,
+  setButtonBusy,
+  showToast,
+  statusBadgeMarkup,
+} from "./ui.js";
+
 const apiBase = "/carpool/api/v1";
 const pageLimit = 25;
 const maximumSelectorItems = 1000;
@@ -112,10 +124,6 @@ async function request(path, options = {}) {
   return data;
 }
 
-function escapeHTML(value) {
-  return String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
-}
-
 function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
 }
@@ -140,12 +148,7 @@ function toDatetimeLocalValue(date) {
 }
 
 function toast(message) {
-  const region = document.querySelector("#toast-region");
-  const node = document.createElement("div");
-  node.className = "toast";
-  node.textContent = message;
-  region.append(node);
-  window.setTimeout(() => node.remove(), 3200);
+  showToast(message);
 }
 
 const statusLabels = {
@@ -169,7 +172,7 @@ function statusText(status) {
 }
 
 function statusLabel(status) {
-  return `<span class="status ${escapeHTML(status)}">${escapeHTML(statusText(status))}</span>`;
+  return statusBadgeMarkup(status, statusText(status));
 }
 
 function periodControl() {
@@ -261,15 +264,15 @@ function paginationFooter(page, label = "项") {
   if (!page.loaded || (!page.nextCursor && page.items.length === 0)) return "";
   const total = page.total >= page.items.length ? page.total : page.items.length;
   return `<div class="pagination"><span>已显示 ${formatNumber(page.items.length)} / ${formatNumber(total)} ${escapeHTML(label)}</span>
-    ${page.nextCursor ? `<button class="button secondary compact" type="button" data-load-more>加载更多</button>` : ""}</div>`;
+    ${page.nextCursor ? buttonMarkup({ label: "加载更多", tone: "secondary", size: "compact", attributes: { "data-load-more": true } }) : ""}</div>`;
 }
 
 function searchBar(name, placeholder) {
   const value = state.searches[name] || "";
   return `<form class="list-search" data-search-form="${escapeHTML(name)}" role="search">
     <input type="search" name="q" value="${escapeHTML(value)}" placeholder="${escapeHTML(placeholder)}" aria-label="${escapeHTML(placeholder)}" maxlength="80">
-    <button class="button secondary compact" type="submit">搜索</button>
-    ${value ? `<button class="button secondary compact" type="button" data-search-clear="${escapeHTML(name)}">清除</button>` : ""}
+    ${buttonMarkup({ label: "搜索", tone: "secondary", size: "compact", type: "submit" })}
+    ${value ? buttonMarkup({ label: "清除", tone: "secondary", size: "compact", attributes: { "data-search-clear": name } }) : ""}
   </form>`;
 }
 
@@ -292,12 +295,6 @@ function bindSearch(content, name, rerender) {
     resetPage(name);
     rerender(true);
   });
-}
-
-function setButtonBusy(button, busy) {
-  if (!button) return;
-  button.disabled = busy;
-  button.setAttribute("aria-busy", String(busy));
 }
 
 function openDialog(title, body, wide = false) {
@@ -363,20 +360,22 @@ function selectEntityRow(content, button) {
 }
 
 function entityEmptyMarkup(kind) {
-  return `<aside class="entity-detail-slot" aria-label="${escapeHTML(kind)}详情"><div class="empty" data-entity-empty><h3>选择一${kind === "用户" ? "名用户" : "辆车辆"}</h3><p>${kind === "用户" ? "点击列表中的管理，查看用户资料、重置密码或管理 API Key。" : "点击列表中的管理，调整车辆信息、成员额度与账号分配。"}</p></div></aside>`;
+  const title = `选择一${kind === "用户" ? "名用户" : "辆车辆"}`;
+  const description = kind === "用户" ? "点击列表中的管理，查看用户资料、重置密码或管理 API Key。" : "点击列表中的管理，调整车辆信息、成员额度与账号分配。";
+  return `<aside class="entity-detail-slot" aria-label="${escapeHTML(kind)}详情">${emptyStateMarkup({ title, description, attributes: { "data-entity-empty": true } })}</aside>`;
 }
 
 function setDialogContent(dialog, title, body) {
   const restoreFocus = dialog.contains(document.activeElement);
   dialog.setAttribute("aria-label", title);
-  dialog.innerHTML = `<div class="dialog-head"><h2>${escapeHTML(title)}</h2><button class="icon-button" aria-label="关闭" title="关闭" type="button" data-dialog-close>×</button></div><div class="dialog-body">${body}</div>`;
+  dialog.innerHTML = dialogContentMarkup(title, body);
   dialog.querySelectorAll("[data-dialog-close]").forEach(button => button.addEventListener("click", () => dialog.close()));
   if (restoreFocus) dialog.querySelector("[data-dialog-close]").focus();
 }
 
 function showOneTimeSecret(dialog, title, secret, warning, onFinish) {
   if (!dialog.isConnected || !dialog.open) return;
-  setDialogContent(dialog, title, `<div class="warning-banner">${escapeHTML(warning)}</div><div class="secret-box" role="status"></div><div class="form-actions"><button class="button" type="button" data-finish>完成</button></div>`);
+  setDialogContent(dialog, title, `${bannerMarkup({ message: warning })}<div class="secret-box" role="status"></div><div class="form-actions">${buttonMarkup({ label: "完成", attributes: { "data-finish": true } })}</div>`);
   dialog.querySelector(".secret-box").textContent = secret;
   dialog.querySelector("[data-finish]").addEventListener("click", () => {
     dialog.close();
@@ -394,10 +393,10 @@ function loginView(message = "") {
     </section>
     <form class="login-panel" id="login-form">
       <div class="login-intro"><h2>检票口</h2><p>使用售票员下发的专属车票。</p></div>
-      ${message ? `<div class="error-banner">${escapeHTML(message)}</div>` : ""}
+      ${message ? bannerMarkup({ message, tone: "error", attributes: { role: "alert" } }) : ""}
       <div class="field"><label for="username">用户名</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="64"></div>
       <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="current-password" required minlength="12" maxlength="128"></div>
-      <button class="button" type="submit">登录</button>
+      ${buttonMarkup({ label: "登录", type: "submit" })}
     </form>
   </main>`;
   bindThemeToggle(document.querySelector("#app"));
@@ -468,7 +467,7 @@ function renderShell() {
         <button class="icon-button" id="nav-toggle" type="button" aria-controls="app-rail" aria-expanded="false" aria-label="展开导航"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
         <div class="topbar-actions">${themeToggleMarkup()}<span class="tag">${state.session.role === "carpool_admin" ? "管理员" : "乘客"}</span>${statusLabel(state.session.module_status || "unknown")}<span class="user-chip">${escapeHTML(state.session.display_name)}</span><button class="button secondary compact" id="logout" type="button">退出</button></div>
       </header>
-      <main class="main"><div class="content" id="content" data-page="${escapeHTML(state.route)}"><div class="loading" role="status">正在加载...</div></div></main>
+      <main class="main"><div class="content" id="content" data-page="${escapeHTML(state.route)}">${loadingMarkup()}</div></main>
     </div>
   </div>`;
   const shell = document.querySelector(".app-shell");
@@ -531,7 +530,7 @@ async function renderRoute() {
   content.tabIndex = -1;
   content.className = "content";
   content.dataset.page = state.route;
-  content.innerHTML = `<div class="loading" role="status">正在加载...</div>`;
+  content.innerHTML = loadingMarkup();
   previous.replaceWith(content);
   const route = state.route;
   const session = state.session;
@@ -547,7 +546,7 @@ async function renderRoute() {
       loginView("会话已失效，请重新登录");
       return;
     }
-    content.innerHTML = `<section class="workspace-panel"><div class="error-banner" role="alert">${escapeHTML(error.message)}</div><p class="muted">页面暂时未能加载，请重试。</p><div class="form-actions"><button class="button secondary" type="button" data-route-retry>重新加载</button></div></section>`;
+    content.innerHTML = `<section class="workspace-panel">${bannerMarkup({ message: error.message, tone: "error", attributes: { role: "alert" } })}<p class="muted">页面暂时未能加载，请重试。</p><div class="form-actions">${buttonMarkup({ label: "重新加载", tone: "secondary", attributes: { "data-route-retry": true } })}</div></section>`;
     content.querySelector("[data-route-retry]").addEventListener("click", () => renderRoute());
   }
 }

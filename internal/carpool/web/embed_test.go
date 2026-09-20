@@ -7,7 +7,7 @@ import (
 )
 
 func TestReadEmbeddedAssets(t *testing.T) {
-	for _, name := range []string{"index.html", "app.css", "app.js"} {
+	for _, name := range []string{"index.html", "app.css", "app.js", "ui.js"} {
 		asset, errRead := Read(name)
 		if errRead != nil {
 			t.Fatalf("Read(%q) error = %v", name, errRead)
@@ -30,6 +30,14 @@ func TestIndexUsesExternalResourcesOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(asset.Body), "/assets/app.js") {
 		t.Fatal("index.html does not load embedded application module")
+	}
+
+	app, errRead := Read("app.js")
+	if errRead != nil {
+		t.Fatalf("Read(app.js) error = %v", errRead)
+	}
+	if !strings.Contains(string(app.Body), `from "./ui.js"`) {
+		t.Fatal("app.js does not import the shared UI component layer")
 	}
 }
 

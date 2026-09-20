@@ -453,12 +453,17 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .status.exhausted::before, .status.overage::before, .status.unavailable::before, .status.disabled::before, .status.retired::before, .status.revoked::before, .status.expired::before, .status.rejected::before, .status.exceeded::before, .status.failed::before { background: var(--danger); }
 .tag { display: inline-block; padding: 3px 8px; border-radius: 7px; background: var(--work); color: var(--muted); font-size: 12px; }
 .empty { padding: 34px 24px; border: 1px solid var(--border); border-radius: var(--panel-radius); background: var(--surface); color: var(--muted); text-align: center; }
+.empty h3 { margin: 0 0 8px; color: var(--ink); font-size: 17px; font-weight: 500; }
+.empty p { margin: 0; }
+.empty .button { margin-top: 18px; }
 .compact-empty { padding: 14px 12px; font-size: 13px; }
-.loading { padding: 28px 0; color: var(--muted); }
-.error-banner, .warning-banner, .password-notice, .success-banner { padding: 15px 18px; margin-bottom: 20px; border: 1px solid transparent; border-radius: var(--radius); line-height: 1.7; overflow-wrap: anywhere; }
-.error-banner { border-color: var(--error-border); background: var(--danger-soft); color: var(--danger); }
-.warning-banner, .password-notice { border-color: var(--warning-border); background: var(--warning-soft); color: var(--warning-ink); }
-.success-banner { border-color: var(--success-border); background: var(--success-soft); color: var(--success); }
+.loading { display: inline-flex; align-items: center; gap: 10px; padding: 28px 0; color: var(--muted); }
+.loading-indicator { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: loading-spin .75s linear infinite; }
+.banner, .error-banner, .warning-banner, .password-notice, .success-banner { padding: 15px 18px; margin-bottom: 20px; border: 1px solid transparent; border-radius: var(--radius); line-height: 1.7; overflow-wrap: anywhere; }
+.banner-error, .error-banner { border-color: var(--error-border); background: var(--danger-soft); color: var(--danger); }
+.banner-warning, .warning-banner, .password-notice { border-color: var(--warning-border); background: var(--warning-soft); color: var(--warning-ink); }
+.banner-success, .success-banner { border-color: var(--success-border); background: var(--success-soft); color: var(--success); }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 .password-notice { max-width: 640px; }
 .password-notice strong { display: block; margin-bottom: 6px; font-weight: 500; }
 .password-notice p { margin: 0; }
@@ -597,6 +602,7 @@ dialog::backdrop { background: var(--backdrop); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .loading-indicator { animation: none; border-top-color: var(--border-strong); }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 
