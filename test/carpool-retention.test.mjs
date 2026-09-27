@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+import { loadCarpoolApp } from "./helpers/carpool-app-harness.mjs";
 
 const source = readFileSync(new URL("../internal/carpool/web/assets/app.js", import.meta.url), "utf8");
 
@@ -50,7 +51,7 @@ function harness(respond = async () => null, hash = "") {
     document: { documentElement: { dataset: {} }, querySelector: () => null, querySelectorAll: () => [], createElement: () => new Element() },
     fetch: () => new Promise(() => {}),
   });
-  vm.runInContext(source, context);
+  loadCarpoolApp(context);
   context.request = async (path, options = {}) => {
     calls.push({ path, options });
     return respond(path, options, calls.length);

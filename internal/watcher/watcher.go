@@ -36,6 +36,8 @@ type Watcher struct {
 	config            *config.Config
 	clientsMutex      sync.RWMutex
 	authRescanMu      sync.Mutex
+	reloadMu          sync.Mutex
+	watching          bool // Guarded by authRescanMu.
 	configReloadMu    sync.Mutex
 	configReloadTimer *time.Timer
 	serverUpdateMu    sync.Mutex

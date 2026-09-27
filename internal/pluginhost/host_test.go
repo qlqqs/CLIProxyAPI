@@ -1127,6 +1127,8 @@ func TestHostApplyConfigRollsBackQuiescedPluginWhenContextCanceled(t *testing.T)
 	cancel()
 	waitForHostTestSignal(t, applyDone, "canceled hot reload")
 
+	waitForHostLoadCleanup(t, h, "alpha")
+
 	if got, want := events.snapshot(), []string{
 		"old." + pluginabi.MethodPluginRegister,
 		"old." + pluginabi.MethodPluginQuiesce,
@@ -1179,6 +1181,8 @@ func TestHostApplyConfigShutsDownSuccessfulReplacementBeforeCanceledRollback(t *
 		cancelAt: 3,
 	}
 	h.ApplyConfig(ctx, versionedPluginHostConfig(t, pluginsDir, "2.0.0"))
+
+	waitForHostLoadCleanup(t, h, "alpha")
 
 	if got, want := events.snapshot(), []string{
 		"old." + pluginabi.MethodPluginRegister,

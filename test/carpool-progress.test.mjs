@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+import { loadCarpoolApp } from "./helpers/carpool-app-harness.mjs";
 
-// Run the actual application functions without a DOM or network. Boot remains
-// pending so it cannot render a page or affect the pure markup assertions.
+// Run the actual application and UI functions without booting or accessing a network.
 const context = vm.createContext({
   location: { hash: "" },
   window: { addEventListener() {} },
   Headers,
   fetch: () => new Promise(() => {}),
 });
-vm.runInContext(readFileSync(new URL("../internal/carpool/web/assets/app.js", import.meta.url), "utf8"), context);
+loadCarpoolApp(context);
 
 for (const value of [null, undefined, NaN, Infinity, "", "0", false]) {
   test(`missing or nonnumeric quota ${String(value)} is status-only`, () => {
@@ -118,9 +117,9 @@ test("member usage renders concurrency in its own Sub2API-style column", () => {
   assert.match(markup, /concurrency-badge[^>]*>[\s\S]*?不限<\/span>/);
   assert.match(markup, /concurrency-badge[^>]*>[\s\S]*?3 个请求<\/span>/);
   assert.doesNotMatch(markup, /用户并发：/);
-  assert.equal((markup.match(/member-quota-table-window/g) || []).length, 6);
-  assert.doesNotMatch(markup, /member-quota-table-window[\s\S]*?(?:已确认|剩余|重置|费用未知|历史用量统计)/);
-  assert.match(markup, /离车成员[\s\S]*?aria-label="5h 已用比例不可用"[\s\S]*?aria-label="7d 已用比例不可用"[\s\S]*?<td><span class="muted">—<\/span><\/td>/);
+  assert.equal((markup.match(/data-ui="usage-window"/g) || []).length, 6);
+  assert.doesNotMatch(markup, /已确认|剩余|费用未知|历史用量统计/);
+  assert.match(markup, /离车成员[\s\S]*?5h 已用 -，重置 已离车[\s\S]*?7d 已用 -，重置 已离车[\s\S]*?<td><span class="muted">—<\/span><\/td>/);
 });
 
 
@@ -182,7 +181,7 @@ function policyHarness(respond) {
     fetch: () => new Promise(() => {}),
     FormData: class { constructor(form) { this.get = name => form.values[name]; } },
   });
-  vm.runInContext(readFileSync(new URL("../internal/carpool/web/assets/app.js", import.meta.url), "utf8"), app);
+  loadCarpoolApp(app);
   app.request = async (path, options) => { calls.push({ path, options }); return respond?.(); };
   const submit = { disabled: false, textContent: "保存设置", setAttribute(name, value) { this[name] = value; } };
   const error = { hidden: true, focus() { this.focused = true; } };
@@ -274,23 +273,25 @@ test("member quota table cell contains only ordered 5h and 7d meters", () => {
       { kind: "7d", status: "overage", limit_usd: "10", used_usd: "12", remaining_usd: "0", overage_usd: "2", reset_at: "2026-09-27T00:00:00Z" },
     ],
   });
-  assert.equal((markup.match(/member-quota-table-window/g) || []).length, 2);
-  assert.ok(markup.indexOf("<strong>5h</strong>") < markup.indexOf("<strong>7d</strong>"));
-  assert.match(markup, /<b>50%<\/b>/);
-  assert.match(markup, /<b>120%<\/b>/);
-  assert.doesNotMatch(markup, /\$|已确认|剩余|超额|重置|费用未知|额度可用|已超额|本月/);
+  assert.equal((markup.match(/data-ui="usage-window"/g) || []).length, 2);
+  assert.ok(markup.indexOf(">5h</span>") < markup.indexOf(">7d</span>"));
+  assert.match(markup, /usage-window-percent[^>]*>50%<\/span>/);
+  assert.match(markup, /usage-window-percent[^>]*>120%<\/span>/);
+  assert.match(markup, /usage-window-reset/);
+  assert.doesNotMatch(markup, /\$|已确认|剩余|超额|费用未知|额度可用|已超额|本月/);
 });
 
-test("unlimited and not-started table quotas do not fabricate percentages or status text", () => {
+test("unlimited and not-started table quotas retain their explicit compact states", () => {
   const markup = context.memberQuotaRow({
     quota_windows: [
       { kind: "5h", status: "not_started", limit_usd: "2", used_usd: "0", reset_at: null },
       { kind: "7d", status: "unlimited", limit_usd: "0", used_usd: "3", reset_at: null },
     ],
   });
-  assert.doesNotMatch(markup, /<progress|%|不限|尚未开始/);
-  assert.equal((markup.match(/aria-label="(?:5h|7d) 已用比例不可用"/g) || []).length, 2);
-  assert.equal((markup.match(/<b>—<\/b>/g) || []).length, 2);
+  assert.equal((markup.match(/usage-window-progress is-unknown/g) || []).length, 2);
+  assert.match(markup, /usage-window-reset">未开始<\/span>/);
+  assert.match(markup, /7d 已用 不限，重置 不限/);
+  assert.doesNotMatch(markup, /is-healthy/);
 });
 
 test("member quota table markup escapes names and never emits untrusted quota fields", () => {
@@ -303,7 +304,7 @@ test("member quota table markup escapes names and never emits untrusted quota fi
   }]);
   assert.doesNotMatch(markup, /<img/);
   assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.equal((markup.match(/member-quota-table-window/g) || []).length, 2);
+  assert.equal((markup.match(/data-ui="usage-window"/g) || []).length, 2);
 });
 
 test("quota patch uses zero as unlimited and never submits monthly quota", () => {

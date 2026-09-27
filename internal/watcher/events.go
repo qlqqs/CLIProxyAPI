@@ -27,21 +27,38 @@ func matchProvider(provider string, targets []string) (string, bool) {
 }
 
 func (w *Watcher) start(ctx context.Context) error {
-	if errAddConfig := w.watcher.Add(w.configPath); errAddConfig != nil {
-		log.Errorf("failed to watch config file %s: %v", w.configPath, errAddConfig)
+	w.reloadMu.Lock()
+	defer w.reloadMu.Unlock()
+	w.authRescanMu.Lock()
+	defer w.authRescanMu.Unlock()
+
+	if _, errStatConfig := os.Stat(w.configPath); errStatConfig != nil {
+		return errStatConfig
+	}
+	// Watch the parent so atomic replacement cannot detach the config watch.
+	configDir := filepath.Dir(w.configPath)
+	if errAddConfig := w.watcher.Add(configDir); errAddConfig != nil {
+		log.Errorf("failed to watch config directory %s: %v", configDir, errAddConfig)
 		return errAddConfig
 	}
-	log.Debugf("watching config file: %s", w.configPath)
+	log.Debugf("watching config directory: %s", configDir)
 
-	if errAddAuthDir := w.watcher.Add(w.authDir); errAddAuthDir != nil {
-		log.Errorf("failed to watch auth directory %s: %v", w.authDir, errAddAuthDir)
+	w.clientsMutex.RLock()
+	authDir := w.authDir
+	w.clientsMutex.RUnlock()
+	if errAddAuthDir := w.watcher.Add(authDir); errAddAuthDir != nil {
+		if errRemove := w.watcher.Remove(configDir); errRemove != nil {
+			log.WithError(errRemove).Warn("failed to remove config watch after startup failure")
+		}
+		log.Errorf("failed to watch auth directory %s: %v", authDir, errAddAuthDir)
 		return errAddAuthDir
 	}
-	log.Debugf("watching auth directory: %s", w.authDir)
+	w.watching = true
+	log.Debugf("watching auth directory: %s", authDir)
 
 	go w.processEvents(ctx)
 
-	w.reloadClients(true, nil, false)
+	w.reloadClientsLocked(true, nil, false)
 	return nil
 }
 
@@ -65,32 +82,32 @@ func (w *Watcher) processEvents(ctx context.Context) {
 }
 
 func (w *Watcher) handleEvent(event fsnotify.Event) {
-	// Filter only relevant events: config file or auth-dir JSON files.
-	configOps := fsnotify.Write | fsnotify.Create | fsnotify.Rename
+	configOps := fsnotify.Write | fsnotify.Create | fsnotify.Remove | fsnotify.Rename
 	normalizedName := w.normalizeAuthPath(event.Name)
-	normalizedConfigPath := w.normalizeAuthPath(w.configPath)
-	normalizedAuthDir := w.normalizeAuthPath(w.authDir)
-	isConfigEvent := normalizedName == normalizedConfigPath && event.Op&configOps != 0
-	authOps := fsnotify.Create | fsnotify.Write | fsnotify.Remove | fsnotify.Rename
-	isAuthJSON := filepath.Dir(normalizedName) == normalizedAuthDir && strings.HasSuffix(normalizedName, ".json") && event.Op&authOps != 0
-	if !isConfigEvent && !isAuthJSON {
-		// Ignore unrelated files (e.g., cookie snapshots *.cookie) and other noise.
-		return
-	}
-
-	now := time.Now()
-	log.Debugf("file system event detected: %s %s", event.Op.String(), event.Name)
-
-	// Handle config file changes
-	if isConfigEvent {
-		log.Debugf("config file change details - operation: %s, timestamp: %s", event.Op.String(), now.Format("2006-01-02 15:04:05.000"))
+	if w.sameWatchPath(event.Name, w.configPath) && event.Op&configOps != 0 {
+		log.Debugf("config file event: %s %s", event.Op.String(), event.Name)
 		w.scheduleConfigReload()
 		return
 	}
 
-	// Handle auth directory changes incrementally (.json only)
+	// Recheck the directory under the same lock used to switch auth snapshots.
+	// Queued events from a retired directory must not mutate the new snapshot.
 	w.authRescanMu.Lock()
 	defer w.authRescanMu.Unlock()
+	w.clientsMutex.RLock()
+	authDir := w.authDir
+	w.clientsMutex.RUnlock()
+	authOps := fsnotify.Create | fsnotify.Write | fsnotify.Remove | fsnotify.Rename
+	if !w.sameWatchPath(filepath.Dir(event.Name), authDir) || !strings.HasSuffix(normalizedName, ".json") || event.Op&authOps == 0 {
+		return
+	}
+	// A shared config/auth watch may use a relative path while the auth
+	// directory is absolute. Use the snapshot's spelling for cache keys.
+	event.Name = filepath.Join(authDir, filepath.Base(event.Name))
+	normalizedName = w.normalizeAuthPath(event.Name)
+
+	now := time.Now()
+	log.Debugf("file system event detected: %s %s", event.Op.String(), event.Name)
 
 	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 		if w.shouldDebounceRemove(normalizedName, now) {

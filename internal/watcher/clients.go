@@ -23,6 +23,13 @@ import (
 )
 
 func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string, forceAuthRefresh bool) {
+	w.authRescanMu.Lock()
+	defer w.authRescanMu.Unlock()
+	w.reloadClientsLocked(rescanAuth, affectedOAuthProviders, forceAuthRefresh)
+}
+
+// reloadClientsLocked keeps a full snapshot refresh ordered with incremental auth events.
+func (w *Watcher) reloadClientsLocked(rescanAuth bool, affectedOAuthProviders []string, forceAuthRefresh bool) {
 	log.Debugf("starting full client load process")
 
 	w.clientsMutex.RLock()
@@ -72,7 +79,6 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
 	}
 
 	if rescanAuth {
-		w.authRescanMu.Lock()
 		cacheAuthContents := log.IsLevelEnabled(log.DebugLevel)
 		newAuthHashes := make(map[string]string)
 		var newAuthContents map[string]*coreauth.Auth
@@ -136,7 +142,6 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
 		w.lastAuthContents = newAuthContents
 		w.fileAuthsByPath = newFileAuthsByPath
 		w.clientsMutex.Unlock()
-		w.authRescanMu.Unlock()
 	}
 
 	totalNewClients := authFileCount + geminiAPIKeyCount + vertexCompatAPIKeyCount + claudeAPIKeyCount + codexAPIKeyCount + xaiAPIKeyCount + openAICompatCount

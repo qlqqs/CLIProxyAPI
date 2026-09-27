@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -55,5 +56,58 @@ func TestSaveTokenToFile_PreservesCustomMetadata(t *testing.T) {
 	}
 	if saved["weight"] != float64(5) {
 		t.Errorf("weight = %v, want 5", saved["weight"])
+	}
+}
+
+func TestSaveTokenToFileUsesPrivateAtomicReplacement(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "synthetic.json")
+	storage := &ClaudeTokenStorage{AccessToken: "synthetic-access", RefreshToken: "synthetic-refresh"}
+	for _, existing := range []bool{false, true} {
+		if existing {
+			if err := os.WriteFile(path, []byte(`{"access_token":"old"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := storage.SaveTokenToFile(path); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+			t.Fatalf("token file mode %o, want 0600", info.Mode().Perm())
+		}
+		var payload map[string]any
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if json.Unmarshal(data, &payload) != nil || payload["access_token"] != "synthetic-access" {
+			t.Fatal("token replacement corrupted the payload")
+		}
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage.SetMetadata(map[string]any{"unsupported": make(chan struct{})})
+	if err := storage.SaveTokenToFile(path); err == nil {
+		t.Fatal("unsupported metadata accepted")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("failed save changed the existing credential")
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("temporary credential files leaked: count=%d error=%v", len(files), err)
 	}
 }

@@ -378,6 +378,12 @@ func (c *Control) Login(ctx context.Context, username, password, clientAddress s
 	}
 	limitKey := LoginLimitKey(normalized, clientAddress)
 	loginTargetRef := "login_" + limitKey
+	releaseVerification, sourceRetryAfter := c.loginLimiter.AcquireVerification(clientAddress)
+	if releaseVerification == nil {
+		c.recordAudit(ctx, c.audit(loginAuditActorType, "rate-limited", "login", "session", loginTargetRef, "rejected", "rate_limited"))
+		return LoginResult{}, &LoginRateLimitError{RetryAfter: sourceRetryAfter}
+	}
+	defer releaseVerification()
 	if allowed, retryAfter := c.loginLimiter.Allow(limitKey); !allowed {
 		c.recordAudit(ctx, c.audit(loginAuditActorType, "rate-limited", "login", "session", loginTargetRef, "rejected", "rate_limited"))
 		return LoginResult{}, &LoginRateLimitError{RetryAfter: retryAfter}

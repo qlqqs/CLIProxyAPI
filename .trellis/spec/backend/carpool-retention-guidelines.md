@@ -6,7 +6,7 @@
 本规范承接 `carpool-accounting-guidelines.md` 的价格冻结、同步记账和不完整事实保护。
 只使用现有 SQLite 作业表和原子事务，不引入迁移、outbox、租约、跨进程续跑体系。
 
-多周期扩展见 `carpool-quota-concurrency-guidelines.md`：普通明细/月账期清理不得删除 `quota_request_fees` 与 `billed_event_receipts` 所承载的额度累计和去重事实。
+多周期扩展见 `carpool-quota-concurrency-guidelines.md`：普通明细/月账期清理不得删除 `quota_request_fees`、`member_quota_window_fees` 与 `billed_event_receipts` 所承载的额度累计、开始时间和去重事实。显式 `reset_quota_windows` 删除窗口并级联清除本轮费用投影，但不删除永久 receipt 或历史请求金额。
 
 ## 2. 接口与存储
 

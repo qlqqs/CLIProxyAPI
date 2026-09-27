@@ -46,6 +46,7 @@ type pluginUnloadTarget struct {
 
 type pluginLoadRequest struct {
 	result         chan pluginLoadResult
+	done           chan struct{}
 	cleanupStarted bool
 }
 
@@ -56,7 +57,16 @@ type pluginLoadResult struct {
 	err         error
 }
 
+type replacementRollbackResult struct {
+	thinkingProvider string
+	record           capabilityRecord
+	file             pluginFile
+	attempted        bool
+	ok               bool
+}
+
 type Host struct {
+	thinkingProviders      map[string]resolvedThinkingProvider // Guarded by mu.
 	applyMu                chan struct{}
 	mu                     sync.Mutex
 	loader                 pluginLoader
@@ -256,6 +266,21 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 		}
 		h.mu.Lock()
 		lp := h.loaded[file.ID]
+		if _, loading := h.loading[file.ID]; loading {
+			// A canceled replacement owns this plugin until physical cleanup and
+			// rollback finish. Preserve its old record without reconfiguring it.
+			if lp != nil {
+				for _, record := range h.Snapshot().records {
+					if record.id == file.ID && cleanPluginPath(record.path) == cleanPluginPath(lp.path) {
+						records = append(records, record)
+						loadedFiles = append(loadedFiles, pluginFile{ID: lp.id, Path: lp.path, Version: lp.version})
+						break
+					}
+				}
+			}
+			h.mu.Unlock()
+			continue
+		}
 		var replaced *loadedPlugin
 		if lp != nil && cleanPluginPath(lp.path) != cleanPluginPath(file.Path) {
 			replaced = lp
@@ -272,7 +297,7 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 		var plugin pluginapi.Plugin
 		registeredNow := false
 		if lp == nil {
-			request := &pluginLoadRequest{result: make(chan pluginLoadResult, 1)}
+			request := &pluginLoadRequest{result: make(chan pluginLoadResult, 1), done: make(chan struct{})}
 			h.mu.Lock()
 			if _, loading := h.loading[file.ID]; loading {
 				h.mu.Unlock()
@@ -284,8 +309,7 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 			if replaced != nil {
 				h.callQuiesce(ctx, replaced)
 				if errContext := ctx.Err(); errContext != nil {
-					h.clearLoadingRequest(file.ID, request)
-					_, _, _ = h.rollbackReplacement(replaced, item)
+					_, _, _ = h.cleanupReplacement(ctx, file.ID, request, &pluginLoadResult{}, replaced, item)
 					return
 				}
 			}
@@ -296,8 +320,7 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 				if replaced == nil {
 					h.cleanupCanceledPluginLoad(file.ID, request)
 				} else {
-					h.cleanupCanceledPluginLoadAndWait(file.ID, request)
-					_, _, _ = h.rollbackReplacement(replaced, item)
+					_, _, _ = h.cleanupReplacement(ctx, file.ID, request, nil, replaced, item)
 				}
 				return
 			}
@@ -305,11 +328,13 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 				if replaced == nil {
 					h.cleanupPluginLoad(file.ID, request, loadResult.loaded)
 				} else {
-					h.cleanupPluginLoadAndWait(file.ID, request, loadResult.loaded)
-					if rollbackRecord, rollbackFile, okRollback := h.rollbackReplacement(replaced, item); okRollback {
+					if rollbackRecord, rollbackFile, okRollback := h.cleanupReplacement(ctx, file.ID, request, &loadResult, replaced, item); okRollback {
 						records = append(records, rollbackRecord)
 						loadedFiles = append(loadedFiles, rollbackFile)
 					}
+				}
+				if ctx.Err() != nil {
+					return
 				}
 				if loadResult.err != nil {
 					log.Warnf("pluginhost: failed to load plugin %s from %s: %v", file.ID, file.Path, loadResult.err)
@@ -320,10 +345,7 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 			h.mu.Lock()
 			if h.loading[file.ID] != request {
 				h.mu.Unlock()
-				h.discardLoadedPlugin(loadResult.loaded)
-				if replaced != nil {
-					_, _, _ = h.rollbackReplacement(replaced, item)
-				}
+				go h.discardLoadedPlugin(loadResult.loaded)
 				return
 			}
 			if errContext := ctx.Err(); errContext != nil {
@@ -331,12 +353,12 @@ func (h *Host) ApplyConfig(ctx context.Context, cfg *config.Config) {
 				if replaced == nil {
 					h.cleanupPluginLoad(file.ID, request, loadResult.loaded)
 				} else {
-					h.cleanupPluginLoadAndWait(file.ID, request, loadResult.loaded)
-					_, _, _ = h.rollbackReplacement(replaced, item)
+					_, _, _ = h.cleanupReplacement(ctx, file.ID, request, &loadResult, replaced, item)
 				}
 				return
 			}
 			delete(h.loading, file.ID)
+			close(request.done)
 			lp = loadResult.loaded
 			if replaced != nil {
 				hotReloadFields = pluginHotReloadLogFields(file.ID, file.Version, file.Path, replaced.version, replaced.path)
@@ -469,21 +491,131 @@ func (h *Host) cleanupCanceledPluginLoad(id string, request *pluginLoadRequest) 
 	}()
 }
 
-func (h *Host) cleanupCanceledPluginLoadAndWait(id string, request *pluginLoadRequest) {
-	if h == nil || request == nil || request.result == nil {
-		return
-	}
+// cleanupReplacement never waits beyond ctx while holding applyMu. The load token
+// fences this plugin until native registration, shutdown and rollback have finished.
+func (h *Host) cleanupReplacement(ctx context.Context, id string, request *pluginLoadRequest, result *pluginLoadResult, replaced *loadedPlugin, item runtimeItemConfig) (capabilityRecord, pluginFile, bool) {
 	h.mu.Lock()
 	if h.loading[id] != request || request.cleanupStarted {
 		h.mu.Unlock()
-		return
+		return capabilityRecord{}, pluginFile{}, false
 	}
 	request.cleanupStarted = true
 	h.mu.Unlock()
 
-	result := <-request.result
-	h.discardLoadedPlugin(result.loaded)
-	h.clearLoadingRequest(id, request)
+	done := make(chan replacementRollbackResult, 1)
+	go func() {
+		if result == nil {
+			completed := <-request.result
+			result = &completed
+		}
+		// Guarded shutdown waits for the actual native call, not just its
+		// canceled Go waiter. Never unload or roll back before it has returned.
+		h.discardLoadedPlugin(result.loaded)
+		if guarded, ok := replaced.client.(*guardedPluginClient); ok {
+			guarded.mu.Lock()
+			for guarded.calls > 0 {
+				guarded.cond.Wait()
+			}
+			guarded.mu.Unlock()
+		}
+		h.mu.Lock()
+		_, current := h.replacementIntentLocked(id, request, replaced)
+		h.mu.Unlock()
+		var rollback replacementRollbackResult
+		if current {
+			rollback = h.prepareReplacementRollback(replaced, item)
+		}
+		done <- rollback
+	}()
+	select {
+	case rollback := <-done:
+		if ctx.Err() == nil {
+			// Publish while this caller still owns applyMu. Cancellation immediately
+			// after this point must not discard an already-completed rollback.
+			h.completeReplacementCleanup(id, request, replaced, &rollback)
+			return rollback.record, rollback.file, rollback.ok
+		}
+		go h.reconcileCanceledReplacement(id, request, replaced, item, rollback)
+	case <-ctx.Done():
+		go func() {
+			h.reconcileCanceledReplacement(id, request, replaced, item, <-done)
+		}()
+	}
+	return capabilityRecord{}, pluginFile{}, false
+}
+
+// prepareReplacementRollback resolves native identity outside applyMu. The loaded
+// instance remains fenced until the result and its derived providers are published.
+func (h *Host) prepareReplacementRollback(replaced *loadedPlugin, item runtimeItemConfig) replacementRollbackResult {
+	rollback := replacementRollbackResult{attempted: true}
+	rollback.record, rollback.file, rollback.ok = h.rollbackReplacement(replaced, item)
+	if rollback.ok {
+		rollback.thinkingProvider, _ = h.resolveThinkingIdentifier(rollback.record, rollback.record.plugin.Capabilities.ThinkingApplier)
+	}
+	return rollback
+}
+
+// replacementIntentLocked requires mu and checks both instance ownership and the
+// latest enablement intent. An unloaded instance can never be revived by cleanup.
+func (h *Host) replacementIntentLocked(id string, request *pluginLoadRequest, replaced *loadedPlugin) (int, bool) {
+	if h.loading[id] != request || h.loaded[id] != replaced || h.runtimeConfig == nil || !h.runtimeConfig.Plugins.Enabled {
+		return 0, false
+	}
+	configured := h.runtimeConfig.Plugins.Configs[id]
+	return configured.Priority, configured.Enabled != nil && *configured.Enabled
+}
+
+func (h *Host) reconcileCanceledReplacement(id string, request *pluginLoadRequest, replaced *loadedPlugin, item runtimeItemConfig, rollback replacementRollbackResult) {
+	for {
+		// Only publication is serialized with ApplyConfig. Native rollback must
+		// not hold the global apply lock, even if the old plugin blocks forever.
+		h.lockApply(context.Background())
+		h.mu.Lock()
+		priority, current := h.replacementIntentLocked(id, request, replaced)
+		current = current && h.Snapshot().enabled
+		h.mu.Unlock()
+		if current && !rollback.attempted {
+			// Cleanup may have observed a disabled config before a later fenced
+			// ApplyConfig re-enabled this instance. Honor that newer intent too.
+			h.unlockApply()
+			item.Priority = priority
+			rollback = h.prepareReplacementRollback(replaced, item)
+			continue
+		}
+		if !current {
+			rollback.ok = false
+		}
+		h.completeReplacementCleanup(id, request, replaced, &rollback)
+		h.unlockApply()
+		return
+	}
+}
+
+// completeReplacementCleanup requires applyMu. Merge into the latest snapshot,
+// rather than publishing the canceled caller's obsolete records or config.
+func (h *Host) completeReplacementCleanup(id string, request *pluginLoadRequest, replaced *loadedPlugin, rollback *replacementRollbackResult) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	priority, current := h.replacementIntentLocked(id, request, replaced)
+	if current && rollback.ok {
+		rollback.record.priority = priority
+		records, _ := h.snapshotWithoutPluginLocked(id)
+		records = append(records, rollback.record)
+		sortRecords(records)
+		h.rebuildActivePluginMapsLocked(records)
+		h.snapshot.Store(&Snapshot{enabled: true, records: records})
+		if h.thinkingProviders == nil {
+			h.thinkingProviders = make(map[string]resolvedThinkingProvider)
+		}
+		h.thinkingProviders[id] = resolvedThinkingProvider{rollback.record.path, rollback.record.version, rollback.thinkingProvider}
+		h.publishThinkingProvidersLocked(records)
+	} else {
+		rollback.ok = false
+	}
+	if h.loading[id] == request {
+		delete(h.loading, id)
+		close(request.done)
+	}
 }
 
 // cleanupPluginLoad retains the matching load token until the client has physically
@@ -503,22 +635,6 @@ func (h *Host) cleanupPluginLoad(id string, request *pluginLoadRequest, loaded *
 	h.finishPluginLoadCleanup(id, request, loaded)
 }
 
-func (h *Host) cleanupPluginLoadAndWait(id string, request *pluginLoadRequest, loaded *loadedPlugin) {
-	if h == nil || request == nil {
-		return
-	}
-	h.mu.Lock()
-	if h.loading[id] != request || request.cleanupStarted {
-		h.mu.Unlock()
-		return
-	}
-	request.cleanupStarted = true
-	h.mu.Unlock()
-
-	h.discardLoadedPlugin(loaded)
-	h.clearLoadingRequest(id, request)
-}
-
 func (h *Host) finishPluginLoadCleanup(id string, request *pluginLoadRequest, loaded *loadedPlugin) {
 	go func() {
 		h.discardLoadedPlugin(loaded)
@@ -533,6 +649,7 @@ func (h *Host) clearLoadingRequest(id string, request *pluginLoadRequest) {
 	h.mu.Lock()
 	if h.loading[id] == request {
 		delete(h.loading, id)
+		close(request.done)
 	}
 	h.mu.Unlock()
 }
@@ -919,7 +1036,9 @@ func (h *Host) rollbackReplacement(lp *loadedPlugin, item runtimeItemConfig) (ca
 	plugin, okCall := h.callRegister(context.Background(), lp, item)
 	if okCall {
 		h.mu.Lock()
-		delete(h.fused, lp.id)
+		if h.loaded[lp.id] == lp {
+			delete(h.fused, lp.id)
+		}
 		h.mu.Unlock()
 	} else {
 		plugin = previousPlugin

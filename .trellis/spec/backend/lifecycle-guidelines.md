@@ -83,3 +83,15 @@ runUntilSignal()
 
 关键差异是 `context.WithTimeout` 位于 deferred closure 内，deadline 在执行清理时才
 开始计时。
+
+## 8. 插件替换与流终结的取消边界
+
+- `(*Host).ApplyConfig(ctx, cfg)` 取消等待插件替换时必须释放全局 apply 锁。原生 register、quiesce、shutdown 或 rollback 尚未真正完成时，保留对应插件 loading token；仅后台清理该插件，不允许提前卸载仍在执行的模块。后续无关插件可以继续应用和卸载；被显式卸载、禁用或关停的旧实例不得被后台 rollback 复活。屏障期间新的重新启用意图必须在清理完成后合并到最新快照；同时恢复宿主维护的 thinking provider 注册，不能仅更新可见状态。Thinking Identifier 的原生调用在全局锁外准备，屏障内刷新使用已核对实例身份的缓存；发布时重算当前优先级并保留其他插件。
+- `ResponsesWebsocket` 在上游首包 bootstrap 阻塞时也必须有唯一 reader 观察客户端断开并取消会话。待处理请求队列有界（16），满时关闭并取消，不以网络超时替代生命周期取消。
+- wsrelay 正常 terminal 必须在全部已排队数据之后投递；不能为正常结束腾位置而丢最早一帧，也不能让等待 terminal 堵住共享 reader。错误/取消可以采用独立的优先失败策略。取消回调按 pending 实例比较删除，旧请求不能因复用 ID 而取消新请求。
+- Gemini scanner 错误先于成功终结处理；Responses WebSocket 的 data channel 关闭时先检查已排队原始错误，再决定是否生成缺失完成事件错误。流内执行错误仍需把 `RetryAfter` 和凭据级作用域送入冷却结果。
+- 必须用屏障覆盖原生调用阻塞时取消、单插件屏障/后台回滚、无关插件进展；用满缓冲覆盖 64 帧加正常结束不丢帧、请求 ID 复用取消隔离；用半截流和 bootstrap 阻塞覆盖“不先报成功”和断线回收。不得通过增加上游超时或 Sleep 掩盖生命周期错误。
+
+- OAuth 测试调用 `CompleteOAuthSession` 只标记会话，不代表轮询协程已经退出。替换或恢复 `oauthSessions` 等全局夹具前必须等待 worker 退出；`oauth_codex_concurrency_test.go` 用 `synctest.Test` 隔离请求、在返回前推进虚拟轮询时钟并执行 `synctest.Wait`，长期存活的 handler 清理 ticker 留在 bubble 外。成功路径必须断言 `Completed`，不能把失败或过期当成成功。
+
+错误：取消后继续同步等 replacement result，并持有全局 apply 锁。正确：保留单插件屏障，后台等待安全清理，当前调用按 context 返回。

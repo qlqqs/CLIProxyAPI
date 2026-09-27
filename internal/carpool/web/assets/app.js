@@ -71,6 +71,8 @@ function emptyPage() {
 
 const state = {
   session: null,
+  sessionGeneration: 0,
+  pageRequests: {},
   csrf: "",
   route: location.hash.slice(1).split("?")[0] || "/",
   period: "today",
@@ -114,6 +116,7 @@ const routeTitles = {
 };
 
 async function request(path, options = {}) {
+  const sessionGeneration = state.sessionGeneration;
   const headers = new Headers(options.headers || {});
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (options.method && !["GET", "HEAD"].includes(options.method) && state.csrf) {
@@ -126,6 +129,9 @@ async function request(path, options = {}) {
     error.code = data?.error?.code || "request_failed";
     error.status = response.status;
     error.data = data;
+    if (error.status === 401 && ["session_required", "session_invalid"].includes(error.code) && state.session && state.sessionGeneration === sessionGeneration) {
+      loginView("会话已失效，请重新登录");
+    }
     throw error;
   }
   return data;
@@ -250,22 +256,32 @@ function scheduleAccountRefresh() {
 }
 
 function resetPage(name) {
+  state.pageRequests[name] = (state.pageRequests[name] || 0) + 1;
   state.pages[name] = emptyPage();
   return state.pages[name];
 }
 
 async function loadPage(name, path, reset = false) {
   const page = reset ? resetPage(name) : state.pages[name];
+  const generation = state.pageRequests[name] = (state.pageRequests[name] || 0) + 1;
+  const sessionGeneration = state.sessionGeneration;
+  const current = () => state.pageRequests[name] === generation && state.pages[name] === page && state.sessionGeneration === sessionGeneration;
   if (!reset && page.loaded && !page.nextCursor) return page;
   const params = new URLSearchParams({ limit: String(pageLimit) });
   if (!reset && page.nextCursor) params.set("cursor", page.nextCursor);
   const separator = path.includes("?") ? "&" : "?";
-  const data = await request(`${path}${separator}${params}`);
-  page.items = reset ? (data.items || []) : page.items.concat(data.items || []);
-  page.total = Number.isFinite(Number(data.total)) ? Number(data.total) : page.items.length;
-  page.nextCursor = data.next_cursor || "";
-  page.loaded = true;
-  return page;
+  try {
+    const data = await request(`${path}${separator}${params}`);
+    if (!current()) return null;
+    page.items = reset ? (data.items || []) : page.items.concat(data.items || []);
+    page.total = Number.isFinite(Number(data.total)) ? Number(data.total) : page.items.length;
+    page.nextCursor = data.next_cursor || "";
+    page.loaded = true;
+    return page;
+  } catch (error) {
+    if (!current()) return null;
+    throw error;
+  }
 }
 
 async function fetchAllPages(path) {
@@ -291,6 +307,16 @@ function paginationFooter(page, label = "项") {
   const total = page.total >= page.items.length ? page.total : page.items.length;
   return `<div class="pagination"><span>已显示 ${formatNumber(page.items.length)} / ${formatNumber(total)} ${escapeHTML(label)}</span>
     ${page.nextCursor ? buttonMarkup({ label: "加载更多", tone: "secondary", size: "compact", attributes: { "data-load-more": true } }) : ""}</div>`;
+}
+
+function bindLoadMore(content, load) {
+  content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    setButtonBusy(button, true);
+    try { await load(); } catch (error) { toast(error.message); }
+    finally { setButtonBusy(button, false); }
+  });
 }
 
 function searchBar(name, placeholder) {
@@ -323,11 +349,53 @@ function bindSearch(content, name, rerender) {
   });
 }
 
+const dialogGenerations = new WeakMap();
+
+function scrubDialog(dialog) {
+  dialog.querySelectorAll(".secret-box").forEach(node => { node.textContent = ""; });
+  dialog.querySelectorAll("input, textarea").forEach(input => {
+    input.value = "";
+    input.defaultValue = "";
+    input.removeAttribute("value");
+  });
+}
+
+function closeAllDialogs() {
+  closeAdminAccountDialogs();
+  closeEntityPanels();
+  document.querySelectorAll("dialog").forEach(dialog => {
+    scrubDialog(dialog);
+    dialog.close();
+    dialog.replaceChildren();
+    dialog.remove();
+  });
+}
+
+function clearPrivateState() {
+  state.sessionGeneration++;
+  state.session = null;
+  state.csrf = "";
+  resetEphemeralFilters();
+  state.searches = { keys: "", users: "", cars: "" };
+  for (const [name, page] of Object.entries(state.pages)) {
+    for (const item of page.items) if (Object.hasOwn(item, "api_key")) item.api_key = "";
+    resetPage(name);
+  }
+  closeAllDialogs();
+  document.querySelectorAll(".api-key-value code").forEach(node => { node.textContent = ""; });
+  document.querySelectorAll('input[type="password"]').forEach(input => {
+    input.value = "";
+    input.defaultValue = "";
+    input.removeAttribute("value");
+  });
+}
+
 function openDialog(title, body, wide = false) {
   const dialog = document.createElement("dialog");
+  dialogGenerations.set(dialog, state.sessionGeneration);
   if (wide) dialog.className = "dialog-wide";
   dialog.addEventListener("close", () => {
-    dialog.querySelectorAll(".secret-box").forEach(node => { node.textContent = ""; });
+    scrubDialog(dialog);
     dialog.replaceChildren();
     dialog.remove();
   }, { once: true });
@@ -339,7 +407,7 @@ function openDialog(title, body, wide = false) {
 
 function closeEntityPanels(root = document) {
   root.querySelectorAll("dialog.entity-panel").forEach(dialog => {
-    dialog.querySelectorAll(".secret-box").forEach(node => { node.textContent = ""; });
+    scrubDialog(dialog);
     dialog.close();
     dialog.replaceChildren();
     dialog.remove();
@@ -354,12 +422,13 @@ function openEntityPanel(title, body) {
   const placeholder = slot.querySelector("[data-entity-empty]");
   if (placeholder) placeholder.hidden = true;
   const dialog = document.createElement("dialog");
+  dialogGenerations.set(dialog, state.sessionGeneration);
   dialog.className = "entity-panel";
   dialog.setAttribute("aria-modal", "false");
   slot.append(dialog);
   dialog.addEventListener("close", () => {
     const current = slot.querySelector("dialog.entity-panel") === dialog;
-    dialog.querySelectorAll(".secret-box").forEach(node => { node.textContent = ""; });
+    scrubDialog(dialog);
     dialog.replaceChildren();
     dialog.remove();
     if (current) {
@@ -400,7 +469,7 @@ function setDialogContent(dialog, title, body) {
 }
 
 function showOneTimeSecret(dialog, title, secret, warning, onFinish) {
-  if (!dialog.isConnected || !dialog.open) return;
+  if (!dialog.isConnected || !dialog.open || dialogGenerations.get(dialog) !== state.sessionGeneration) return;
   setDialogContent(dialog, title, `${bannerMarkup({ message: warning })}<div class="secret-box" role="status"></div><div class="form-actions">${buttonMarkup({ label: "完成", attributes: { "data-finish": true } })}</div>`);
   dialog.querySelector(".secret-box").textContent = secret;
   dialog.querySelector("[data-finish]").addEventListener("click", () => {
@@ -410,9 +479,9 @@ function showOneTimeSecret(dialog, title, secret, warning, onFinish) {
 }
 
 function loginView(message = "") {
-  closeAdminAccountDialogs();
+  clearPrivateState();
   clearStatusRefresh();
-  closeEntityPanels();
+  const sessionGeneration = state.sessionGeneration;
   document.querySelector("#app").innerHTML = `${themeToggleMarkup("login-theme-toggle")}<main class="login-shell">
     <section class="login-story" aria-labelledby="login-title">
       <h1 id="login-title">来不及解释了，<br>快上车！</h1>
@@ -433,6 +502,8 @@ function loginView(message = "") {
     setButtonBusy(button, true);
     try {
       const data = await request("/session", { method: "POST", body: JSON.stringify({ username: form.get("username"), password: form.get("password") }) });
+      if (state.sessionGeneration !== sessionGeneration) return;
+      state.sessionGeneration++;
       state.session = data;
       state.csrf = data.csrf_token || "";
       resetEphemeralFilters();
@@ -440,7 +511,7 @@ function loginView(message = "") {
       location.hash = `#${state.route}`;
       renderShell();
     } catch (error) {
-      loginView(error.message);
+      if (state.sessionGeneration === sessionGeneration) loginView(error.message);
     } finally {
       setButtonBusy(button, false);
     }
@@ -478,7 +549,7 @@ function iconMarkup(route) {
 }
 
 function renderShell() {
-  closeAdminAccountDialogs();
+  closeAllDialogs();
   if (!state.session) return loginView();
   closeEntityPanels();
   const navigationItems = navigation();
@@ -526,13 +597,11 @@ function renderShell() {
     }
   });
   document.querySelector("#logout").addEventListener("click", async event => {
-    closeAdminAccountDialogs();
     setButtonBusy(event.currentTarget, true);
-    try { await request("/session", { method: "DELETE" }); } catch (_) { /* Local state still ends. */ }
-    state.session = null;
-    state.csrf = "";
-    resetEphemeralFilters();
+    // Capture the current CSRF header before clearing local session data.
+    const logout = request("/session", { method: "DELETE" });
     loginView();
+    try { await logout; } catch (_) { /* Local state already ended. */ }
   });
   renderRoute();
 }
@@ -540,7 +609,7 @@ function renderShell() {
 async function renderRoute() {
   if (!state.session) return;
   clearStatusRefresh();
-  closeAdminAccountDialogs();
+  closeAllDialogs();
   const allowed = new Set(navigation().map(([route]) => route));
   if (!allowed.has(state.route)) {
     location.hash = state.session.must_change_password ? "#/password" : "#/";
@@ -814,20 +883,28 @@ function quotaWindowMarkup(window, label) {
 }
 
 function quotaWindowByKind(windows, kind) {
-  const exactIDs = kind === "5h" ? ["5h", "primary"] : ["7d", "secondary"];
   const minutes = kind === "5h" ? 300 : 10080;
-  return windows.find(window => exactIDs.includes(String(window?.id || "").toLowerCase())) ||
-    windows.find(window => Number(window?.window_minutes) === minutes) ||
-    windows.find(window => String(window?.id || "").toLowerCase().endsWith(`-${kind === "5h" ? "primary" : "secondary"}`)) || null;
+  const alias = kind === "5h" ? "primary" : "secondary";
+  const duration = window => Number(window?.window_minutes);
+  const id = window => String(window?.id || "").toLowerCase();
+  const unspecified = window => !Number.isFinite(duration(window)) || duration(window) <= 0;
+  return windows.find(window => duration(window) === minutes && [kind, alias].includes(id(window))) ||
+    windows.find(window => duration(window) === minutes) ||
+    windows.find(window => unspecified(window) && [kind, alias].includes(id(window))) ||
+    windows.find(window => unspecified(window) && id(window).endsWith(`-${alias}`)) || null;
 }
 
-function quotaCompactWindowMarkup(window, label) {
+function quotaCompactWindowMarkup(window, label, stale = false) {
   const utilization = Number.isFinite(window?.used_percent) ? window.used_percent : null;
+  const rejected = ["rejected", "exceeded"].includes(window?.status);
+  const status = window && (rejected || utilization === null) ? statusText(window.status || "unknown") : "";
   return usageWindowMarkup({
     label,
     utilization,
     resetsAtLabel: window ? formatResetCountdown(window.reset_at, utilization, true) : "未提供",
     color: label === "5h" ? "indigo" : "emerald",
+    statusLabel: status,
+    severity: rejected ? "danger" : stale && window ? "unknown" : "",
   });
 }
 
@@ -835,7 +912,9 @@ function quotaMarkup(quota) {
   const windows = quota?.supported && Array.isArray(quota.windows) ? quota.windows : [];
   const fiveHour = quotaWindowByKind(windows, "5h");
   const sevenDay = quotaWindowByKind(windows, "7d");
-  return `<div class="usage-window-stack">${quotaCompactWindowMarkup(fiveHour, "5h")}${quotaCompactWindowMarkup(sevenDay, "7d")}</div>`;
+  const stale = quota?.stale === true;
+  const freshness = stale && windows.length ? `<small class="quota-observation">配额数据陈旧 · 观测：${escapeHTML(formatTime(quota.observed_at))}</small>` : "";
+  return `<div class="usage-window-stack">${quotaCompactWindowMarkup(fiveHour, "5h", stale)}${quotaCompactWindowMarkup(sevenDay, "7d", stale)}${freshness}</div>`;
 }
 
 function apiKeyValueMarkup(item) {
@@ -861,6 +940,7 @@ async function copyAPIKey(value) {
 
 async function renderKeys(content, reset) {
   const page = await loadPage("keys", searchPath("keys", "/me/api-keys"), reset);
+  if (!page) return;
   const items = page.items;
   const rowsHTML = items.map(item => `<tr><td>${escapeHTML(item.name)}</td><td>${apiKeyValueMarkup(item)}</td><td>${statusLabel(item.status)}</td><td>${escapeHTML(formatTime(item.created_at))}</td><td>${escapeHTML(formatTime(item.expires_at))}</td><td>${escapeHTML(formatTime(item.last_used_at))}</td><td>${item.status === "active" ? buttonMarkup({ label: "撤销", tone: "danger", size: "compact", attributes: { "data-revoke-key": item.key_ref } }) : ""}</td></tr>`).join("");
   const listMarkup = items.length
@@ -882,10 +962,7 @@ async function renderKeys(content, reset) {
     }
   }));
   bindSearch(content, "keys", async reset => { try { await renderKeys(content, reset); } catch (error) { toast(error.message); } });
-  content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
-    setButtonBusy(event.currentTarget, true);
-    try { await renderKeys(content, false); } catch (error) { toast(error.message); }
-  });
+  bindLoadMore(content, () => renderKeys(content, false));
   content.querySelectorAll("[data-revoke-key]").forEach(button => button.addEventListener("click", async () => {
     if (!confirm("撤销后使用该 Key 的客户端会立即失效，是否继续？")) return;
     setButtonBusy(button, true);
@@ -914,6 +991,7 @@ function showKeyDialog() {
     setButtonBusy(button, true);
     try {
       await request("/me/api-keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), expires_at: expiresAt ? new Date(expiresAt).toISOString() : null }) });
+      if (!dialog.isConnected || !dialog.open) return;
       dialog.close();
       toast("API Key 已创建");
       renderRoute();
@@ -959,25 +1037,32 @@ async function renderPricing(content) {
   content.innerHTML = `<div class="section-header"><div><h2>价格目录</h2><p>乘客金额按已保存的 USD 价格快照计算；目录更新不会改写历史事件。</p></div>${status.failure_reason ? `<span class="status degraded">最近检查失败</span>` : `<span class="status healthy">目录可用</span>`}</div><section class="pricing-panel"><div class="pricing-grid"><div><span class="eyebrow">当前版本</span><code>${escapeHTML(status.hash || "未加载")}</code></div><div><span class="eyebrow">来源</span><strong>${escapeHTML(status.source || "未提供")}</strong></div><div><span class="eyebrow">载入时间</span><strong>${escapeHTML(loaded)}</strong></div><div><span class="eyebrow">最近成功</span><strong>${escapeHTML(success)}</strong></div><div><span class="eyebrow">最近检查</span><strong>${escapeHTML(checked)}</strong></div><div><span class="eyebrow">远程地址</span><span class="code-ref">${escapeHTML(status.catalog_url || "未配置")}</span></div></div>${status.failure_reason ? `<div class="warning-banner">最近一次远程检查未更新目录：${escapeHTML(status.failure_reason)}。当前仍使用最后一份有效快照。</div>` : `<p class="muted">后台每天检查一次远程目录；离线时继续使用内置或最后有效快照。</p>`}</section>`;
 }
 
+function userListInfoMarkup(user) {
+  return `<div class="entity-title"><strong>${escapeHTML(user.username)}</strong>${user.display_name && user.display_name !== user.username ? `<span class="muted">${escapeHTML(user.display_name)}</span>` : ""}</div><div class="entity-meta"><span>${user.role === "carpool_admin" ? "管理员" : "乘客"}</span><span>创建于 ${escapeHTML(formatTime(user.created_at))}</span></div>`;
+}
+
 async function renderUsers(content, reset) {
   const page = await loadPage("users", searchPath("users", "/admin/users"), reset);
+  if (!page) return;
   const items = page.items;
   closeEntityPanels(content);
   content.innerHTML = `${sectionHeaderMarkup({ title: "用户管理", description: `共 ${formatNumber(page.total)} 名用户 · 选择用户后在右侧管理`, actionsHTML: buttonMarkup({ label: "创建用户", attributes: { id: "create-user" } }) })}
     <div class="entity-workspace"><section class="entity-list workspace-panel" aria-label="用户列表">
       ${searchBar("users", "按用户名、展示名或引用搜索")}
-      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td><div class="entity-title"><strong>${escapeHTML(item.username)}</strong>${item.display_name && item.display_name !== item.username ? `<span class="muted">${escapeHTML(item.display_name)}</span>` : ""}</div><div class="entity-meta"><span>${item.role === "carpool_admin" ? "管理员" : "乘客"}</span><span>创建于 ${escapeHTML(formatTime(item.created_at))}</span></div></td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.users ? "没有匹配的用户" : "暂无用户，请先创建用户。"}</div>`}
+      ${items.length ? `<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th></th></tr></thead><tbody>${items.map(item => `<tr><td>${userListInfoMarkup(item)}</td><td class="entity-status">${statusLabel(item.status)}</td><td><button class="button secondary compact" data-manage-user="${escapeHTML(item.user_ref)}" aria-label="管理用户 ${escapeHTML(item.username)}">管理</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${state.searches.users ? "没有匹配的用户" : "暂无用户，请先创建用户。"}</div>`}
       ${paginationFooter(page, "名用户")}</section>${entityEmptyMarkup("用户")}</div>`;
   content.querySelector("#create-user").addEventListener("click", showUserDialog);
   bindSearch(content, "users", async reset => { try { await renderUsers(content, reset); } catch (error) { toast(error.message); } });
-  content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
-    setButtonBusy(event.currentTarget, true);
-    try { await renderUsers(content, false); } catch (error) { toast(error.message); }
-  });
+  bindLoadMore(content, () => renderUsers(content, false));
   content.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => {
     const user = items.find(item => item.user_ref === button.dataset.manageUser);
     if (user) {
-      showUserManagement(user).catch(error => toast(error.message));
+      showUserManagement(user, () => {
+        const row = button.closest("tr");
+        if (!row?.isConnected) return;
+        row.querySelector("td").innerHTML = userListInfoMarkup(user);
+        row.querySelector(".entity-status").innerHTML = statusLabel(user.status);
+      }).catch(error => toast(error.message));
       selectEntityRow(content, button);
     }
   }));
@@ -1004,8 +1089,7 @@ function showUserDialog() {
   });
 }
 
-async function showUserManagement(initialUser) {
-  let user = initialUser;
+async function showUserManagement(user, onUpdated) {
   let keyPage = emptyPage();
 
   async function loadKeys(reset) {
@@ -1045,7 +1129,10 @@ async function showUserManagement(initialUser) {
       const button = event.currentTarget.querySelector("button[type=submit]");
       setButtonBusy(button, true);
       try {
-        user = await request(`/admin/users/${encodeURIComponent(user.user_ref)}`, { method: "PATCH", body: JSON.stringify({ default_display_name: form.get("default_display_name"), status: form.get("status") }) });
+        const updated = await request(`/admin/users/${encodeURIComponent(user.user_ref)}`, { method: "PATCH", body: JSON.stringify({ default_display_name: form.get("default_display_name"), status: form.get("status") }) });
+        if (!dialog.isConnected || !dialog.open) return;
+        Object.assign(user, updated);
+        if (onUpdated) onUpdated();
         toast("用户已更新");
         paint();
       } catch (error) {
@@ -1055,20 +1142,22 @@ async function showUserManagement(initialUser) {
     });
 
     dialog.querySelector("[data-reset-password]").addEventListener("click", async event => {
+      const button = event.currentTarget;
       if (!confirm("重置密码会撤销该用户全部网页登录会话，是否继续？")) return;
-      setButtonBusy(event.currentTarget, true);
+      setButtonBusy(button, true);
       try {
         const data = await request(`/admin/users/${encodeURIComponent(user.user_ref)}/reset-password`, { method: "POST" });
         showOneTimeSecret(dialog, "密码已重置", data.temporary_password, "临时密码只显示一次，请通过安全渠道交给用户。", renderRoute);
       } catch (error) {
         toast(error.message);
-        setButtonBusy(event.currentTarget, false);
+        setButtonBusy(button, false);
       }
     });
 
     dialog.querySelector("[data-revoke-all-keys]")?.addEventListener("click", async event => {
+      const button = event.currentTarget;
       if (!confirm("该用户的全部 API Key 都会立即失效，是否继续？")) return;
-      setButtonBusy(event.currentTarget, true);
+      setButtonBusy(button, true);
       try {
         await request(`/admin/users/${encodeURIComponent(user.user_ref)}/api-keys`, { method: "DELETE" });
         await loadKeys(true);
@@ -1076,7 +1165,7 @@ async function showUserManagement(initialUser) {
         paint();
       } catch (error) {
         toast(error.message);
-        setButtonBusy(event.currentTarget, false);
+        setButtonBusy(button, false);
       }
     });
 
@@ -1094,10 +1183,7 @@ async function showUserManagement(initialUser) {
       }
     }));
 
-    dialog.querySelector("[data-load-more]")?.addEventListener("click", async event => {
-      setButtonBusy(event.currentTarget, true);
-      try { await loadKeys(false); paint(); } catch (error) { toast(error.message); setButtonBusy(event.currentTarget, false); }
-    });
+    bindLoadMore(dialog, async () => { await loadKeys(false); paint(); });
   }
 
   paint();
@@ -1105,6 +1191,7 @@ async function showUserManagement(initialUser) {
 
 async function renderCars(content, reset) {
   const page = await loadPage("cars", searchPath("cars", "/admin/cars"), reset);
+  if (!page) return;
   const items = page.items;
   closeEntityPanels(content);
   content.innerHTML = `${sectionHeaderMarkup({ title: "车辆管理", description: `共 ${formatNumber(page.total)} 辆车辆 · 选择车辆后在右侧管理`, actionsHTML: buttonMarkup({ label: "创建车辆", attributes: { id: "create-car" } }) })}
@@ -1114,10 +1201,7 @@ async function renderCars(content, reset) {
       ${paginationFooter(page, "辆车辆")}</section>${entityEmptyMarkup("车辆")}</div>`;
   content.querySelector("#create-car").addEventListener("click", showCarDialog);
   bindSearch(content, "cars", async reset => { try { await renderCars(content, reset); } catch (error) { toast(error.message); } });
-  content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
-    setButtonBusy(event.currentTarget, true);
-    try { await renderCars(content, false); } catch (error) { toast(error.message); }
-  });
+  bindLoadMore(content, () => renderCars(content, false));
   content.querySelectorAll("[data-manage-car]").forEach(button => button.addEventListener("click", () => {
     const car = items.find(item => item.car_ref === button.dataset.manageCar);
     if (car) {
@@ -1141,6 +1225,7 @@ function showCarDialog() {
     setButtonBusy(button, true);
     try {
       await request("/admin/cars", { method: "POST", body: JSON.stringify({ name: form.get("name"), description: form.get("description"), seat_limit: form.get("seat_limit") ? Number(form.get("seat_limit")) : null }) });
+      if (!dialog.isConnected || !dialog.open) return;
       dialog.close();
       toast("车辆已创建");
       renderRoute();
@@ -1453,7 +1538,7 @@ function restoreRequestFilters() {
     if (values[key]) params.set(key, values[key]);
   }
   const path = `/admin/usage/requests?${params.toString()}`;
-  if (state.requestFilters !== path) state.pages.usageRequests = emptyPage();
+  if (state.requestFilters !== path) resetPage("usageRequests");
   state.requestFilterValues = values;
   state.requestFilters = path;
 }
@@ -1561,6 +1646,7 @@ async function renderAdminRequests(content, reset = true) {
   restoreRequestFilters();
   const path = state.requestFilters || "/admin/usage/requests?period=30d";
   const page = await loadPage("usageRequests", path, reset);
+  if (!page) return;
   const values = state.requestFilterValues;
   const filters = `<form id="request-filter" class="report-toolbar request-filter"><div class="field"><label for="request-model">模型</label><input id="request-model" name="model" placeholder="请求或实际模型" value="${escapeHTML(values.model || "")}"></div><div class="field"><label for="request-outcome">结果</label><select id="request-outcome" name="outcome"><option value="">全部</option><option value="succeeded"${values.outcome === "succeeded" ? " selected" : ""}>成功</option><option value="failed"${values.outcome === "failed" ? " selected" : ""}>失败</option><option value="rejected"${values.outcome === "rejected" ? " selected" : ""}>拒绝</option><option value="incomplete"${values.outcome === "incomplete" ? " selected" : ""}>不完整</option></select></div><div class="field"><label for="request-billing">计价状态</label><select id="request-billing" name="billing_status"><option value="">全部</option><option value="priced"${values.billing_status === "priced" ? " selected" : ""}>已计价</option><option value="unknown"${values.billing_status === "unknown" ? " selected" : ""}>费用未知</option><option value="legacy_unpriced"${values.billing_status === "legacy_unpriced" ? " selected" : ""}>历史未计价</option></select></div><div class="field"><label for="request-user">用户引用</label><input id="request-user" name="user_ref" placeholder="usr_..." value="${escapeHTML(values.user_ref || "")}"></div><div class="field"><label for="request-car">车辆引用</label><input id="request-car" name="car_ref" placeholder="car_..." value="${escapeHTML(values.car_ref || "")}"></div><div class="field"><label for="request-account">账号引用</label><input id="request-account" name="account_ref" placeholder="acct_..." value="${escapeHTML(values.account_ref || "")}"></div><div class="field"><label for="request-key">API Key 引用</label><input id="request-key" name="api_key_ref" placeholder="cpk_..." value="${escapeHTML(values.api_key_ref || "")}"></div><div class="field"><label for="request-id">请求 ID</label><input id="request-id" name="request_id" value="${escapeHTML(values.request_id || "")}"></div><button class="button" type="submit">筛选</button></form>`;
   const activeCount = activeFilterCount();
@@ -1576,7 +1662,7 @@ async function renderAdminRequests(content, reset = true) {
     const cleared = `#/requests?${new URLSearchParams({ period: "30d" }).toString()}`;
     if (location.hash !== cleared) location.hash = cleared;
     else {
-      state.pages.usageRequests = emptyPage();
+      resetPage("usageRequests");
       state.requestFilters = "";
       renderAdminRequests(content, true).catch(error => toast(error.message));
     }
@@ -1593,11 +1679,11 @@ async function renderAdminRequests(content, reset = true) {
     const hash = `#/requests?${params.toString()}`;
     if (location.hash !== hash) location.hash = hash;
     else {
-      state.pages.usageRequests = emptyPage();
+      resetPage("usageRequests");
       try { await renderAdminRequests(content, true); } catch (error) { toast(error.message); }
     }
   });
-  content.querySelector("[data-load-more]")?.addEventListener("click", async event => { setButtonBusy(event.currentTarget, true); try { await renderAdminRequests(content, false); } catch (error) { toast(error.message); setButtonBusy(event.currentTarget, false); } });
+  bindLoadMore(content, () => renderAdminRequests(content, false));
 }
 
 async function renderRetention(content) {
@@ -1643,13 +1729,11 @@ const auditActionLabels = {
 
 async function renderAudit(content, reset) {
   const page = await loadPage("audit", "/admin/audit-events", reset);
+  if (!page) return;
   const items = page.items;
   content.innerHTML = `<div class="section-header"><div><h2>审计记录</h2><p>安全操作与授权结果</p></div></div>${items.length ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>执行者</th><th>目标</th><th>结果</th><th>原因</th></tr></thead><tbody>${items.map(item => `<tr><td>${escapeHTML(formatTime(item.occurred_at))}</td><td>${escapeHTML(auditActionLabels[item.action] || item.action)}</td><td>${escapeHTML(item.actor_type)} ${escapeHTML(item.actor_ref || "-")}</td><td>${escapeHTML(item.target_type)} ${escapeHTML(item.target_ref || "-")}</td><td>${item.result === "success" ? "成功" : item.result === "failure" ? "失败" : escapeHTML(item.result)}</td><td>${escapeHTML(item.reason_code || "-")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">暂无审计记录</div>`}
     ${paginationFooter(page, "条记录")}`;
-  content.querySelector("[data-load-more]")?.addEventListener("click", async event => {
-    setButtonBusy(event.currentTarget, true);
-    try { await renderAudit(content, false); } catch (error) { toast(error.message); }
-  });
+  bindLoadMore(content, () => renderAudit(content, false));
 }
 
 // Keep credential files and OAuth material out of persistent application state.
@@ -2096,6 +2180,7 @@ function openAccountOAuth(onSaved) {
 }
 
 function renderPassword(content) {
+  const sessionGeneration = state.sessionGeneration;
   const forced = Boolean(state.session?.must_change_password);
   const reason = state.session?.password_change_reason || "";
   const resetNotice = reason === "admin_reset"
@@ -2106,15 +2191,14 @@ function renderPassword(content) {
     <div class="field"><label for="new-password">新密码</label><input id="new-password" name="new_password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></div>
     <div class="password-hint">至少 12 个字符。提交后当前会话会退出，这是为了让新密码立即生效。</div><button class="button" type="submit">${forced ? "设置并继续" : "更新密码"}</button>
   </form>`;
-  document.querySelector("#password-form").addEventListener("submit", async event => {
+  content.querySelector("#password-form").addEventListener("submit", async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector("button[type=submit]");
     const form = new FormData(event.currentTarget);
     setButtonBusy(button, true);
     try {
       await request("/me/password", { method: "POST", body: JSON.stringify({ current_password: form.get("current_password"), new_password: form.get("new_password") }) });
-      state.session = null;
-      state.csrf = "";
+      if (state.sessionGeneration !== sessionGeneration) return;
       loginView("密码已更新，请重新登录");
     } catch (error) {
       toast(error.message);
@@ -2129,8 +2213,11 @@ window.addEventListener("hashchange", () => {
 });
 
 async function boot() {
+  const sessionGeneration = state.sessionGeneration;
   try {
     const data = await request("/session");
+    if (state.sessionGeneration !== sessionGeneration) return;
+    state.sessionGeneration++;
     state.session = data;
     state.csrf = data.csrf_token || "";
     if (data.must_change_password) {
@@ -2139,7 +2226,7 @@ async function boot() {
     }
     renderShell();
   } catch (_) {
-    loginView();
+    if (state.sessionGeneration === sessionGeneration) loginView();
   }
 }
 

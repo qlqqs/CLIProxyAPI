@@ -88,6 +88,9 @@ func recordQuotaFeeTx(ctx context.Context, tx *sql.Tx, event domain.UsageEvent, 
 			if err = insertMemberQuotaWindow(ctx, tx, membershipID, kind, from, reset, cost, updated); err != nil {
 				return err
 			}
+			if err = insertQuotaWindowFee(ctx, tx, membershipID, kind, started, cost); err != nil {
+				return err
+			}
 			continue
 		}
 		if err != nil {
@@ -95,24 +98,36 @@ func recordQuotaFeeTx(ctx context.Context, tx *sql.Tx, event domain.UsageEvent, 
 		}
 		currentFromTime, currentResetTime := fromDatabaseTime(currentFrom), fromDatabaseTime(currentReset)
 		if cost == nil {
-			if (started.Before(currentResetTime) && !started.Before(currentFromTime)) || (started.Before(currentFromTime) && reset.After(currentFromTime)) {
+			if started.Before(currentResetTime) && !started.Before(currentFromTime) {
 				if _, err = tx.ExecContext(ctx, `UPDATE member_quota_windows SET unknown_cost_events=unknown_cost_events+1,revision=revision+1,updated_at=? WHERE membership_id=? AND kind=?`, toDatabaseTime(updated), membershipID, kind); err != nil {
 					return fmt.Errorf("sqlite store: accumulate unknown member quota fee: %w", classifyError(err))
 				}
+			}
+			if err = insertQuotaWindowFee(ctx, tx, membershipID, kind, started, cost); err != nil {
+				return err
 			}
 			continue
 		}
 		switch {
 		case !started.Before(currentResetTime) && !started.Before(currentFromTime):
-			if err = replaceMemberQuotaWindow(ctx, tx, membershipID, kind, from, reset, cost, updated); err != nil {
+			if err = insertQuotaWindowFee(ctx, tx, membershipID, kind, started, cost); err != nil {
+				return err
+			}
+			if err = replaceMemberQuotaWindow(ctx, tx, membershipID, kind, from, reset, updated); err != nil {
 				return err
 			}
 		case !started.Before(currentFromTime):
 			if err = accumulateMemberQuotaWindow(ctx, tx, membershipID, kind, cost, updated); err != nil {
 				return err
 			}
-		case reset.After(currentFromTime):
-			if err = prependMemberQuotaWindow(ctx, tx, membershipID, kind, from, reset, cost, updated); err != nil {
+			if err = insertQuotaWindowFee(ctx, tx, membershipID, kind, started, cost); err != nil {
+				return err
+			}
+		default:
+			if err = insertQuotaWindowFee(ctx, tx, membershipID, kind, started, cost); err != nil {
+				return err
+			}
+			if err = rebuildQuotaWindow(ctx, tx, membershipID, kind, updated, location); err != nil {
 				return err
 			}
 		}
@@ -142,8 +157,13 @@ func insertMemberQuotaWindow(ctx context.Context, tx *sql.Tx, membershipID, kind
 	return classifyError(err)
 }
 
-func replaceMemberQuotaWindow(ctx context.Context, tx *sql.Tx, membershipID, kind string, from, reset time.Time, cost *int64, updated time.Time) error {
-	amount, unknown := quotaFeeValues(cost)
+func replaceMemberQuotaWindow(ctx context.Context, tx *sql.Tx, membershipID, kind string, from, reset, updated time.Time) error {
+	// The new reliable fee is already allocated. Include pending unknown fees
+	// in these bounds without scanning or re-projecting earlier windows.
+	var amount, unknown int64
+	if errSum := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(confirmed_nano_usd),0),COALESCE(SUM(unknown_cost_events),0) FROM member_quota_window_fees WHERE membership_id=? AND kind=? AND started_at>=? AND started_at<?`, membershipID, kind, toDatabaseTime(from), toDatabaseTime(reset)).Scan(&amount, &unknown); errSum != nil {
+		return fmt.Errorf("sqlite store: sum quota window allocations: %w", classifyError(errSum))
+	}
 	_, err := tx.ExecContext(ctx, `UPDATE member_quota_windows SET window_from=?,reset_at=?,confirmed_nano_usd=?,unknown_cost_events=?,revision=revision+1,updated_at=? WHERE membership_id=? AND kind=?`, toDatabaseTime(from), toDatabaseTime(reset), amount, unknown, toDatabaseTime(updated), membershipID, kind)
 	return classifyError(err)
 }
@@ -153,15 +173,6 @@ func accumulateMemberQuotaWindow(ctx context.Context, tx *sql.Tx, membershipID, 
 	_, err := tx.ExecContext(ctx, `UPDATE member_quota_windows SET confirmed_nano_usd=confirmed_nano_usd+?,unknown_cost_events=unknown_cost_events+?,revision=revision+1,updated_at=? WHERE membership_id=? AND kind=?`, amount, unknown, toDatabaseTime(updated), membershipID, kind)
 	if err != nil {
 		return fmt.Errorf("sqlite store: accumulate member quota: %w", classifyError(err))
-	}
-	return nil
-}
-
-func prependMemberQuotaWindow(ctx context.Context, tx *sql.Tx, membershipID, kind string, from, reset time.Time, cost *int64, updated time.Time) error {
-	amount, unknown := quotaFeeValues(cost)
-	_, err := tx.ExecContext(ctx, `UPDATE member_quota_windows SET window_from=?,reset_at=?,confirmed_nano_usd=confirmed_nano_usd+?,unknown_cost_events=unknown_cost_events+?,revision=revision+1,updated_at=? WHERE membership_id=? AND kind=?`, toDatabaseTime(from), toDatabaseTime(reset), amount, unknown, toDatabaseTime(updated), membershipID, kind)
-	if err != nil {
-		return fmt.Errorf("sqlite store: prepend member quota: %w", classifyError(err))
 	}
 	return nil
 }

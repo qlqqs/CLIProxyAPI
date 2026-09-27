@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,6 +48,7 @@ func (f *fakeCodexOAuthService) CreateTokenStorage(bundle *codex.CodexAuthBundle
 }
 
 func TestRequestCodexTokenCompletionKeepsConcurrentSessionPending(t *testing.T) {
+	replaceOAuthSessionStoreForTest(t, newOAuthSessionStore(oauthSessionTTL))
 	originalNewCodexOAuthService := newCodexOAuthService
 	newCodexOAuthService = func(cfg *config.Config, proxyURL string) codexOAuthService {
 		return &fakeCodexOAuthService{}
@@ -60,19 +62,22 @@ func TestRequestCodexTokenCompletionKeepsConcurrentSessionPending(t *testing.T) 
 	router := gin.New()
 	router.GET("/codex-auth-url", handler.RequestCodexToken)
 
-	firstState := requestCodexTokenState(t, router)
-	secondState := requestCodexTokenState(t, router)
-	defer CompleteOAuthSession(firstState)
-	defer CompleteOAuthSession(secondState)
+	// Keep the handler cleanup ticker outside the bubble, but join every OAuth worker.
+	synctest.Test(t, func(t *testing.T) {
+		firstState := requestCodexTokenState(t, router)
+		defer completeCodexOAuthSessionInBubble(firstState)
+		secondState := requestCodexTokenState(t, router)
+		defer completeCodexOAuthSessionInBubble(secondState)
 
-	if _, errWrite := WriteOAuthCallbackFileForPendingSession(authDir, "codex", firstState, "first-code", ""); errWrite != nil {
-		t.Fatalf("write first callback file: %v", errWrite)
-	}
+		if _, errWrite := WriteOAuthCallbackFileForPendingSession(authDir, "codex", firstState, "first-code", ""); errWrite != nil {
+			t.Fatalf("write first callback file: %v", errWrite)
+		}
 
-	waitForOAuthSessionDone(t, firstState)
-	if !IsOAuthSessionPending(secondState, "codex") {
-		t.Fatalf("expected concurrent codex session %s to remain pending after %s completed", secondState, firstState)
-	}
+		waitForOAuthSessionDone(t, firstState)
+		if !IsOAuthSessionPending(secondState, "codex") {
+			t.Fatalf("expected concurrent codex session %s to remain pending after %s completed", secondState, firstState)
+		}
+	})
 }
 
 func requestCodexTokenState(t *testing.T, router http.Handler) string {
@@ -97,12 +102,24 @@ func requestCodexTokenState(t *testing.T, router http.Handler) string {
 	return payload.State
 }
 
+func completeCodexOAuthSessionInBubble(state string) {
+	CompleteOAuthSession(state)
+	// Advance the callback polling interval before the bubble stops its clock.
+	time.Sleep(500 * time.Millisecond)
+	synctest.Wait()
+}
+
 func waitForOAuthSessionDone(t *testing.T, state string) {
 	t.Helper()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if !IsOAuthSessionPending(state, "codex") {
+		synctest.Wait()
+		session, ok := oauthSessions.Get(state)
+		if !ok || session.Status != "" {
+			t.Fatalf("codex session %s did not complete successfully: %#v", state, session)
+		}
+		if session.Completed {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -111,6 +128,7 @@ func waitForOAuthSessionDone(t *testing.T, state string) {
 }
 
 func TestRequestCodexTokenUsesProxyOverride(t *testing.T) {
+	replaceOAuthSessionStoreForTest(t, newOAuthSessionStore(oauthSessionTTL))
 	originalNewCodexOAuthService := newCodexOAuthService
 	capturedProxyURL := ""
 	newCodexOAuthService = func(_ *config.Config, proxyURL string) codexOAuthService {
@@ -124,26 +142,29 @@ func TestRequestCodexTokenUsesProxyOverride(t *testing.T) {
 	router := gin.New()
 	router.GET("/codex-auth-url", handler.RequestCodexToken)
 
-	req := httptest.NewRequest(http.MethodGet, "/codex-auth-url?proxy_url=socks5%3A%2F%2Fproxy.example%3A1080", nil)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, req)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
-	}
-	if capturedProxyURL != "socks5://proxy.example:1080" {
-		t.Fatalf("proxy URL = %q", capturedProxyURL)
-	}
-	var payload struct {
-		State string `json:"state"`
-	}
-	if errDecode := json.Unmarshal(response.Body.Bytes(), &payload); errDecode != nil || payload.State == "" {
-		t.Fatalf("invalid response: %s", response.Body.String())
-	}
-	CompleteOAuthSession(payload.State)
+	// Restore shared fixtures only after the background OAuth worker has exited.
+	synctest.Test(t, func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/codex-auth-url?proxy_url=socks5%3A%2F%2Fproxy.example%3A1080", nil)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+		}
+		if capturedProxyURL != "socks5://proxy.example:1080" {
+			t.Fatalf("proxy URL = %q", capturedProxyURL)
+		}
+		var payload struct {
+			State string `json:"state"`
+		}
+		if errDecode := json.Unmarshal(response.Body.Bytes(), &payload); errDecode != nil || payload.State == "" {
+			t.Fatalf("invalid response: %s", response.Body.String())
+		}
+		completeCodexOAuthSessionInBubble(payload.State)
 
-	invalid := httptest.NewRecorder()
-	router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/codex-auth-url?proxy_url=ftp%3A%2F%2Fproxy.example", nil))
-	if invalid.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("invalid proxy status = %d, body=%s", invalid.Code, invalid.Body.String())
-	}
+		invalid := httptest.NewRecorder()
+		router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/codex-auth-url?proxy_url=ftp%3A%2F%2Fproxy.example", nil))
+		if invalid.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("invalid proxy status = %d, body=%s", invalid.Code, invalid.Body.String())
+		}
+	})
 }

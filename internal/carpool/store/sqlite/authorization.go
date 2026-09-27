@@ -124,7 +124,7 @@ func (s *Store) AuthorizeAndBeginProxyRequest(ctx context.Context, input domain.
 	if reasonCode == "" && input.ExpectedAuthID != "" && (len(result.Scopes) != 1 || result.Scopes[0].AuthID != input.ExpectedAuthID) {
 		reasonCode = "account_changed"
 	}
-	if reasonCode == "" && !input.NonBillable && result.Membership != nil && len(result.Scopes) == 1 {
+	if reasonCode == "" && !input.NonBillable && result.Membership != nil {
 		windows, errWindows := memberQuotaWindowsTx(ctx, tx, result.Membership.ID, input.StartedAt)
 		if errWindows != nil {
 			return domain.AuthorizationSnapshot{}, rollback(tx, errWindows)

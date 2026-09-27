@@ -29,6 +29,7 @@ const migration003Checksum = "eb1af0994dc20b154360ccbe69b9365c50a9f3c7a9a71ac5a2
 
 const migration004Checksum = "9d5cfedf1bbaab5240f9dd5e4522f6ed69c44f6502240ee8dfc149e978f04134"
 const migration005Checksum = "0b882060587a09d09ae4ba6b04626babb28aad57a912253d977c4c13c0917395"
+const migration007Checksum = "6115184df6f1e3211f570f03d9ed1ea81bca617ee87786f82ac07a90fb9936c5"
 const migration006Checksum = "c3c2f4e5d12ee836422ebf142257d69b3674b5ad49e5caf3bb8505611fae82c8"
 
 var embeddedMigrationDefinitions = []migration{
@@ -50,6 +51,7 @@ var embeddedMigrationDefinitions = []migration{
 	{version: 4, name: "quota", checksum: migration004Checksum},
 	{version: 5, name: "api_key_tokens", checksum: migration005Checksum},
 	{version: 6, name: "local_quotas", checksum: migration006Checksum},
+	{version: 7, name: "quota_window_fees", checksum: migration007Checksum},
 }
 
 func loadEmbeddedMigrations() ([]migration, error) {
@@ -103,6 +105,11 @@ func (s *Store) applyMigrations(ctx context.Context, migrations []migration) err
 				return rollback(tx, fmt.Errorf("sqlite store: backfill local quota windows: %w", errBackfill))
 			}
 		}
+		if next.version == 7 {
+			if errBackfill := backfillQuotaWindowFees(ctx, tx); errBackfill != nil {
+				return rollback(tx, fmt.Errorf("sqlite store: backfill quota window fees: %w", errBackfill))
+			}
+		}
 		if _, errRecord := tx.ExecContext(ctx,
 			"INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)",
 			next.version, next.name, next.checksum, toDatabaseTime(s.currentTime())); errRecord != nil {
@@ -131,48 +138,8 @@ func backfillLocalQuotaWindows(ctx context.Context, tx *sql.Tx, at time.Time, lo
 		if _, errExec := tx.ExecContext(ctx, query, item.kind, toDatabaseTime(at), item.kind, toDatabaseTime(at)); errExec != nil {
 			return classifyError(errExec)
 		}
-		query = `SELECT membership_id,MIN(started_at),SUM(confirmed_nano_usd),SUM(unknown_cost_events)
-			FROM quota_request_fees WHERE ` + item.column + ` IS NULL
-			GROUP BY membership_id HAVING SUM(confirmed_nano_usd)>0`
-		rows, errQuery := tx.QueryContext(ctx, query)
-		if errQuery != nil {
-			return classifyError(errQuery)
-		}
-		for rows.Next() {
-			var membershipID string
-			var startedAt, confirmed, unknown int64
-			if errScan := rows.Scan(&membershipID, &startedAt, &confirmed, &unknown); errScan != nil {
-				rows.Close()
-				return classifyError(errScan)
-			}
-			started := fromDatabaseTime(startedAt)
-			from, reset := localQuotaWindowBounds(started, item.kind, location)
-			if !reset.After(at) {
-				continue
-			}
-			result, errUpdate := tx.ExecContext(ctx, `UPDATE member_quota_windows SET confirmed_nano_usd=confirmed_nano_usd+?,unknown_cost_events=unknown_cost_events+?,revision=revision+1,updated_at=? WHERE membership_id=? AND kind=?`, confirmed, unknown, toDatabaseTime(at), membershipID, item.kind)
-			if errUpdate != nil {
-				rows.Close()
-				return classifyError(errUpdate)
-			}
-			affected, errRows := result.RowsAffected()
-			if errRows != nil {
-				rows.Close()
-				return errRows
-			}
-			if affected == 0 {
-				if _, errInsert := tx.ExecContext(ctx, `INSERT INTO member_quota_windows(membership_id,kind,window_from,reset_at,confirmed_nano_usd,unknown_cost_events,updated_at) VALUES(?,?,?,?,?,?,?)`, membershipID, item.kind, toDatabaseTime(from), toDatabaseTime(reset), confirmed, unknown, toDatabaseTime(at)); errInsert != nil {
-					rows.Close()
-					return classifyError(errInsert)
-				}
-			}
-		}
-		if errRows := rows.Err(); errRows != nil {
-			rows.Close()
-			return classifyError(errRows)
-		}
-		if errClose := rows.Close(); errClose != nil {
-			return classifyError(errClose)
+		if errBackfill := backfillUnboundQuotaFees(ctx, tx, item.kind, item.column, at, location); errBackfill != nil {
+			return errBackfill
 		}
 	}
 	return nil

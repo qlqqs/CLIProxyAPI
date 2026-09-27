@@ -53,6 +53,8 @@ Before writing or reviewing backend code:
 | [拼车同步记账规范](./carpool-accounting-guidelines.md) | 请求侧同步观察、失败门禁、重试与关停契约 | 完成 |
 | [拼车明细与清理确认规范](./carpool-retention-guidelines.md) | 固定范围分页、确认引用、重复确认、策略读取及真实事件展开 | 完成 |
 | [拼车额度与并发排队规范](./carpool-quota-concurrency-guidelines.md) | 账号同步窗口、可靠短周期账本、双维并发与有界队列 | 完成 |
+| [鉴权安全边界](./auth-boundary-guidelines.md) | 管理来源、OAuth state/落盘、拼车登录与删除权限 | 完成 |
+| [热加载与镜像规范](./reload-storage-guidelines.md) | 文件替换、auth-dir 切换、快照 hash 与对象镜像删除 | 完成 |
 | [服务生命周期规范](./lifecycle-guidelines.md) | 关停顺序、超时预算与回归测试 | 完成 |
 
 ---

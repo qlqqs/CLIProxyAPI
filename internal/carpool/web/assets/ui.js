@@ -3,6 +3,7 @@ const buttonTones = new Set(["primary", "secondary", "danger"]);
 const buttonTypes = new Set(["button", "submit", "reset"]);
 const bannerTones = new Set(["error", "warning", "success"]);
 const usageWindowColors = new Set(["indigo", "emerald", "purple", "amber"]);
+const usageWindowSeverities = new Set(["healthy", "warning", "danger", "unknown"]);
 
 export function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>'"]/g, character => ({
@@ -75,16 +76,17 @@ export function tableMarkup({ headings, rowsHTML, className = "", wrapperClassNa
   return `<div class="${escapeHTML(classNames("table-wrap", wrapperClassName))}" data-ui="table"><table class="${escapeHTML(className)}">${captionMarkup}<thead><tr>${headingMarkup}</tr></thead><tbody>${rowsHTML}</tbody></table></div>`;
 }
 
-export function usageWindowMarkup({ label, utilization = null, resetsAtLabel = "-", color = "indigo", percentLabel = "" }) {
+export function usageWindowMarkup({ label, utilization = null, resetsAtLabel = "-", color = "indigo", percentLabel = "", statusLabel = "", severity: severityOverride = "" }) {
   if (!usageWindowColors.has(color)) throw new Error(`Unsupported usage window color: ${color}`);
   const measured = Number.isFinite(utilization);
   const normalized = measured ? Math.max(0, utilization) : 0;
   const progressValue = Math.min(normalized, 100);
   const rounded = Math.round(normalized);
   const displayPercent = percentLabel || (measured ? (rounded > 999 ? ">999%" : `${rounded}%`) : "-");
-  const severity = !measured ? "unknown" : normalized >= 90 ? "danger" : normalized >= 75 ? "warning" : "healthy";
-  const ariaLabel = `${label} 已用 ${displayPercent}，重置 ${resetsAtLabel}`;
-  return `<div class="usage-window-row" data-ui="usage-window"><span class="usage-window-label usage-window-${color}">${escapeHTML(label)}</span><progress class="usage-window-progress is-${severity}" max="100" value="${progressValue}" aria-label="${escapeHTML(ariaLabel)}" aria-valuetext="${escapeHTML(displayPercent)}">${escapeHTML(displayPercent)}</progress><span class="usage-window-percent is-${severity}">${escapeHTML(displayPercent)}</span><span class="usage-window-reset">${escapeHTML(resetsAtLabel)}</span></div>`;
+  const severity = usageWindowSeverities.has(severityOverride) ? severityOverride : !measured ? "unknown" : normalized >= 90 ? "danger" : normalized >= 75 ? "warning" : "healthy";
+  const ariaLabel = `${label} 已用 ${displayPercent}，重置 ${resetsAtLabel}${statusLabel ? `，${statusLabel}` : ""}`;
+  const status = statusLabel ? `<span class="usage-window-status is-${severity}">${escapeHTML(statusLabel)}</span>` : "";
+  return `<div class="usage-window-row" data-ui="usage-window"><span class="usage-window-label usage-window-${color}">${escapeHTML(label)}</span><progress class="usage-window-progress is-${severity}" max="100" value="${progressValue}" aria-label="${escapeHTML(ariaLabel)}" aria-valuetext="${escapeHTML(displayPercent)}">${escapeHTML(displayPercent)}</progress><span class="usage-window-percent is-${severity}">${escapeHTML(displayPercent)}</span><span class="usage-window-reset">${escapeHTML(resetsAtLabel)}</span>${status}</div>`;
 }
 
 export function statusBadgeMarkup(status, label) {

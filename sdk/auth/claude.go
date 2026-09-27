@@ -61,7 +61,15 @@ func (a *ClaudeAuthenticator) Login(ctx context.Context, cfg *config.Config, opt
 		return nil, fmt.Errorf("claude state generation failed: %w", err)
 	}
 
-	oauthServer := claude.NewOAuthServer(callbackPort)
+	authSvc := claude.NewClaudeAuth(cfg)
+
+	authURL, returnedState, err := authSvc.GenerateAuthURL(state, pkceCodes)
+	if err != nil {
+		return nil, fmt.Errorf("claude authorization url generation failed: %w", err)
+	}
+	state = returnedState
+
+	oauthServer := claude.NewOAuthServer(callbackPort, state)
 	if err = oauthServer.Start(); err != nil {
 		if strings.Contains(err.Error(), "already in use") {
 			return nil, claude.NewAuthenticationError(claude.ErrPortInUse, err)
@@ -75,14 +83,6 @@ func (a *ClaudeAuthenticator) Login(ctx context.Context, cfg *config.Config, opt
 			log.Warnf("claude oauth server stop error: %v", stopErr)
 		}
 	}()
-
-	authSvc := claude.NewClaudeAuth(cfg)
-
-	authURL, returnedState, err := authSvc.GenerateAuthURL(state, pkceCodes)
-	if err != nil {
-		return nil, fmt.Errorf("claude authorization url generation failed: %w", err)
-	}
-	state = returnedState
 
 	if !opts.NoBrowser {
 		fmt.Println("Opening browser for Claude authentication")
@@ -176,17 +176,15 @@ waitForCallback:
 		}
 	}
 
+	if result.State != state {
+		return nil, claude.NewAuthenticationError(claude.ErrInvalidState, fmt.Errorf("state mismatch"))
+	}
+
 	if result.Error != "" {
 		return nil, claude.NewOAuthError(result.Error, manualDescription, http.StatusBadRequest)
 	}
 
-	if result.State != state {
-		log.Errorf("State mismatch: expected %s, got %s", state, result.State)
-		return nil, claude.NewAuthenticationError(claude.ErrInvalidState, fmt.Errorf("state mismatch"))
-	}
-
 	log.Debug("Claude authorization code received; exchanging for tokens")
-	log.Debugf("Code: %s, State: %s", result.Code[:min(20, len(result.Code))], state)
 
 	authBundle, err := authSvc.ExchangeCodeForTokens(ctx, result.Code, state, pkceCodes)
 	if err != nil {

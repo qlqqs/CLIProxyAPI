@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+import { loadCarpoolApp } from "./helpers/carpool-app-harness.mjs";
 
 const source = readFileSync(new URL("../internal/carpool/web/assets/app.js", import.meta.url), "utf8");
 const context = vm.createContext({
@@ -10,7 +11,7 @@ const context = vm.createContext({
   Headers,
   fetch: () => new Promise(() => {}),
 });
-vm.runInContext(source, context);
+loadCarpoolApp(context);
 
 test("API key cells show the complete key with a small copy control", () => {
   const markup = context.apiKeyValueMarkup({ name: "Laptop", key_ref: "key-ref", api_key: "cpk_v1_key-ref.full-secret" });

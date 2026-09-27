@@ -49,6 +49,8 @@ type ObjectTokenStore struct {
 	configPath string
 	authDir    string
 	mu         sync.Mutex
+	// Reconciled removals must not be echoed to the remote store by file watchers.
+	syncedAuthRemovals map[string]struct{}
 }
 
 // NewObjectTokenStore initializes an object storage backed token store.
@@ -400,19 +402,30 @@ func (s *ObjectTokenStore) syncConfigFromBucket(ctx context.Context, example str
 }
 
 func (s *ObjectTokenStore) syncAuthFromBucket(ctx context.Context) error {
-	// NOTE: We intentionally do NOT use os.RemoveAll here.
-	// Wiping the directory triggers file watcher delete events, which then
-	// propagate deletions to the remote object store (race condition).
-	// Instead, we just ensure the directory exists and overwrite files incrementally.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := os.MkdirAll(s.authDir, 0o700); err != nil {
 		return fmt.Errorf("object store: create auth directory: %w", err)
 	}
+	seen := make(map[string]struct{})
 
 	prefix := s.prefixedKey(objectStoreAuthPrefix + "/")
 	objectCh := s.client.ListObjects(ctx, s.cfg.Bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
 		Recursive: true,
 	})
+	defer func() {
+		cancel()
+		// Drain the final cancellation result when a download fails early.
+		for range objectCh {
+		}
+	}()
 	for object := range objectCh {
 		if object.Err != nil {
 			return fmt.Errorf("object store: list auth objects: %w", object.Err)
@@ -432,6 +445,7 @@ func (s *ObjectTokenStore) syncAuthFromBucket(ctx context.Context) error {
 			continue
 		}
 		local := filepath.Join(s.authDir, cleanRel)
+		seen[local] = struct{}{}
 		if err := os.MkdirAll(filepath.Dir(local), 0o700); err != nil {
 			return fmt.Errorf("object store: prepare auth subdir: %w", err)
 		}
@@ -440,13 +454,46 @@ func (s *ObjectTokenStore) syncAuthFromBucket(ctx context.Context) error {
 			return fmt.Errorf("object store: download auth %s: %w", object.Key, errGet)
 		}
 		data, errRead := io.ReadAll(reader)
-		_ = reader.Close()
-		if errRead != nil {
-			return fmt.Errorf("object store: read auth %s: %w", object.Key, errRead)
+		errClose := reader.Close()
+		if errRead != nil || errClose != nil {
+			return fmt.Errorf("object store: read auth %s: %w", object.Key, errors.Join(errRead, errClose))
 		}
 		if errWrite := os.WriteFile(local, data, 0o600); errWrite != nil {
 			return fmt.Errorf("object store: write auth %s: %w", local, errWrite)
 		}
+		delete(s.syncedAuthRemovals, local)
+	}
+	if errContext := ctx.Err(); errContext != nil {
+		return errContext
+	}
+
+	// Reconcile only after every listing page and download has succeeded. Keep
+	// directories and non-auth files intact, and never use RemoveAll here.
+	var stale []string
+	if errWalk := filepath.WalkDir(s.authDir, func(path string, entry fs.DirEntry, errWalk error) error {
+		if errWalk != nil {
+			return errWalk
+		}
+		if !entry.IsDir() && strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
+			if _, exists := seen[path]; !exists {
+				stale = append(stale, path)
+			}
+		}
+		return nil
+	}); errWalk != nil {
+		return fmt.Errorf("object store: find stale auth mirrors: %w", errWalk)
+	}
+	for _, path := range stale {
+		if errContext := ctx.Err(); errContext != nil {
+			return errContext
+		}
+		if errRemove := os.Remove(path); errRemove != nil && !errors.Is(errRemove, fs.ErrNotExist) {
+			return fmt.Errorf("object store: remove stale auth mirror: %w", errRemove)
+		}
+		if s.syncedAuthRemovals == nil {
+			s.syncedAuthRemovals = make(map[string]struct{})
+		}
+		s.syncedAuthRemovals[path] = struct{}{}
 	}
 	return nil
 }
@@ -462,10 +509,14 @@ func (s *ObjectTokenStore) uploadAuth(ctx context.Context, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			if _, reconciled := s.syncedAuthRemovals[filepath.Clean(path)]; reconciled {
+				return nil
+			}
 			return s.deleteAuthObject(ctx, path)
 		}
 		return fmt.Errorf("object store: read auth file: %w", err)
 	}
+	delete(s.syncedAuthRemovals, filepath.Clean(path))
 	if len(data) == 0 {
 		return s.deleteAuthObject(ctx, path)
 	}

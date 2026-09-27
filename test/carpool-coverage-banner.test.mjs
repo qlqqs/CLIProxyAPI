@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+import { loadCarpoolApp } from "./helpers/carpool-app-harness.mjs";
 
 const source = readFileSync(new URL("../internal/carpool/web/assets/app.js", import.meta.url), "utf8");
 const context = vm.createContext({
@@ -10,7 +11,7 @@ const context = vm.createContext({
   Headers,
   fetch: () => new Promise(() => {}),
 });
-vm.runInContext(source, context);
+loadCarpoolApp(context);
 
 test("usage coverage banner helper, calls and phrase are removed", () => {
   assert.doesNotMatch(source, /usageCoverage|条未知用量事件和/);

@@ -5,10 +5,13 @@ package claude
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +27,8 @@ type OAuthServer struct {
 	server *http.Server
 	// port is the port number on which the server listens
 	port int
+	// expectedState binds every callback, including errors, to this login attempt.
+	expectedState string
 	// resultChan is a channel for sending OAuth results
 	resultChan chan *OAuthResult
 	// errorChan is a channel for sending OAuth errors
@@ -52,14 +57,16 @@ type OAuthResult struct {
 //
 // Parameters:
 //   - port: The port number on which the server should listen
+//   - expectedState: The unpredictable state belonging to this login attempt
 //
 // Returns:
 //   - *OAuthServer: A new OAuthServer instance
-func NewOAuthServer(port int) *OAuthServer {
+func NewOAuthServer(port int, expectedState string) *OAuthServer {
 	return &OAuthServer{
-		port:       port,
-		resultChan: make(chan *OAuthResult, 1),
-		errorChan:  make(chan error, 1),
+		port:          port,
+		expectedState: expectedState,
+		resultChan:    make(chan *OAuthResult, 1),
+		errorChan:     make(chan error, 1),
 	}
 }
 
@@ -77,9 +84,12 @@ func (s *OAuthServer) Start() error {
 		return fmt.Errorf("server is already running")
 	}
 
-	// Check if port is available
-	if !s.isPortAvailable() {
-		return fmt.Errorf("port %d is already in use", s.port)
+	if s.expectedState == "" {
+		return fmt.Errorf("OAuth callback state is required")
+	}
+	listener, errListen := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", s.port))
+	if errListen != nil {
+		return fmt.Errorf("listen on OAuth callback port %d: %w", s.port, errListen)
 	}
 
 	mux := http.NewServeMux()
@@ -87,7 +97,7 @@ func (s *OAuthServer) Start() error {
 	mux.HandleFunc("/success", s.handleSuccess)
 
 	s.server = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.port),
+		Addr:         listener.Addr().String(),
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -95,15 +105,13 @@ func (s *OAuthServer) Start() error {
 
 	s.running = true
 
-	// Start server in goroutine
+	// Capture the server so Stop cannot replace it before this goroutine starts.
+	server := s.server
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.errorChan <- fmt.Errorf("server failed to start: %w", err)
 		}
 	}()
-
-	// Give server a moment to start
-	time.Sleep(100 * time.Millisecond)
 
 	return nil
 }
@@ -180,34 +188,19 @@ func (s *OAuthServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	state := query.Get("state")
 	errorParam := query.Get("error")
 
-	// Validate required parameters
+	// Reject unrelated callbacks without consuming the pending login's result.
+	if s.expectedState == "" || len(query["state"]) != 1 || subtle.ConstantTimeCompare([]byte(state), []byte(s.expectedState)) != 1 {
+		http.Error(w, "Invalid OAuth state", http.StatusBadRequest)
+		return
+	}
 	if errorParam != "" {
-		log.Errorf("OAuth error received: %s", errorParam)
-		result := &OAuthResult{
-			Error: errorParam,
-		}
-		s.sendResult(result)
-		http.Error(w, fmt.Sprintf("OAuth error: %s", errorParam), http.StatusBadRequest)
+		log.Warn("OAuth authorization was rejected")
+		s.sendResult(&OAuthResult{State: state, Error: errorParam})
+		http.Error(w, "OAuth authorization failed", http.StatusBadRequest)
 		return
 	}
-
 	if code == "" {
-		log.Error("No authorization code received")
-		result := &OAuthResult{
-			Error: "no_code",
-		}
-		s.sendResult(result)
 		http.Error(w, "No authorization code received", http.StatusBadRequest)
-		return
-	}
-
-	if state == "" {
-		log.Error("No state parameter received")
-		result := &OAuthResult{
-			Error: "no_state",
-		}
-		s.sendResult(result)
-		http.Error(w, "No state parameter received", http.StatusBadRequest)
 		return
 	}
 
@@ -232,6 +225,8 @@ func (s *OAuthServer) handleSuccess(w http.ResponseWriter, r *http.Request) {
 	log.Debug("Serving success page")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 
 	// Parse query parameters for customization
@@ -262,20 +257,21 @@ func (s *OAuthServer) handleSuccess(w http.ResponseWriter, r *http.Request) {
 // Returns:
 //   - string: The HTML content for the success page
 func (s *OAuthServer) generateSuccessHTML(setupRequired bool, platformURL string) string {
-	html := LoginSuccessHtml
-
-	// Replace platform URL placeholder
-	html = strings.Replace(html, "{{PLATFORM_URL}}", platformURL, -1)
-
-	// Add setup notice if required
-	if setupRequired {
-		setupNotice := strings.Replace(SetupNoticeHtml, "{{PLATFORM_URL}}", platformURL, -1)
-		html = strings.Replace(html, "{{SETUP_NOTICE}}", setupNotice, 1)
+	parsed, errParse := url.Parse(strings.TrimSpace(platformURL))
+	if errParse != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "console.anthropic.com") || parsed.User != nil {
+		platformURL = "https://console.anthropic.com/"
 	} else {
-		html = strings.Replace(html, "{{SETUP_NOTICE}}", "", 1)
+		platformURL = parsed.String()
 	}
-
-	return html
+	escapedPlatformURL := html.EscapeString(platformURL)
+	page := strings.ReplaceAll(LoginSuccessHtml, "{{PLATFORM_URL}}", escapedPlatformURL)
+	if setupRequired {
+		setupNotice := strings.ReplaceAll(SetupNoticeHtml, "{{PLATFORM_URL}}", escapedPlatformURL)
+		page = strings.Replace(page, "{{SETUP_NOTICE}}", setupNotice, 1)
+	} else {
+		page = strings.Replace(page, "{{SETUP_NOTICE}}", "", 1)
+	}
+	return page
 }
 
 // sendResult sends the OAuth result to the waiting channel.
@@ -290,23 +286,6 @@ func (s *OAuthServer) sendResult(result *OAuthResult) {
 	default:
 		log.Warn("OAuth result channel is full, result dropped")
 	}
-}
-
-// isPortAvailable checks if the specified port is available.
-// It attempts to listen on the port to determine availability.
-//
-// Returns:
-//   - bool: True if the port is available, false otherwise
-func (s *OAuthServer) isPortAvailable() bool {
-	addr := fmt.Sprintf(":%d", s.port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		_ = listener.Close()
-	}()
-	return true
 }
 
 // IsRunning returns whether the server is currently running.

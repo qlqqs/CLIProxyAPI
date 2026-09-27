@@ -44,7 +44,7 @@ func TestLocalQuotaMigrationPreservesLegacyColumns(t *testing.T) {
 	}
 	defer store.Close()
 	version, err := store.SchemaVersion(ctx)
-	if err != nil || version != 6 {
+	if err != nil || version != 7 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	for _, table := range []string{"billing_periods", "quota_request_fees", "member_quota_windows"} {

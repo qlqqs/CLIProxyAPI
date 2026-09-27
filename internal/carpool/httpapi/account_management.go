@@ -310,6 +310,9 @@ func (a *API) deleteAccountFile(c *gin.Context) {
 		writeAPIError(c, http.StatusUnprocessableEntity, "invalid_account_target", "账号标识无效")
 		return
 	}
+	if !a.accountNameAllowed(c, name, index, true) {
+		return
+	}
 	entries, ok := a.accountEntries(c)
 	if !ok {
 		return

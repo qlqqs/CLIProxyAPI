@@ -65,7 +65,7 @@ func (a *CodexAuthenticator) Login(ctx context.Context, cfg *config.Config, opts
 		return nil, fmt.Errorf("codex state generation failed: %w", err)
 	}
 
-	oauthServer := codex.NewOAuthServer(callbackPort)
+	oauthServer := codex.NewOAuthServer(callbackPort, state)
 	if err = oauthServer.Start(); err != nil {
 		if strings.Contains(err.Error(), "already in use") {
 			return nil, codex.NewAuthenticationError(codex.ErrPortInUse, err)
@@ -179,12 +179,12 @@ waitForCallback:
 		}
 	}
 
-	if result.Error != "" {
-		return nil, codex.NewOAuthError(result.Error, manualDescription, http.StatusBadRequest)
-	}
-
 	if result.State != state {
 		return nil, codex.NewAuthenticationError(codex.ErrInvalidState, fmt.Errorf("state mismatch"))
+	}
+
+	if result.Error != "" {
+		return nil, codex.NewOAuthError(result.Error, manualDescription, http.StatusBadRequest)
 	}
 
 	log.Debug("Codex authorization code received; exchanging for tokens")

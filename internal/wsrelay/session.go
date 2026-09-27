@@ -86,9 +86,29 @@ func (pr *pendingRequest) deliverTerminal(sessClosed <-chan struct{}, msg Messag
 	pr.mu.Lock()
 	defer pr.mu.Unlock()
 	pr.ensureInitializedLocked(nil)
-	if pr.closed {
+	if pr.closed || pr.terminal {
 		return false
 	}
+	if msg.Type != MessageTypeError {
+		var ctxDone <-chan struct{}
+		if pr.reqCtx != nil {
+			ctxDone = pr.reqCtx.Done()
+		}
+		// Successful completion must follow every queued data frame. The session
+		// dispatches this wait separately so another request can keep using its reader.
+		select {
+		case <-pr.done:
+			return false
+		case <-sessClosed:
+			return false
+		case <-ctxDone:
+			return false
+		case pr.ch <- msg:
+			pr.terminal = true
+			return true
+		}
+	}
+	// An explicit failure may replace buffered data to make the abort observable.
 	pr.terminal = true
 
 	select {
@@ -267,10 +287,22 @@ func (s *session) dispatch(msg Message) {
 		req := value.(*pendingRequest)
 		isTerminal := msg.Type == MessageTypeHTTPResp || msg.Type == MessageTypeError || msg.Type == MessageTypeStreamEnd
 		if isTerminal {
-			req.deliverTerminal(s.closed, msg)
-			if actual, loaded := s.pending.LoadAndDelete(msg.ID); loaded {
-				actualReq := actual.(*pendingRequest)
-				actualReq.close()
+			if !s.pending.CompareAndDelete(msg.ID, req) {
+				return
+			}
+			finish := func() {
+				if req.deliverTerminal(s.closed, msg) {
+					req.close()
+				} else {
+					req.cancelWithError(errClosed)
+				}
+			}
+			if msg.Type == MessageTypeError {
+				finish()
+			} else {
+				// Remove the request before waiting: no later frame may overtake its
+				// terminal, and the shared reader must remain available for other IDs.
+				go finish()
 			}
 		} else {
 			req.deliver(s.closed, msg)
@@ -313,15 +345,14 @@ func (s *session) request(ctx context.Context, msg Message) (<-chan Message, err
 	}
 	if ctx != nil {
 		stop := context.AfterFunc(ctx, func() {
-			if actual, loaded := s.pending.LoadAndDelete(msg.ID); loaded {
-				actual.(*pendingRequest).cancel()
+			if s.pending.CompareAndDelete(msg.ID, req) {
+				req.cancel()
 			}
 		})
 		req.setStopCancel(stop)
 	}
 	if err := s.send(ctx, msg); err != nil {
-		if actual, loaded := s.pending.LoadAndDelete(msg.ID); loaded {
-			req := actual.(*pendingRequest)
+		if s.pending.CompareAndDelete(msg.ID, req) {
 			req.close()
 		}
 		return nil, err

@@ -33,6 +33,7 @@ const (
 	wsTurnStateHeader                     = "x-codex-turn-state"
 	wsTimelineBodyKey                     = "WEBSOCKET_TIMELINE_OVERRIDE"
 	wsCloseReasonMaxBytes                 = 123
+	wsMaxQueuedRequests                   = 16
 	wsHTTPReplayRequiredCloseReason       = "upstream requires HTTP replay"
 	responsesWebsocketUpstreamModeUnknown = ""
 	responsesWebsocketUpstreamModeWS      = "websocket"
@@ -269,6 +270,49 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		return
 	}
 	writer := newResponsesWebsocketWriter(conn)
+	// A hijacked HTTP request does not observe a peer disconnect by itself. Keep
+	// exactly one reader running even while execution waits for its first chunk.
+	sessionCtx, cancelSession := context.WithCancelCause(c.Request.Context())
+	c.Request = c.Request.WithContext(sessionCtx)
+	type downstreamRequest struct {
+		payload []byte
+	}
+	requests := make(chan downstreamRequest, wsMaxQueuedRequests)
+	readerDone := make(chan struct{})
+	stopCloseOnCancel := context.AfterFunc(sessionCtx, func() {
+		_, _ = writer.closeWithoutError()
+	})
+	go func() {
+		defer close(readerDone)
+		defer close(requests)
+		for {
+			msgType, payload, errRead := conn.ReadMessage()
+			if errRead != nil {
+				cancelSession(errRead)
+				return
+			}
+			if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
+				continue
+			}
+			select {
+			case <-sessionCtx.Done():
+				return
+			case requests <- downstreamRequest{payload: payload}:
+			default:
+				// Never block the reader behind pipelined turns: it must still be
+				// able to cancel execution, and the pending queue must stay bounded.
+				cancelSession(errors.New("responses websocket: too many queued requests"))
+				return
+			}
+		}
+	}()
+	defer func() {
+		cancelSession(nil)
+		_, _ = writer.closeWithoutError()
+		<-readerDone
+		stopCloseOnCancel()
+	}()
+
 	passthroughSessionID := uuid.NewString()
 	downstreamSessionKey := websocketDownstreamSessionKey(c.Request)
 	retainResponsesWebsocketToolCaches(downstreamSessionKey)
@@ -385,19 +429,15 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	}
 
 	for {
-		msgType, payload, errReadMessage := conn.ReadMessage()
-		if errReadMessage != nil {
-			wsTerminateErr = errReadMessage
-			if websocket.IsCloseError(errReadMessage, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
-				log.Infof("responses websocket: client disconnected id=%s error=%v", passthroughSessionID, errReadMessage)
-			} else {
-				// log.Warnf("responses websocket: read message failed id=%s error=%v", passthroughSessionID, errReadMessage)
+		request, okRequest := <-requests
+		if !okRequest || sessionCtx.Err() != nil {
+			wsTerminateErr = context.Cause(sessionCtx)
+			if websocket.IsCloseError(wsTerminateErr, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
+				log.Infof("responses websocket: client disconnected id=%s error=%v", passthroughSessionID, wsTerminateErr)
 			}
 			return
 		}
-		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
-			continue
-		}
+		payload := request.payload
 		// log.Infof(
 		// 	"responses websocket: downstream_in id=%s type=%d event=%s payload=%s",
 		// 	passthroughSessionID,
@@ -623,6 +663,8 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			wsTerminateErr = errForward
 			switch {
 			case errors.Is(errForward, websocket.ErrCloseSent):
+			case errors.Is(errForward, context.Canceled) && sessionCtx.Err() != nil:
+				log.Debugf("responses websocket: client disconnected during execution id=%s", passthroughSessionID)
 			case isWebsocketConnectionClosedError(errForward):
 				// The client hung up while a downstream write was in flight. This is a
 				// normal shutdown race, not a proxy failure.

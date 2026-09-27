@@ -33,33 +33,69 @@ func (h *Host) RegisterUsagePlugins() {
 	}
 }
 
+// resolvedThinkingProvider caches only identity metadata, never a native call result
+// that could authorize a different loaded instance.
+type resolvedThinkingProvider struct {
+	path, version, provider string
+}
+
 func (h *Host) refreshThinkingProviders(records []capabilityRecord) {
-	thinking.ClearPluginProviders()
 	if h == nil {
+		thinking.ClearPluginProviders()
 		return
 	}
+	resolved := make(map[string]resolvedThinkingProvider)
 	for _, record := range records {
-		applier := record.plugin.Capabilities.ThinkingApplier
-		if applier == nil || h.isPluginFused(record.id) {
+		h.mu.Lock()
+		_, loading := h.loading[record.id]
+		cached, hasCached := h.thinkingProviders[record.id]
+		h.mu.Unlock()
+		if loading {
+			// A fenced plugin must not receive new native identifier calls from
+			// an unrelated ApplyConfig while its lifecycle call is still running.
+			if hasCached && cached.path == record.path && cached.version == record.version {
+				resolved[record.id] = cached
+			}
 			continue
 		}
-		provider, okProvider := h.callThinkingIdentifier(record, applier)
-		if !okProvider {
+		provider, okProvider := h.callThinkingIdentifier(record, record.plugin.Capabilities.ThinkingApplier)
+		if okProvider {
+			resolved[record.id] = resolvedThinkingProvider{record.path, record.version, provider}
+		}
+	}
+	h.mu.Lock()
+	h.thinkingProviders = resolved
+	h.publishThinkingProvidersLocked(records)
+	h.mu.Unlock()
+}
+
+// publishThinkingProvidersLocked requires mu. All identifiers were resolved before
+// taking publication locks, so restoring a canceled replacement cannot block here
+// in native code or accidentally discard another plugin's provider registration.
+func (h *Host) publishThinkingProvidersLocked(records []capabilityRecord) {
+	thinking.ClearPluginProviders()
+	for _, record := range records {
+		resolved, ok := h.thinkingProviders[record.id]
+		_, fused := h.fused[record.id]
+		if !ok || fused || resolved.provider == "" || resolved.path != record.path || resolved.version != record.version || record.plugin.Capabilities.ThinkingApplier == nil {
 			continue
 		}
-		thinking.RegisterPluginProvider(record.id, provider, record.priority, &thinkingAdapter{
-			host:     h,
-			pluginID: record.id,
-			path:     record.path,
-			version:  record.version,
-			provider: provider,
-			applier:  applier,
+		thinking.RegisterPluginProvider(record.id, resolved.provider, record.priority, &thinkingAdapter{
+			host: h, pluginID: record.id, path: record.path, version: record.version,
+			provider: resolved.provider, applier: record.plugin.Capabilities.ThinkingApplier,
 		})
 	}
 }
 
-func (h *Host) callThinkingIdentifier(record capabilityRecord, applier pluginapi.ThinkingApplier) (provider string, ok bool) {
-	if h == nil || applier == nil || h.isPluginFused(record.id) || !h.recordCurrent(record) {
+func (h *Host) callThinkingIdentifier(record capabilityRecord, applier pluginapi.ThinkingApplier) (string, bool) {
+	if h == nil || !h.recordCurrent(record) {
+		return "", false
+	}
+	return h.resolveThinkingIdentifier(record, applier)
+}
+
+func (h *Host) resolveThinkingIdentifier(record capabilityRecord, applier pluginapi.ThinkingApplier) (provider string, ok bool) {
+	if h == nil || applier == nil || h.isPluginFused(record.id) {
 		return "", false
 	}
 	defer func() {

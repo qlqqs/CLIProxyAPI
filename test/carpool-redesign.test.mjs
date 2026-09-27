@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import { loadCarpoolApp } from './helpers/carpool-app-harness.mjs';
 
 const source = readFileSync(new URL('../internal/carpool/web/assets/app.js', import.meta.url), 'utf8');
 function application(session) {
@@ -11,7 +12,7 @@ function application(session) {
     Headers,
     fetch: () => new Promise(() => {}),
   });
-  vm.runInContext(source, context);
+  loadCarpoolApp(context);
   vm.runInContext(`state.session = ${JSON.stringify(session)}`, context);
   return context;
 }

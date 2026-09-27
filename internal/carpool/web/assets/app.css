@@ -428,10 +428,15 @@ dialog.entity-panel[open] { display: grid; grid-template-rows: auto minmax(0, 1f
 .usage-window-progress.is-danger::-webkit-progress-value { background: var(--danger); }
 .usage-window-progress.is-danger::-moz-progress-bar { background: var(--danger); }
 .usage-window-progress.is-unknown { opacity: .55; }
+.usage-window-progress.is-unknown::-webkit-progress-value { background: var(--status-neutral); }
+.usage-window-progress.is-unknown::-moz-progress-bar { background: var(--status-neutral); }
 .usage-window-percent { width: 34px; color: var(--muted); font-size: 10px; font-weight: 500; text-align: right; white-space: nowrap; }
 .usage-window-percent.is-warning { color: var(--warning); }
 .usage-window-percent.is-danger { color: var(--danger); }
 .usage-window-reset { min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.usage-window-status { grid-column: 2 / -1; color: var(--muted); font-size: 11px; }
+.usage-window-status.is-danger { color: var(--danger); }
+.quota-observation { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 :root[data-theme="dark"] .usage-window-indigo { background: rgb(49 46 129 / 45%); color: #c7d2fe; }
 :root[data-theme="dark"] .usage-window-emerald { background: rgb(6 78 59 / 45%); color: #a7f3d0; }
 :root[data-theme="dark"] .usage-window-purple { background: rgb(76 29 149 / 45%); color: #ddd6fe; }

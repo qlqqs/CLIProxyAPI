@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -135,8 +136,20 @@ func ensureHomeCertificateFiles(ctx context.Context, claims homeJWTClaims, paths
 		if !fileExists(paths.CACert) {
 			return fmt.Errorf("home ca certificate file is missing")
 		}
-		if errVerify := verifyCACertificateFile(paths.CACert, claims.CAFingerprint); errVerify != nil {
-			return errVerify
+		certPEM, errCert := os.ReadFile(paths.ClientCert)
+		if errCert != nil {
+			return errCert
+		}
+		keyPEM, errKey := os.ReadFile(paths.ClientKey)
+		if errKey != nil {
+			return errKey
+		}
+		caPEM, errCA := os.ReadFile(paths.CACert)
+		if errCA != nil {
+			return errCA
+		}
+		if errVerify := verifyHomeClientCertificate(certPEM, keyPEM, caPEM, claims); errVerify != nil {
+			return fmt.Errorf("home cached certificate is invalid; use the matching identity or renew the certificate files: %w", errVerify)
 		}
 		if errChmod := chmodCertificateFiles(paths); errChmod != nil {
 			return errChmod
@@ -161,8 +174,9 @@ func ensureHomeCertificateFiles(ctx context.Context, claims homeJWTClaims, paths
 	if strings.TrimSpace(response.Certificate) == "" || strings.TrimSpace(response.CA) == "" {
 		return fmt.Errorf("home certificate response is incomplete")
 	}
-	if errVerify := verifyCACertificatePEM([]byte(response.CA), claims.CAFingerprint); errVerify != nil {
-		return errVerify
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if errVerify := verifyHomeClientCertificate([]byte(response.Certificate), keyPEM, []byte(response.CA), claims); errVerify != nil {
+		return fmt.Errorf("home issued certificate is invalid: %w", errVerify)
 	}
 	if errWrite := writeFile0600(paths.ClientCert, []byte(response.Certificate)); errWrite != nil {
 		return errWrite
@@ -173,27 +187,121 @@ func ensureHomeCertificateFiles(ctx context.Context, claims homeJWTClaims, paths
 	return nil
 }
 
-func verifyCACertificateFile(path string, expectedFingerprint string) error {
-	raw, errRead := os.ReadFile(path)
-	if errRead != nil {
-		return errRead
+// pinnedCACertificate accepts exactly one trust anchor, never additional unpinned roots.
+func pinnedCACertificate(raw []byte, expectedFingerprint string) (*x509.Certificate, error) {
+	block, rest := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, fmt.Errorf("home ca must contain exactly one PEM certificate")
 	}
-	return verifyCACertificatePEM(raw, expectedFingerprint)
+	cert, errParse := x509.ParseCertificate(block.Bytes)
+	if errParse != nil {
+		return nil, fmt.Errorf("home ca certificate: %w", errParse)
+	}
+	if errVerify := verifyPinnedCA(cert, expectedFingerprint); errVerify != nil {
+		return nil, errVerify
+	}
+	return cert, nil
 }
 
-func verifyCACertificatePEM(raw []byte, expectedFingerprint string) error {
-	actual, errFingerprint := certificateFingerprintPEM(raw)
-	if errFingerprint != nil {
-		return errFingerprint
-	}
+func verifyPinnedCA(cert *x509.Certificate, expectedFingerprint string) error {
 	expected := normalizeFingerprint(expectedFingerprint)
-	if expected == "" {
-		return fmt.Errorf("home ca fingerprint is required")
+	decoded, errDecode := hex.DecodeString(expected)
+	if errDecode != nil || len(decoded) != sha256.Size {
+		return fmt.Errorf("home ca fingerprint must be a SHA-256 digest")
 	}
-	if actual != expected {
+	sum := sha256.Sum256(cert.Raw)
+	if !bytes.Equal(sum[:], decoded) {
 		return fmt.Errorf("home ca fingerprint mismatch")
 	}
+	if !cert.IsCA || !cert.BasicConstraintsValid || (cert.KeyUsage != 0 && cert.KeyUsage&x509.KeyUsageCertSign == 0) {
+		return fmt.Errorf("home pinned certificate is not a signing CA")
+	}
 	return nil
+}
+
+func verifyHomeClientCertificate(certPEM, keyPEM, caPEM []byte, claims homeJWTClaims) error {
+	ca, errCA := pinnedCACertificate(caPEM, claims.CAFingerprint)
+	if errCA != nil {
+		return errCA
+	}
+	pair, errPair := tls.X509KeyPair(certPEM, keyPEM)
+	if errPair != nil {
+		return fmt.Errorf("home client certificate/key pair: %w", errPair)
+	}
+	leaf, errLeaf := x509.ParseCertificate(pair.Certificate[0])
+	if errLeaf != nil {
+		return fmt.Errorf("home client certificate: %w", errLeaf)
+	}
+	if certificateID := strings.TrimSpace(claims.CertificateID); certificateID == "" || leaf.Subject.CommonName != certificateID {
+		return fmt.Errorf("home client certificate identity does not match certificate_id")
+	}
+	if leaf.IsCA {
+		return fmt.Errorf("home client certificate must not be a CA")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	intermediates := x509.NewCertPool()
+	for _, raw := range pair.Certificate[1:] {
+		cert, errParse := x509.ParseCertificate(raw)
+		if errParse != nil {
+			return fmt.Errorf("home client certificate chain: %w", errParse)
+		}
+		intermediates.AddCert(cert)
+	}
+	if _, errVerify := leaf.Verify(x509.VerifyOptions{
+		Roots: roots, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); errVerify != nil {
+		return fmt.Errorf("home client certificate verification: %w", errVerify)
+	}
+	return nil
+}
+
+// enrollmentTLSConfig bootstraps trust only from the CA fingerprint in the claim.
+// The server must send that CA with its chain, including a self-signed root when used.
+func enrollmentTLSConfig(claims homeJWTClaims) (*tls.Config, error) {
+	fingerprint := normalizeFingerprint(claims.CAFingerprint)
+	decoded, errDecode := hex.DecodeString(fingerprint)
+	if errDecode != nil || len(decoded) != sha256.Size {
+		return nil, fmt.Errorf("home ca fingerprint must be a SHA-256 digest")
+	}
+	serverName := strings.TrimSpace(claims.IP)
+	if serverName == "" {
+		return nil, fmt.Errorf("home enrollment server name is required")
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: serverName,
+		// Trust is bootstrapped from the pinned CA below, not the system roots.
+		// VerifyConnection performs full chain, validity, serverAuth and name checks.
+		InsecureSkipVerify: true, //nolint:gosec -- verification is mandatory in VerifyConnection.
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return fmt.Errorf("home enrollment server sent no certificates")
+			}
+			roots := x509.NewCertPool()
+			intermediates := x509.NewCertPool()
+			pinned := false
+			for _, cert := range state.PeerCertificates {
+				if errVerify := verifyPinnedCA(cert, fingerprint); errVerify == nil {
+					roots.AddCert(cert)
+					pinned = true
+				}
+			}
+			if !pinned {
+				return fmt.Errorf("home enrollment server did not present the pinned CA")
+			}
+			for _, cert := range state.PeerCertificates[1:] {
+				intermediates.AddCert(cert)
+			}
+			if _, errVerify := state.PeerCertificates[0].Verify(x509.VerifyOptions{
+				Roots: roots, Intermediates: intermediates, DNSName: serverName,
+				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			}); errVerify != nil {
+				return fmt.Errorf("home enrollment server certificate verification: %w", errVerify)
+			}
+			return nil
+		},
+	}, nil
 }
 
 func certificateFingerprintPEM(raw []byte) (string, error) {
@@ -303,18 +411,32 @@ func requestClientCertificate(ctx context.Context, claims homeJWTClaims, csrPEM 
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	tlsConfig, errTLS := enrollmentTLSConfig(claims)
+	if errTLS != nil {
+		return response, errTLS
+	}
 	dialCtx, cancel := context.WithTimeout(ctx, homeCertificateRequestTimeout)
 	defer cancel()
 	addr := net.JoinHostPort(strings.TrimSpace(claims.IP), strconv.Itoa(claims.Port))
-	conn, errDial := (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
+	rawConn, errDial := (&net.Dialer{}).DialContext(dialCtx, "tcp", addr)
 	if errDial != nil {
 		return response, errDial
 	}
+	conn := tls.Client(rawConn, tlsConfig)
 	defer func() {
 		_ = conn.Close()
 	}()
+	stopCancel := context.AfterFunc(dialCtx, func() { _ = rawConn.Close() })
+	defer stopCancel()
+	// This short-lived connection only acquires credentials; no deadline is
+	// applied to subsequent authenticated Home traffic.
 	if deadline, ok := dialCtx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
+		if errDeadline := conn.SetDeadline(deadline); errDeadline != nil {
+			return response, errDeadline
+		}
+	}
+	if errHandshake := conn.HandshakeContext(dialCtx); errHandshake != nil {
+		return response, fmt.Errorf("home enrollment requires authenticated TLS: %w", errHandshake)
 	}
 	if _, errWrite := conn.Write(encodeRESPArray("CERTIFICATE", "REQUEST", claims.CertificateID, claims.EnrollmentSecret, string(csrPEM))); errWrite != nil {
 		return response, errWrite

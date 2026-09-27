@@ -269,8 +269,14 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		c.Header("X-CPA-BUILD-DATE", buildinfo.BuildDate)
 		c.Header("X-CPA-SUPPORT-PLUGIN", pluginhost.SupportPluginHeaderValue())
 
-		clientIP := c.ClientIP()
+		// Forwarded requests cannot inherit loopback privileges. Their ban identity
+		// remains the direct peer, never the attacker-controlled forwarded address.
+		clientIP := c.RemoteIP()
 		localClient := clientIP == "127.0.0.1" || clientIP == "::1"
+		if localClient && hasManagementForwardingHeaders(c.Request.Header) {
+			localClient = false
+			clientIP = "forwarded:" + clientIP
+		}
 
 		// Accept either Authorization: Bearer <key> or X-Management-Key
 		var provided string
@@ -293,6 +299,19 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// hasManagementForwardingHeaders fails closed on proxy metadata, even empty or forged values.
+// A proxy that strips all forwarding metadata is indistinguishable from a direct local client.
+func hasManagementForwardingHeaders(header http.Header) bool {
+	for name := range header {
+		name = strings.ToLower(name)
+		if name == "forwarded" || name == "x-real-ip" || name == "x-original-forwarded-for" ||
+			name == "cf-connecting-ip" || name == "true-client-ip" || strings.HasPrefix(name, "x-forwarded-") {
+			return true
+		}
+	}
+	return false
 }
 
 // AuthenticateManagementKey verifies the provided management key for the given client.
@@ -363,7 +382,7 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 		h.attemptsMu.Unlock()
 	}
 
-	if secretHash == "" && envSecret == "" {
+	if secretHash == "" && envSecret == "" && (!localClient || h.localPassword == "") {
 		return false, http.StatusForbidden, "remote management key not set"
 	}
 

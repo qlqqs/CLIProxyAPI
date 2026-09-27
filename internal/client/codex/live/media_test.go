@@ -195,6 +195,16 @@ func TestPionMediaRelayBridgesAudioAndDataChannel(t *testing.T) {
 	if errRelay != nil {
 		t.Fatalf("create media relay: %v", errRelay)
 	}
+	// Keep all four peers on loopback so real interface routing and ICE candidate
+	// selection do not determine whether this in-process bridge test completes.
+	relay.downstreamAPI, errRelay = newPionAPIWithOptions(relayConfig, false, true)
+	if errRelay != nil {
+		t.Fatal(errRelay)
+	}
+	relay.upstreamAPI, errRelay = newPionAPIWithOptions(relayConfig, false, true)
+	if errRelay != nil {
+		t.Fatal(errRelay)
+	}
 	session, relayOffer, errSession := relay.NewSession(context.Background(), clientOffer, mediaSessionRoute{
 		credential: "Voice credential",
 		authIndex:  "auth-index",
@@ -367,7 +377,11 @@ func newTestWebRTCAPI(t *testing.T) *webrtc.API {
 	if errRegister := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); errRegister != nil {
 		t.Fatalf("register test interceptors: %v", errRegister)
 	}
+	settings := webrtc.SettingEngine{}
+	settings.SetIncludeLoopbackCandidate(true)
+	settings.SetIPFilter(func(ip net.IP) bool { return ip != nil && ip.IsLoopback() })
 	return webrtc.NewAPI(
+		webrtc.WithSettingEngine(settings),
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithInterceptorRegistry(interceptorRegistry),
 	)
@@ -411,14 +425,21 @@ func completeAnswer(t *testing.T, connection *webrtc.PeerConnection) string {
 
 func waitDataChannelOpen(t *testing.T, channel *webrtc.DataChannel) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if channel.ReadyState() == webrtc.DataChannelStateOpen {
-			return
+	opened := make(chan struct{}, 1)
+	channel.OnOpen(func() {
+		select {
+		case opened <- struct{}{}:
+		default:
 		}
-		time.Sleep(10 * time.Millisecond)
+	})
+	if channel.ReadyState() == webrtc.DataChannelStateOpen {
+		return
 	}
-	t.Fatalf("DataChannel %q did not open", channel.Label())
+	select {
+	case <-opened:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("DataChannel %q did not open", channel.Label())
+	}
 }
 
 func receiveDataChannel(t *testing.T, channels <-chan *webrtc.DataChannel) *webrtc.DataChannel {
