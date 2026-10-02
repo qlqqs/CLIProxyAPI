@@ -292,6 +292,10 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewClaudeExecutor(cfg))
 	case "kimi":
 		s.coreManager.RegisterExecutor(executor.NewKimiExecutor(cfg))
+	case "chatgpt":
+		// "chatgpt" credentials come from the Sign in with ChatGPT flow and are
+		// served by the public Responses endpoint, not the Codex backend.
+		s.coreManager.RegisterExecutor(executor.NewChatGPTExecutor(cfg))
 	case "xai":
 		if !forceReplace {
 			existingExecutor, hasExecutor := s.coreManager.Executor("xai")

@@ -141,6 +141,13 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			models = registry.GetCodexProModels()
 		}
 		models = applyExcludedModels(models, excluded)
+	case "chatgpt":
+		// Credentials from the Sign in with ChatGPT flow are served by ChatGPTExecutor
+		// against the public Responses endpoint. Their access token carries no plan
+		// claim, so publish the same catalogue the Codex OAuth path exposes when the
+		// plan is unknown; per-account and global exclusions still apply.
+		models = registry.GetCodexProModels()
+		models = applyExcludedModels(models, excluded)
 	case "kimi":
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)
