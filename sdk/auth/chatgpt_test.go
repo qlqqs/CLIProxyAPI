@@ -55,7 +55,7 @@ func fakeAccessToken(t *testing.T, subject string) string {
 func newFakeAuthenticator(t *testing.T, service *fakeChatGPTService) *ChatGPTAuthenticator {
 	t.Helper()
 	authenticator := NewChatGPTAuthenticator()
-	authenticator.newAuthService = func(*config.Config) chatGPTAuthService { return service }
+	authenticator.newAuthService = func(*config.Config, string) chatGPTAuthService { return service }
 	return authenticator
 }
 
@@ -80,7 +80,7 @@ func TestChatGPTStartLoginProducesPiAuthorizeURL(t *testing.T) {
 	service := &fakeChatGPTService{}
 	authenticator := newFakeAuthenticator(t, service)
 
-	session, err := authenticator.StartLogin(cfg, "", "")
+	session, err := authenticator.StartLogin(cfg, "", "", "")
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestChatGPTStartLoginProducesPiAuthorizeURL(t *testing.T) {
 		t.Fatalf("agent name hint = %q, want empty (package default)", service.gotHint)
 	}
 
-	if _, err = authenticator.StartLogin(cfg, "", ""); err != nil {
+	if _, err = authenticator.StartLogin(cfg, "", "", ""); err != nil {
 		t.Fatalf("StartLogin (second): %v", err)
 	}
 	raw, err = os.ReadFile(deviceIDPath)
@@ -126,7 +126,7 @@ func TestChatGPTStartLoginHonoursMetadataOverrides(t *testing.T) {
 	authenticator := newFakeAuthenticator(t, service)
 
 	deviceID := "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
-	if _, err := authenticator.StartLogin(cfg, "CustomAgent", deviceID); err != nil {
+	if _, err := authenticator.StartLogin(cfg, "CustomAgent", deviceID, ""); err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
 	if service.gotHint != "CustomAgent" {
@@ -152,7 +152,7 @@ func TestChatGPTCompleteLoginBuildsAuthRecord(t *testing.T) {
 	}}
 	authenticator := newFakeAuthenticator(t, service)
 
-	session, err := authenticator.StartLogin(cfg, "", "")
+	session, err := authenticator.StartLogin(cfg, "", "", "")
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestChatGPTCompleteLoginRejectsMismatchedState(t *testing.T) {
 	cfg := testConfig(t)
 	authenticator := newFakeAuthenticator(t, &fakeChatGPTService{})
 
-	session, err := authenticator.StartLogin(cfg, "", "")
+	session, err := authenticator.StartLogin(cfg, "", "", "")
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestChatGPTCompleteLoginRejectsCredentialWithoutClientID(t *testing.T) {
 	service := &fakeChatGPTService{credential: &chatgpt.Credential{AccessToken: "a", RefreshToken: "r", ExpiresIn: 60}}
 	authenticator := newFakeAuthenticator(t, service)
 
-	session, err := authenticator.StartLogin(cfg, "", "")
+	session, err := authenticator.StartLogin(cfg, "", "", "")
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestChatGPTCompleteLoginPropagatesExchangeFailure(t *testing.T) {
 	service := &fakeChatGPTService{exchangeErr: errors.New("boom")}
 	authenticator := newFakeAuthenticator(t, service)
 
-	session, err := authenticator.StartLogin(cfg, "", "")
+	session, err := authenticator.StartLogin(cfg, "", "", "")
 	if err != nil {
 		t.Fatalf("StartLogin: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestChatGPTLoginRequiresPrompt(t *testing.T) {
 
 func TestChatGPTLoginRequiresConfig(t *testing.T) {
 	authenticator := NewChatGPTAuthenticator()
-	if _, err := authenticator.StartLogin(nil, "", ""); err == nil {
+	if _, err := authenticator.StartLogin(nil, "", "", ""); err == nil {
 		t.Fatal("expected error for nil config")
 	}
 	if _, err := authenticator.CompleteLogin(context.Background(), nil, &ChatGPTLoginSession{}, ""); err == nil {

@@ -20,6 +20,8 @@ const (
 	ChatGPTAgentNameHintMetadataKey = "chatgpt_agent_name_hint"
 	// ChatGPTDeviceIDMetadataKey overrides the installation device id.
 	ChatGPTDeviceIDMetadataKey = "chatgpt_device_id"
+	// ChatGPTProxyURLMetadataKey selects a per-account egress proxy.
+	ChatGPTProxyURLMetadataKey = "proxy_url"
 	// chatgptDeviceIDFileName stores the installation UUID inside the auth dir.
 	// The auth watcher only reads *.json files, so a dotfile is inert, matching
 	// the existing .oauth-<provider>-<state>.oauth convention.
@@ -34,8 +36,9 @@ const (
 // out of the picture means the flow also works on a headless host, and it avoids a
 // second listener competing for port 1455 with the codex flow.
 type ChatGPTAuthenticator struct {
-	// newAuthService is a seam for tests; production uses chatgpt.NewChatGPTAuth.
-	newAuthService func(*config.Config) chatGPTAuthService
+	// newAuthService is a seam for tests; production builds chatgpt.ChatGPTAuth
+	// with the per-account proxy URL when one was supplied.
+	newAuthService func(*config.Config, string) chatGPTAuthService
 }
 
 // chatGPTAuthService is the subset of *chatgpt.ChatGPTAuth the authenticator needs.
@@ -47,8 +50,8 @@ type chatGPTAuthService interface {
 // NewChatGPTAuthenticator constructs a "Sign in with ChatGPT" authenticator.
 func NewChatGPTAuthenticator() *ChatGPTAuthenticator {
 	return &ChatGPTAuthenticator{
-		newAuthService: func(cfg *config.Config) chatGPTAuthService {
-			return chatgpt.NewChatGPTAuth(cfg)
+		newAuthService: func(cfg *config.Config, proxyURL string) chatGPTAuthService {
+			return chatgpt.NewChatGPTAuthWithProxyURL(cfg, proxyURL)
 		},
 	}
 }
@@ -69,10 +72,13 @@ type ChatGPTLoginSession struct {
 	AuthorizeURL string
 	State        string
 	CodeVerifier string
+	// ProxyURL is the per-account proxy used for the token exchange and stored on
+	// the credential so later refreshes and upstream calls use the same egress.
+	ProxyURL string
 }
 
 // StartLogin creates the authorization URL for a new login.
-func (a *ChatGPTAuthenticator) StartLogin(cfg *config.Config, agentNameHint, deviceID string) (*ChatGPTLoginSession, error) {
+func (a *ChatGPTAuthenticator) StartLogin(cfg *config.Config, agentNameHint, deviceID, proxyURL string) (*ChatGPTLoginSession, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")
 	}
@@ -97,7 +103,7 @@ func (a *ChatGPTAuthenticator) StartLogin(cfg *config.Config, agentNameHint, dev
 		return nil, err
 	}
 
-	authSvc := a.authService(cfg)
+	authSvc := a.authService(cfg, proxyURL)
 	authorizeURL, err := authSvc.GenerateAuthURL(state, pkceCodes, hostID, agentNameHint)
 	if err != nil {
 		return nil, fmt.Errorf("chatgpt authorization url generation failed: %w", err)
@@ -107,6 +113,7 @@ func (a *ChatGPTAuthenticator) StartLogin(cfg *config.Config, agentNameHint, dev
 		AuthorizeURL: authorizeURL,
 		State:        state,
 		CodeVerifier: pkceCodes.CodeVerifier,
+		ProxyURL:     strings.TrimSpace(proxyURL),
 	}, nil
 }
 
@@ -129,11 +136,11 @@ func (a *ChatGPTAuthenticator) CompleteLogin(ctx context.Context, cfg *config.Co
 	}
 
 	log.Debug("chatgpt authorization code received; exchanging for tokens")
-	credential, err := a.authService(cfg).ExchangeAuthorizationCode(ctx, result.Code, session.CodeVerifier, result.ClientID)
+	credential, err := a.authService(cfg, session.ProxyURL).ExchangeAuthorizationCode(ctx, result.Code, session.CodeVerifier, result.ClientID)
 	if err != nil {
 		return nil, err
 	}
-	return buildChatGPTAuthRecord(credential)
+	return buildChatGPTAuthRecord(credential, session.ProxyURL)
 }
 
 // Login runs the whole flow interactively: it prints the authorization URL, reads the
@@ -146,7 +153,7 @@ func (a *ChatGPTAuthenticator) Login(ctx context.Context, cfg *config.Config, op
 		opts = &LoginOptions{}
 	}
 
-	session, err := a.StartLogin(cfg, opts.Metadata[ChatGPTAgentNameHintMetadataKey], opts.Metadata[ChatGPTDeviceIDMetadataKey])
+	session, err := a.StartLogin(cfg, opts.Metadata[ChatGPTAgentNameHintMetadataKey], opts.Metadata[ChatGPTDeviceIDMetadataKey], opts.Metadata[ChatGPTProxyURLMetadataKey])
 	if err != nil {
 		return nil, err
 	}
@@ -171,14 +178,14 @@ func (a *ChatGPTAuthenticator) Login(ctx context.Context, cfg *config.Config, op
 	return record, nil
 }
 
-func (a *ChatGPTAuthenticator) authService(cfg *config.Config) chatGPTAuthService {
+func (a *ChatGPTAuthenticator) authService(cfg *config.Config, proxyURL string) chatGPTAuthService {
 	if a != nil && a.newAuthService != nil {
-		return a.newAuthService(cfg)
+		return a.newAuthService(cfg, proxyURL)
 	}
-	return chatgpt.NewChatGPTAuth(cfg)
+	return chatgpt.NewChatGPTAuthWithProxyURL(cfg, proxyURL)
 }
 
-func buildChatGPTAuthRecord(credential *chatgpt.Credential) (*coreauth.Auth, error) {
+func buildChatGPTAuthRecord(credential *chatgpt.Credential, proxyURL string) (*coreauth.Auth, error) {
 	if credential == nil {
 		return nil, errors.New("chatgpt: credential is nil")
 	}
@@ -199,7 +206,7 @@ func buildChatGPTAuthRecord(credential *chatgpt.Credential) (*coreauth.Auth, err
 	}
 	fileName := chatgpt.CredentialFileName(chatgpt.SubjectHash(credential.AccessToken))
 
-	return &coreauth.Auth{
+	record := &coreauth.Auth{
 		ID:       fileName,
 		Provider: chatgpt.ProviderName,
 		FileName: fileName,
@@ -217,5 +224,10 @@ func buildChatGPTAuthRecord(credential *chatgpt.Credential) (*coreauth.Auth, err
 		Attributes: map[string]string{
 			"base_url": chatgpt.DefaultBaseURL,
 		},
-	}, nil
+	}
+	if resolvedProxy := strings.TrimSpace(proxyURL); resolvedProxy != "" {
+		record.ProxyURL = resolvedProxy
+		record.Metadata["proxy_url"] = resolvedProxy
+	}
+	return record, nil
 }
