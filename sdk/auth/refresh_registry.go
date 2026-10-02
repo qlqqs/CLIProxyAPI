@@ -8,6 +8,7 @@ import (
 
 func init() {
 	registerRefreshLead("codex", func() Authenticator { return NewCodexAuthenticator() })
+	registerRefreshLead("chatgpt", func() Authenticator { return NewChatGPTAuthenticator() })
 	registerRefreshLead("claude", func() Authenticator { return NewClaudeAuthenticator() })
 	registerRefreshLead("antigravity", func() Authenticator { return NewAntigravityAuthenticator() })
 	registerRefreshLead("kimi", func() Authenticator { return NewKimiAuthenticator() })
